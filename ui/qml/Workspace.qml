@@ -23,8 +23,8 @@ Item {
         Rectangle {
             Layout.preferredWidth: root.sidebarWidth
             Layout.fillHeight: true
-            color: theme.surfaceSoft
-            border.color: theme.border
+            color: theme.sidebarSurface
+            border.color: theme.sidebarBorder
             z: 2
             Behavior on Layout.preferredWidth { NumberAnimation { duration: motion.expand; easing.type: Easing.OutCubic } }
 
@@ -33,15 +33,41 @@ Item {
                 anchors.margins: metrics.sidebarMargin
                 spacing: 10
 
-                Image {
+                Rectangle {
                     Layout.alignment: Qt.AlignHCenter
-                    source: appController.logoUrl
-                    Layout.preferredWidth: 42
-                    Layout.preferredHeight: 42
-                    fillMode: Image.PreserveAspectFit
+                    Layout.preferredWidth: root.sidebarExpanded ? root.sidebarWidth - metrics.sidebarMargin * 2 : 52
+                    Layout.preferredHeight: 58
+                    radius: 16
+                    color: theme.surfaceElevated
+                    border.color: theme.border
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.margins: 9
+                        spacing: 9
+                        Image {
+                            source: appController.logoUrl
+                            Layout.preferredWidth: 34
+                            Layout.preferredHeight: 34
+                            fillMode: Image.PreserveAspectFit
+                        }
+                        ColumnLayout {
+                            visible: root.sidebarExpanded
+                            spacing: 0
+                            Text { text: "OmniLit"; color: theme.text; font.pixelSize: 16; font.weight: Font.Bold }
+                            Text { text: "RESEARCH DESK"; color: theme.accent; font.pixelSize: 8; font.weight: Font.Bold; font.letterSpacing: 0.7 }
+                        }
+                    }
                 }
 
-                Item { Layout.preferredHeight: 4 }
+                Text {
+                    visible: root.sidebarExpanded
+                    Layout.leftMargin: 8
+                    text: "WORKSPACE"
+                    color: theme.textMuted
+                    font.pixelSize: 9
+                    font.weight: Font.Bold
+                    font.letterSpacing: 1.0
+                }
 
                 Repeater {
                     model: [
@@ -64,6 +90,15 @@ Item {
                                                              : navigationButton.hovered || navigationButton.activeFocus ? theme.navHover
                                                              : "transparent"
                             Behavior on color { ColorAnimation { duration: motion.normal; easing.type: Easing.OutCubic } }
+                            Rectangle {
+                                visible: navigationButton.selected
+                                anchors.left: parent.left
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: 3
+                                height: 22
+                                radius: 2
+                                color: theme.accent
+                            }
                         }
                         contentItem: Row {
                             anchors.centerIn: parent
@@ -138,45 +173,45 @@ Item {
                 Button {
                     id: avatarButton
                     Layout.alignment: Qt.AlignHCenter
-                    Layout.preferredWidth: 52
-                    Layout.preferredHeight: 52
+                    Layout.preferredWidth: root.sidebarExpanded ? root.sidebarWidth - metrics.sidebarMargin * 2 : 52
+                    Layout.preferredHeight: root.sidebarExpanded ? 62 : 52
                     hoverEnabled: true
                     onClicked: accountDrawer.open()
                     HoverHandler { cursorShape: Qt.PointingHandCursor }
                     background: Rectangle {
-                        radius: 18
-                        color: avatarButton.hovered ? theme.navHover : "transparent"
+                        radius: 17
+                        color: avatarButton.hovered ? theme.navHover : theme.surfaceElevated
+                        border.color: avatarButton.hovered ? theme.borderStrong : theme.border
                     }
-                    contentItem: Item {
+                    contentItem: RowLayout {
+                        spacing: 9
                         RoundedAvatar {
                             id: sidebarAvatar
-                            anchors.centerIn: parent
-                            width: 42
-                            height: 42
+                            Layout.preferredWidth: 42
+                            Layout.preferredHeight: 42
                             source: preferencesController.avatarUrl
                             fallbackText: preferencesController.avatarInitial
                             backgroundColor: theme.accent
                             borderColor: theme.borderStrong
                         }
-                        Rectangle {
-                            visible: !!preferencesController.avatarStatus
-                            anchors.left: sidebarAvatar.right
-                            anchors.leftMargin: -5
-                            anchors.bottom: sidebarAvatar.bottom
-                            width: 12
-                            height: 12
-                            radius: 6
-                            color: theme.accent
-                            border.color: theme.borderStrong
+                        AvatarStatusBadge {
+                            status: preferencesController.avatarStatus
+                            compact: true
+                            Layout.leftMargin: -18
+                            Layout.topMargin: 26
+                        }
+                        ColumnLayout {
+                            visible: root.sidebarExpanded
+                            Layout.fillWidth: true
+                            spacing: 1
+                            Text { text: authController.username; color: theme.text; font.pixelSize: 12; font.weight: Font.DemiBold; elide: Text.ElideRight; Layout.fillWidth: true }
+                            Text { text: preferencesController.avatarStatus || i18n.text("set_status"); color: theme.textMuted; font.pixelSize: 10; elide: Text.ElideRight; Layout.fillWidth: true }
                         }
                         Rectangle {
                             visible: updateController.available
-                            anchors.right: parent.right
-                            anchors.top: parent.top
-                            anchors.rightMargin: 2
-                            anchors.topMargin: 2
-                            width: 10
-                            height: 10
+                            Layout.alignment: Qt.AlignTop | Qt.AlignRight
+                            Layout.preferredWidth: 10
+                            Layout.preferredHeight: 10
                             radius: 5
                             color: theme.error
                             border.color: theme.surfaceSoft
@@ -229,33 +264,65 @@ Item {
                     width: accountDrawer.availableWidth
                     spacing: 12
 
-                    Item { Layout.preferredHeight: 12 }
-                    Button {
-                        id: drawerAvatarButton
-                        Layout.alignment: Qt.AlignHCenter
-                        Layout.preferredWidth: 82
-                        Layout.preferredHeight: 82
-                        hoverEnabled: true
-                        onClicked: root.drawerPage = 3
-                        HoverHandler { cursorShape: Qt.PointingHandCursor }
-                        background: Rectangle { color: "transparent" }
-                        contentItem: RoundedAvatar {
-                            source: preferencesController.avatarUrl
-                            fallbackText: preferencesController.avatarInitial
-                            fallbackFontSize: 28
-                            backgroundColor: theme.accent
-                            borderColor: theme.borderStrong
+                    Item { Layout.preferredHeight: 6 }
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 14
+                        Layout.rightMargin: 14
+                        implicitHeight: 154
+                        radius: theme.radiusLarge
+                        color: theme.surfaceTint
+                        border.color: theme.border
+                        ColumnLayout {
+                            anchors.fill: parent
+                            anchors.margins: 14
+                            spacing: 4
+                            Button {
+                                id: drawerAvatarButton
+                                Layout.alignment: Qt.AlignHCenter
+                                Layout.preferredWidth: 76
+                                Layout.preferredHeight: 76
+                                hoverEnabled: true
+                                onClicked: root.drawerPage = 3
+                                HoverHandler { cursorShape: Qt.PointingHandCursor }
+                                background: Rectangle { radius: 38; color: drawerAvatarButton.hovered ? theme.accentSoft : "transparent" }
+                                contentItem: Item {
+                                    RoundedAvatar {
+                                        anchors.centerIn: parent
+                                        width: 68
+                                        height: 68
+                                        source: preferencesController.avatarUrl
+                                        fallbackText: preferencesController.avatarInitial
+                                        fallbackFontSize: 24
+                                        backgroundColor: theme.accent
+                                        borderColor: theme.borderStrong
+                                    }
+                                    AvatarStatusBadge {
+                                        anchors.right: parent.right
+                                        anchors.bottom: parent.bottom
+                                        status: preferencesController.avatarStatus
+                                        compact: true
+                                    }
+                                }
+                            }
+                            Text {
+                                Layout.alignment: Qt.AlignHCenter
+                                text: authController.username
+                                color: theme.text
+                                font.pixelSize: 18
+                                font.weight: Font.Bold
+                            }
+                            Text {
+                                Layout.alignment: Qt.AlignHCenter
+                                text: i18n.text("account_center")
+                                color: theme.textMuted
+                                font.pixelSize: 11
+                            }
                         }
                     }
                     RowLayout {
                         Layout.alignment: Qt.AlignHCenter
                         spacing: 8
-                        Text {
-                            text: authController.username
-                            color: theme.text
-                            font.pixelSize: 18
-                            font.weight: Font.Bold
-                        }
                         PillButton {
                             text: preferencesController.avatarStatus || i18n.text("set_status")
                             onClicked: {
@@ -263,6 +330,16 @@ Item {
                                 root.drawerPage = 4
                             }
                         }
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 18
+                        Layout.rightMargin: 18
+                        text: i18n.text("account_preferences")
+                        color: theme.textMuted
+                        horizontalAlignment: Text.AlignHCenter
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: 11
                     }
                     Text {
                         Layout.fillWidth: true
@@ -276,59 +353,38 @@ Item {
                     }
                     Rectangle { Layout.fillWidth: true; Layout.leftMargin: 16; Layout.rightMargin: 16; implicitHeight: 1; color: theme.border }
 
-                    Button {
+                    DrawerMenuItem {
                         id: languageEntry
                         Layout.fillWidth: true
                         Layout.leftMargin: 14
                         Layout.rightMargin: 14
-                        implicitHeight: 54
-                        hoverEnabled: true
+                        iconName: "language"
+                        label: i18n.text("interface_language")
+                        detail: i18n.text("language_detail")
                         onClicked: root.drawerPage = 5
-                        HoverHandler { cursorShape: Qt.PointingHandCursor }
-                        background: Rectangle { radius: 12; color: languageEntry.hovered ? theme.navHover : "transparent" }
-                        contentItem: RowLayout {
-                            spacing: 12
-                            VectorIcon { name: "language"; color: theme.accent; Layout.preferredWidth: 22; Layout.preferredHeight: 22 }
-                            Text { text: i18n.text("interface_language"); color: theme.text; Layout.fillWidth: true }
-                            Text { text: ">"; color: theme.textMuted }
-                        }
                     }
 
-                    Button {
+                    DrawerMenuItem {
                         id: appearanceEntry
                         Layout.fillWidth: true
                         Layout.leftMargin: 14
                         Layout.rightMargin: 14
-                        implicitHeight: 54
-                        hoverEnabled: true
+                        iconName: "appearance"
+                        label: i18n.text("appearance")
+                        detail: i18n.text("appearance_detail")
                         onClicked: root.drawerPage = 1
-                        HoverHandler { cursorShape: Qt.PointingHandCursor }
-                        background: Rectangle { radius: 12; color: appearanceEntry.hovered ? theme.navHover : "transparent" }
-                        contentItem: RowLayout {
-                            spacing: 12
-                            VectorIcon { name: "appearance"; color: theme.accent; Layout.preferredWidth: 22; Layout.preferredHeight: 22 }
-                            Text { text: i18n.text("appearance"); color: theme.text; Layout.fillWidth: true }
-                            Text { text: ">"; color: theme.textMuted }
-                        }
                     }
 
-                    Button {
+                    DrawerMenuItem {
                         id: updateEntry
                         Layout.fillWidth: true
                         Layout.leftMargin: 14
                         Layout.rightMargin: 14
-                        implicitHeight: 54
-                        hoverEnabled: true
+                        iconName: "update"
+                        label: i18n.text("update_management")
+                        detail: i18n.text("update_detail")
+                        attention: updateController.available
                         onClicked: root.drawerPage = 2
-                        HoverHandler { cursorShape: Qt.PointingHandCursor }
-                        background: Rectangle { radius: 12; color: updateEntry.hovered ? theme.navHover : "transparent" }
-                        contentItem: RowLayout {
-                            spacing: 12
-                            VectorIcon { name: "update"; color: theme.accent; Layout.preferredWidth: 22; Layout.preferredHeight: 22 }
-                            Text { text: i18n.text("update_management"); color: theme.text; Layout.fillWidth: true }
-                            Rectangle { visible: updateController.available; width: 8; height: 8; radius: 4; color: theme.error }
-                            Text { text: ">"; color: theme.textMuted }
-                        }
                     }
 
                     Item { Layout.preferredHeight: 2 }
@@ -343,21 +399,29 @@ Item {
                     Button {
                         id: logoutButton
                         Layout.alignment: Qt.AlignHCenter
-                        Layout.preferredWidth: 56
-                        Layout.preferredHeight: 56
+                        Layout.preferredWidth: accountDrawer.availableWidth - 28
+                        Layout.preferredHeight: 48
                         hoverEnabled: true
                         onClicked: authController.logout()
                         HoverHandler { cursorShape: Qt.PointingHandCursor }
                         background: Rectangle {
-                            radius: 28
+                            radius: theme.radiusLarge
                             color: logoutButton.hovered ? theme.errorSoft : theme.accentSofter
                             border.color: logoutButton.hovered ? theme.errorBorder : theme.border
                         }
-                        contentItem: VectorIcon {
-                            name: "power"
-                            color: logoutButton.hovered ? theme.error : theme.accent
-                            strokeWidth: 2.05
-                            Behavior on color { ColorAnimation { duration: motion.fast } }
+                        contentItem: RowLayout {
+                            spacing: 8
+                            Item { Layout.fillWidth: true }
+                            VectorIcon {
+                                name: "power"
+                                color: logoutButton.hovered ? theme.error : theme.accent
+                                strokeWidth: 2.05
+                                Layout.preferredWidth: 20
+                                Layout.preferredHeight: 20
+                                Behavior on color { ColorAnimation { duration: motion.fast } }
+                            }
+                            Text { text: i18n.text("logout"); color: logoutButton.hovered ? theme.error : theme.accent; font.weight: Font.DemiBold }
+                            Item { Layout.fillWidth: true }
                         }
                         ModernToolTip {
                             anchors.left: parent.right
@@ -377,23 +441,10 @@ Item {
                     width: accountDrawer.availableWidth
                     spacing: 12
 
-                    RowLayout {
-                        Layout.fillWidth: true
-                        Layout.margins: 12
-                        Button {
-                            id: appearanceBackButton
-                            implicitWidth: 42
-                            implicitHeight: 42
-                            onClicked: root.drawerPage = 0
-                            HoverHandler { cursorShape: Qt.PointingHandCursor }
-                            background: Rectangle { radius: theme.radiusMedium; color: appearanceBackButton.hovered ? theme.navHover : "transparent" }
-                            contentItem: VectorIcon { name: "back"; color: theme.text; }
-                        }
-                        ColumnLayout {
-                            spacing: 1
-                            Text { text: i18n.text("appearance"); color: theme.text; font.pixelSize: theme.baseFontSize + 6; font.weight: Font.Bold }
-                            Text { text: i18n.text("academic_appearance_desc"); color: theme.textMuted; font.pixelSize: theme.baseFontSize - 2 }
-                        }
+                    DrawerPageHeader {
+                        title: i18n.text("appearance")
+                        detail: i18n.text("academic_appearance_desc")
+                        onBack: root.drawerPage = 0
                     }
 
                     GridLayout {
@@ -600,53 +651,51 @@ Item {
 
             ColumnLayout {
                 spacing: 0
-                RowLayout {
-                    Layout.fillWidth: true
-                    Layout.margins: 12
-                    Button {
-                        id: updateBackButton
-                        implicitWidth: 42
-                        implicitHeight: 42
-                        onClicked: root.drawerPage = 0
-                        HoverHandler { cursorShape: Qt.PointingHandCursor }
-                        background: Rectangle { radius: theme.radiusMedium; color: updateBackButton.hovered ? theme.navHover : "transparent" }
-                        contentItem: VectorIcon { name: "back"; color: theme.text }
-                    }
-                    Text { text: i18n.text("update_management"); color: theme.text; font.pixelSize: 20; font.weight: Font.Bold }
+                DrawerPageHeader {
+                    title: i18n.text("update_management")
+                    detail: i18n.text("update_page_detail")
+                    onBack: root.drawerPage = 0
                 }
                 UpdatePage { Layout.fillWidth: true; Layout.fillHeight: true }
             }
 
             ColumnLayout {
                 spacing: 14
-                RowLayout {
+                DrawerPageHeader {
+                    title: i18n.text("avatar_settings")
+                    detail: i18n.text("avatar_settings_detail")
+                    onBack: root.drawerPage = 0
+                }
+                Card {
                     Layout.fillWidth: true
-                    Layout.margins: 12
-                    Button {
-                        id: avatarSettingsBackButton
-                        implicitWidth: 42
-                        implicitHeight: 42
-                        onClicked: root.drawerPage = 0
-                        HoverHandler { cursorShape: Qt.PointingHandCursor }
-                        background: Rectangle { radius: theme.radiusMedium; color: avatarSettingsBackButton.hovered ? theme.navHover : "transparent" }
-                        contentItem: VectorIcon { name: "back"; color: theme.text }
+                    Layout.leftMargin: 14
+                    Layout.rightMargin: 14
+                    implicitHeight: avatarSettingsContent.implicitHeight + 32
+                    ColumnLayout {
+                        id: avatarSettingsContent
+                        anchors.fill: parent
+                        anchors.margins: 16
+                        spacing: 12
+                        RoundedAvatar {
+                            Layout.alignment: Qt.AlignHCenter
+                            Layout.preferredWidth: 112
+                            Layout.preferredHeight: 112
+                            source: preferencesController.avatarUrl
+                            fallbackText: preferencesController.avatarInitial
+                            fallbackFontSize: 36
+                            backgroundColor: theme.accent
+                            borderColor: theme.borderStrong
+                        }
+                        AvatarStatusBadge {
+                            Layout.alignment: Qt.AlignHCenter
+                            status: preferencesController.avatarStatus
+                        }
+                        RowLayout {
+                            Layout.alignment: Qt.AlignHCenter
+                            PillButton { text: i18n.text("upload_avatar"); primary: true; onClicked: preferencesController.uploadAvatar() }
+                            PillButton { text: i18n.text("clear_avatar"); enabled: !!preferencesController.avatarUrl; onClicked: preferencesController.clearAvatar() }
+                        }
                     }
-                    Text { text: i18n.text("avatar_settings"); color: theme.text; font.pixelSize: 20; font.weight: Font.Bold }
-                }
-                RoundedAvatar {
-                    Layout.alignment: Qt.AlignHCenter
-                    Layout.preferredWidth: 112
-                    Layout.preferredHeight: 112
-                    source: preferencesController.avatarUrl
-                    fallbackText: preferencesController.avatarInitial
-                    fallbackFontSize: 36
-                    backgroundColor: theme.accent
-                    borderColor: theme.borderStrong
-                }
-                RowLayout {
-                    Layout.alignment: Qt.AlignHCenter
-                    PillButton { text: i18n.text("upload_avatar"); onClicked: preferencesController.uploadAvatar() }
-                    PillButton { text: i18n.text("clear_avatar"); enabled: !!preferencesController.avatarUrl; onClicked: preferencesController.clearAvatar() }
                 }
                 Item { Layout.fillHeight: true }
             }
@@ -656,32 +705,34 @@ Item {
                 ColumnLayout {
                     width: accountDrawer.availableWidth
                     spacing: 12
-                    RowLayout {
+                    DrawerPageHeader {
+                        title: i18n.text("avatar_status")
+                        detail: i18n.text("avatar_status_detail")
+                        onBack: root.drawerPage = 0
+                    }
+                    Card {
                         Layout.fillWidth: true
-                        Layout.margins: 12
-                        Button {
-                            id: avatarStatusBackButton
-                            implicitWidth: 42
-                            implicitHeight: 42
-                            onClicked: root.drawerPage = 0
-                            HoverHandler { cursorShape: Qt.PointingHandCursor }
-                            background: Rectangle { radius: theme.radiusMedium; color: avatarStatusBackButton.hovered ? theme.navHover : "transparent" }
-                            contentItem: VectorIcon { name: "back"; color: theme.text }
+                        Layout.leftMargin: 14
+                        Layout.rightMargin: 14
+                        implicitHeight: statusEditor.implicitHeight + 28
+                        ColumnLayout {
+                            id: statusEditor
+                            anchors.fill: parent
+                            anchors.margins: 14
+                            spacing: 9
+                            AvatarStatusBadge { status: root.draftAvatarStatus || preferencesController.avatarStatus }
+                            TextField {
+                                Layout.fillWidth: true
+                                text: root.draftAvatarStatus
+                                placeholderText: i18n.text("status_placeholder")
+                                onTextChanged: root.draftAvatarStatus = text
+                            }
+                            RowLayout {
+                                Item { Layout.fillWidth: true }
+                                PillButton { text: i18n.text("save"); primary: true; onClicked: root.applyAvatarStatus(root.draftAvatarStatus) }
+                                PillButton { text: i18n.text("clear_status"); enabled: !!preferencesController.avatarStatus; onClicked: root.applyAvatarStatus("") }
+                            }
                         }
-                        Text { text: i18n.text("avatar_status"); color: theme.text; font.pixelSize: 20; font.weight: Font.Bold }
-                    }
-                    TextField {
-                        Layout.fillWidth: true
-                        Layout.leftMargin: 18
-                        Layout.rightMargin: 18
-                        text: root.draftAvatarStatus
-                        placeholderText: i18n.text("status_placeholder")
-                        onTextChanged: root.draftAvatarStatus = text
-                    }
-                    RowLayout {
-                        Layout.alignment: Qt.AlignHCenter
-                        PillButton { text: i18n.text("save"); primary: true; onClicked: root.applyAvatarStatus(root.draftAvatarStatus) }
-                        PillButton { text: i18n.text("clear_status"); enabled: !!preferencesController.avatarStatus; onClicked: root.applyAvatarStatus("") }
                     }
                     Text { Layout.leftMargin: 18; text: i18n.text("status_quick"); color: theme.textMuted; font.pixelSize: 12 }
                     Flow {
@@ -719,31 +770,28 @@ Item {
 
             ColumnLayout {
                 spacing: 12
-                RowLayout {
-                    Layout.fillWidth: true
-                    Layout.margins: 12
-                    Button {
-                        id: languageBackButton
-                        implicitWidth: 42
-                        implicitHeight: 42
-                        onClicked: root.drawerPage = 0
-                        HoverHandler { cursorShape: Qt.PointingHandCursor }
-                        background: Rectangle { radius: theme.radiusMedium; color: languageBackButton.hovered ? theme.navHover : "transparent" }
-                        contentItem: VectorIcon { name: "back"; color: theme.text }
-                    }
-                    Text { text: i18n.text("interface_language"); color: theme.text; font.pixelSize: 20; font.weight: Font.Bold }
+                DrawerPageHeader {
+                    title: i18n.text("interface_language")
+                    detail: i18n.text("language_page_detail")
+                    onBack: root.drawerPage = 0
                 }
-                AppearanceChoiceRow {
+                Card {
                     Layout.fillWidth: true
-                    Layout.leftMargin: 18
-                    Layout.rightMargin: 18
-                    label: i18n.text("interface_language")
-                    selectedValue: localeController.language
-                    choices: [
-                        { value: "zh", label: "language_zh" },
-                        { value: "en", label: "language_en" }
-                    ]
-                    onSelected: value => localeController.setLanguage(value)
+                    Layout.leftMargin: 14
+                    Layout.rightMargin: 14
+                    implicitHeight: languageChoices.implicitHeight + 28
+                    AppearanceChoiceRow {
+                        id: languageChoices
+                        anchors.fill: parent
+                        anchors.margins: 14
+                        label: i18n.text("interface_language")
+                        selectedValue: localeController.language
+                        choices: [
+                            { value: "zh", label: "language_zh" },
+                            { value: "en", label: "language_en" }
+                        ]
+                        onSelected: value => localeController.setLanguage(value)
+                    }
                 }
                 Item { Layout.fillHeight: true }
             }

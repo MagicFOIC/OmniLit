@@ -22,8 +22,13 @@ QtObject {
     readonly property color canvasBottom: preset.canvasBottom
     readonly property color surface: preset.surface
     readonly property color surfaceSoft: preset.surfaceSoft
+    readonly property color surfaceElevated: mix(accent, surface, dark ? 0.035 : 0.018)
+    readonly property color surfaceTint: mix(accent, surface, dark ? 0.10 : 0.045)
+    readonly property color sidebarSurface: mix(accent, surfaceSoft, dark ? 0.055 : 0.025)
+    readonly property color sidebarBorder: mix(accent, border, dark ? 0.15 : 0.08)
     readonly property color border: highContrast ? preset.borderStrong : preset.border
     readonly property color borderStrong: highContrast ? preset.textMuted : preset.borderStrong
+    readonly property color divider: mix(accent, border, dark ? 0.12 : 0.055)
     readonly property color text: preset.text
     readonly property color textMuted: highContrast ? preset.textSecondary : preset.textMuted
     readonly property color disabledText: preset.disabledText
@@ -37,6 +42,7 @@ QtObject {
     readonly property color success: preset.success
     readonly property color successSoft: mix(success, surface, dark ? 0.17 : 0.08)
     readonly property color successBorder: mix(success, border, 0.42)
+    readonly property color presence: success
     readonly property color warning: preset.warning
     readonly property color warningSoft: mix(warning, surface, dark ? 0.18 : 0.08)
     readonly property color error: preset.error

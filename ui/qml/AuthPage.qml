@@ -14,6 +14,28 @@ Item {
         anchors.fill: parent
         color: theme.canvasTop
     }
+    Rectangle {
+        width: 196
+        height: 196
+        radius: 72
+        x: -78
+        y: -82
+        rotation: -12
+        color: theme.accentSofter
+        border.color: theme.border
+    }
+    Rectangle {
+        width: 150
+        height: 150
+        radius: 54
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        anchors.rightMargin: -58
+        anchors.bottomMargin: -54
+        rotation: 18
+        color: theme.accentSofter
+        border.color: theme.border
+    }
     Card {
         id: loginCard
         width: Math.min(440, parent.width - metrics.pageMargin * 2)
@@ -25,7 +47,15 @@ Item {
         ColumnLayout {
             anchors.fill: parent
             anchors.margins: 22
-            spacing: 9
+            spacing: 8
+
+            Text {
+                text: registerMode ? i18n.text("auth_register_eyebrow") : i18n.text("auth_login_eyebrow")
+                color: theme.accent
+                font.pixelSize: 10
+                font.weight: Font.Bold
+                font.letterSpacing: 1.0
+            }
 
             RowLayout {
                 id: titleRow
@@ -33,17 +63,17 @@ Item {
                 spacing: 12
 
                 Rectangle {
-                    Layout.preferredWidth: 48
-                    Layout.preferredHeight: 48
-                    radius: 14
+                    Layout.preferredWidth: 52
+                    Layout.preferredHeight: 52
+                    radius: 16
                     color: theme.accentSofter
-                    border.color: theme.border
-                    Image { anchors.fill: parent; anchors.margins: 7; source: appController.logoUrl; fillMode: Image.PreserveAspectFit }
+                    border.color: theme.accentSoft
+                    Image { anchors.fill: parent; anchors.margins: 8; source: appController.logoUrl; fillMode: Image.PreserveAspectFit }
                 }
 
                 ColumnLayout {
                     spacing: 1
-                    Text { text: "OmniLit"; color: theme.text; font.pixelSize: 24; font.weight: Font.Bold }
+                    Text { text: "OmniLit"; color: theme.text; font.pixelSize: 26; font.weight: Font.Bold; font.letterSpacing: -0.5 }
                     Text { text: i18n.text(registerMode ? "local_account" : "workspace_login"); color: theme.textMuted; font.pixelSize: 12 }
                 }
 
@@ -77,7 +107,15 @@ Item {
                 }
             }
 
-            Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: "#e2e8f0" }
+            Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: theme.divider }
+
+            Text {
+                Layout.fillWidth: true
+                text: i18n.text(registerMode ? "auth_register_desc" : "auth_login_desc")
+                color: theme.textMuted
+                font.pixelSize: 12
+                wrapMode: Text.WordWrap
+            }
 
             ColumnLayout {
                 Layout.fillWidth: true

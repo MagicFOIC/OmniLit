@@ -9,6 +9,17 @@ Card {
     Theme { id: theme }
     Layout.fillWidth: true
     Layout.preferredHeight: 84
+    Rectangle {
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.rightMargin: 10
+        anchors.topMargin: 10
+        width: 30
+        height: 4
+        radius: 2
+        color: theme.accentSoft
+        Rectangle { width: 12; height: 4; radius: 2; color: theme.accent }
+    }
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 10

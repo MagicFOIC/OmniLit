@@ -1257,6 +1257,22 @@ class QtOnlyTests(unittest.TestCase):
         self.assertIn("authController.logout()", workspace)
         self.assertIn("PathSvg", vector_icon)
 
+    def test_workspace_shell_uses_branded_sidebar_and_shared_drawer_components(self) -> None:
+        qml_dir = ROOT / "ui" / "qml"
+        auth = (qml_dir / "AuthPage.qml").read_text(encoding="utf-8")
+        theme = (qml_dir / "Theme.qml").read_text(encoding="utf-8")
+        workspace = (qml_dir / "Workspace.qml").read_text(encoding="utf-8")
+        self.assertTrue((qml_dir / "AvatarStatusBadge.qml").exists())
+        self.assertTrue((qml_dir / "DrawerMenuItem.qml").exists())
+        self.assertTrue((qml_dir / "DrawerPageHeader.qml").exists())
+        self.assertIn("theme.sidebarSurface", workspace)
+        self.assertIn('text: "RESEARCH DESK"', workspace)
+        self.assertIn("AvatarStatusBadge {", workspace)
+        self.assertIn("DrawerMenuItem {", workspace)
+        self.assertIn("DrawerPageHeader {", workspace)
+        self.assertIn("readonly property color surfaceElevated", theme)
+        self.assertIn('i18n.text(registerMode ? "auth_register_desc" : "auth_login_desc")', auth)
+
     def test_sidebar_uses_modern_tooltips_and_switchable_labels(self) -> None:
         qml_dir = ROOT / "ui" / "qml"
         workspace = (qml_dir / "Workspace.qml").read_text(encoding="utf-8")
