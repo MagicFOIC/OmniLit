@@ -1,0 +1,54 @@
+name: Build macOS App
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build-macos:
+    name: Build OmniLit.app
+    runs-on: macos-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up OmniLit Conda environment
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          activate-environment: OmniLit
+          environment-file: environment.yml
+          auto-activate-base: false
+
+      - name: Verify Conda environment
+        shell: bash -el {0}
+        run: |
+          test "$CONDA_DEFAULT_ENV" = "OmniLit"
+          python -c "import PySide6, requests, fitz, openai, reportlab, tqdm; from cryptography.fernet import Fernet"
+          python -m PyInstaller --version
+
+      - name: Build app bundle
+        shell: bash -el {0}
+        run: |
+          chmod +x ./build_omnilit_macos.sh
+          ./build_omnilit_macos.sh --skip-key
+
+      - name: Verify app bundle
+        run: |
+          test -d "dist/OmniLit.app"
+          test -f "release/macos/"*.zip
+          shasum -a 256 "release/macos/"*.zip
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OmniLit-macOS
+          path: |
+            release/macos/*.zip
+            release/macos/*.sha256
+          if-no-files-found: error

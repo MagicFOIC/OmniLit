@@ -1,0 +1,304 @@
+from __future__ import annotations
+
+from typing import Any
+
+from PySide6.QtCore import QObject, Property, Signal, Slot
+
+
+TEXTS: dict[str, tuple[str, str]] = {
+    "sort": ("排序", "Sort"),
+    "sort_default": ("默认排序", "Default order"),
+    "sort_relevance": ("相关性", "Relevance"),
+    "sort_citations": ("引用量", "Citations"),
+    "sort_date": ("发布日期", "Publication date"),
+    "max_records": ("最大记录数", "Maximum records"),
+    "optional": ("可选", "Optional"),
+    "advanced": ("高级选项", "Advanced options"),
+    "collapse_advanced": ("收起高级选项", "Hide advanced options"),
+    "request_delay": ("请求间隔", "Request delay"),
+    "page_delay": ("翻页间隔", "Page delay"),
+    "min_pdf_bytes": ("PDF 最小字节", "Minimum PDF bytes"),
+    "match_ratio": ("标题匹配阈值", "Title match ratio"),
+    "loop_sleep": ("循环等待秒数", "Loop sleep seconds"),
+    "runtime_hours": ("最长运行小时", "Maximum runtime hours"),
+    "retry_missing": ("重试缺失 PDF", "Retry missing PDFs"),
+    "write_retry": ("写入重试列表", "Write retry list"),
+    "strict_match": ("严格标题匹配", "Strict title match"),
+    "loop_job": ("循环任务", "Loop job"),
+    "fast_forward": ("快速跳过已处理页", "Fast-forward processed pages"),
+    "fetched": ("已抓取", "Fetched"),
+    "saved": ("已保存", "Saved"),
+    "downloaded": ("已下载", "Downloaded"),
+    "metadata": ("元数据", "Metadata"),
+    "deployment_key_advanced": ("部署 Key 高级选项", "Deployment key advanced options"),
+    "collapse_deployment_key_advanced": ("收起部署 Key 高级选项", "Hide deployment key advanced options"),
+    "deployment_key_path": ("部署 Key 路径", "Deployment key path"),
+    "default_key_password": ("部署 Key 密码", "Deployment key password"),
+    "unlock_default_key": ("解锁部署 Key", "Unlock deployment key"),
+    "unlocked": ("已解锁", "Unlocked"),
+    "locked": ("未解锁", "Locked"),
+    "ready": ("准备就绪", "Ready"),
+    "language": ("English", "中文"),
+    "login_hint": ("请输入账号密码。", "Enter your username and password."),
+    "login": ("登录", "Sign in"),
+    "register_login": ("注册并登录", "Register and sign in"),
+    "create_account": ("没有账号，创建一个", "Create an account"),
+    "back_login": ("已有账号，返回登录", "Back to sign in"),
+    "local_account": ("创建本地账号", "Create a local account"),
+    "workspace_login": ("登录 OmniLit 文献工具", "Sign in to OmniLit"),
+    "username": ("用户名", "Username"),
+    "password": ("密码", "Password"),
+    "confirm_password": ("确认密码", "Confirm password"),
+    "remember_password": ("记住密码", "Remember password"),
+    "password_mismatch": ("两次输入的密码不一致。", "The passwords do not match."),
+    "logged_in": ("已登录：{username}", "Signed in: {username}"),
+    "registered": ("已注册并登录：{username}", "Registered and signed in: {username}"),
+    "logged_out": ("已退出登录。", "Signed out."),
+    "migrated": ("已补齐 {count} 项旧版运行数据。", "Filled {count} missing items from legacy data."),
+    "nav_download": ("文献下载", "Literature download"),
+    "nav_translate": ("文献翻译", "Literature translation"),
+    "nav_update": ("更新", "Updates"),
+    "sidebar_expand": ("展开侧边栏", "Expand sidebar"),
+    "sidebar_collapse": ("收起侧边栏", "Collapse sidebar"),
+    "logout": ("退出登录", "Sign out"),
+    "upload_avatar": ("上传头像", "Upload avatar"),
+    "clear_avatar": ("清除头像", "Clear avatar"),
+    "avatar_status": ("头像状态", "Avatar status"),
+    "clear_status": ("清除状态", "Clear status"),
+    "interface_language": ("界面语言", "Interface language"),
+    "language_zh": ("简体中文", "Chinese"),
+    "language_en": ("English", "English"),
+    "appearance": ("界面外观", "Appearance"),
+    "academic_appearance_desc": ("面向长时间科研阅读的学术外观系统", "Academic appearance for long research sessions"),
+    "academic_theme_presets": ("学术主题预设", "Academic theme presets"),
+    "preset_scholar_light": ("Scholar Light", "Scholar Light"),
+    "preset_manuscript_sepia": ("Manuscript Sepia", "Manuscript Sepia"),
+    "preset_library_dark": ("Library Dark", "Library Dark"),
+    "preset_journal_blue": ("Journal Blue", "Journal Blue"),
+    "preset_arxiv_minimal": ("arXiv Minimal", "arXiv Minimal"),
+    "preset_nature_green": ("Nature Green", "Nature Green"),
+    "update_management": ("更新管理", "Update management"),
+    "theme_mode": ("主题模式", "Theme mode"),
+    "theme_light": ("浅色", "Light"),
+    "theme_dark": ("深色", "Dark"),
+    "theme_system": ("跟随系统", "Follow system"),
+    "theme_auto_night": ("自动夜间", "Automatic night"),
+    "local_timezone": ("本地时区", "Local timezone"),
+    "accent_color": ("强调色", "Accent color"),
+    "accent_scholar_blue": ("Scholar Blue", "Scholar Blue"),
+    "accent_ink_navy": ("Ink Navy", "Ink Navy"),
+    "accent_citation_purple": ("Citation Purple", "Citation Purple"),
+    "accent_doi_teal": ("DOI Teal", "DOI Teal"),
+    "accent_nature_green": ("Nature Green", "Nature Green"),
+    "accent_review_magenta": ("Review Magenta", "Review Magenta"),
+    "apply": ("应用", "Apply"),
+    "extract_background_accent": ("提取主色", "Extract color"),
+    "reading_comfort": ("阅读舒适度", "Reading comfort"),
+    "font_size": ("字体大小", "Font size"),
+    "size_small": ("小", "Small"),
+    "size_standard": ("标准", "Standard"),
+    "size_large": ("大", "Large"),
+    "size_xlarge": ("超大", "Extra large"),
+    "interface_density": ("界面密度", "Interface density"),
+    "density_compact": ("紧凑", "Compact"),
+    "density_standard": ("标准", "Standard"),
+    "density_relaxed": ("宽松", "Relaxed"),
+    "corner_radius": ("圆角大小", "Corner radius"),
+    "radius_square": ("直角", "Square"),
+    "radius_subtle": ("轻圆角", "Subtle"),
+    "radius_modern": ("现代圆角", "Modern"),
+    "pdf_reading_background": ("PDF 阅读背景", "PDF reading background"),
+    "background_white": ("纯白", "White"),
+    "background_sepia": ("米白", "Sepia"),
+    "background_gray": ("护眼灰", "Soft gray"),
+    "background_dark": ("深色", "Dark"),
+    "translation_line_height": ("翻译区行距", "Translation line height"),
+    "line_height_comfortable": ("舒适", "Comfortable"),
+    "workspace_background": ("工作区背景", "Workspace background"),
+    "background_none": ("无背景", "None"),
+    "background_solid": ("纯色", "Solid"),
+    "background_gradient": ("渐变", "Gradient"),
+    "background_paper": ("纸张纹理", "Paper"),
+    "background_grid": ("网格纸", "Grid"),
+    "background_image": ("自定义图片", "Custom image"),
+    "background_opacity": ("背景透明度", "Background opacity"),
+    "background_blur": ("背景模糊", "Background blur"),
+    "advanced_appearance": ("高级设置", "Advanced"),
+    "high_contrast": ("高对比度", "High contrast"),
+    "reduce_motion": ("减少动画", "Reduce motion"),
+    "night_start": ("夜间开始", "Night starts"),
+    "night_end": ("夜间结束", "Night ends"),
+    "reset_appearance": ("重置外观", "Reset appearance"),
+    "appearance_preview": ("实时学术预览", "Live academic preview"),
+    "appearance_preview_desc": ("主题、阅读参数与背景调整会立即反映在此处。", "Theme, reading, and background changes appear here immediately."),
+    "pdf_downloaded": ("PDF 已下载", "PDF downloaded"),
+    "pdf_download_progress": ("PDF 下载进度", "PDF download progress"),
+    "search_papers": ("搜索标题、DOI 或 arXiv ID", "Search title, DOI, or arXiv ID"),
+    "no_background": ("未上传自定义背景", "No custom background"),
+    "upload_background": ("上传背景", "Upload background"),
+    "clear_background": ("清除背景", "Clear background"),
+    "choose": ("选择", "Choose"),
+    "open": ("打开", "Open"),
+    "stop": ("停止", "Stop"),
+    "running": ("运行中", "Running"),
+    "not_started": ("尚未开始", "Not started"),
+    "download_title": ("文献下载", "Literature download"),
+    "download_desc": ("可选择多个开源文献库，筛选开放获取记录、下载 PDF 并断点续跑。", "Choose open literature databases, filter open access records, download PDFs, and resume jobs."),
+    "literature_sources": ("文献库", "Literature databases"),
+    "literature_records": ("文献记录", "Literature records"),
+    "email": ("联系邮箱", "Contact email"),
+    "output_dir": ("输出目录", "Output directory"),
+    "from_date": ("起始日期", "From date"),
+    "to_date": ("结束日期", "To date"),
+    "keywords": ("关键词", "Keywords"),
+    "pages": ("页数", "Pages"),
+    "per_page": ("每页数量", "Per page"),
+    "download_pdf": ("下载 PDF", "Download PDFs"),
+    "resume": ("断点续跑", "Resume"),
+    "oa_only": ("仅开放获取", "Open access only"),
+    "start_download": ("开始下载", "Start download"),
+    "download_started": ("下载任务已启动。", "Download job started."),
+    "download_done": ("下载任务完成。", "Download job finished."),
+    "download_stopped": ("下载已停止。", "Download stopped."),
+    "request_stop_download": ("正在请求停止下载任务...", "Requesting download stop..."),
+    "download_busy": ("下载任务正在运行。", "A download job is already running."),
+    "config_error": ("配置错误：{error}", "Configuration error: {error}"),
+    "download_failed": ("下载失败：{error}", "Download failed: {error}"),
+    "translate_title": ("文献翻译", "Literature translation"),
+    "translate_desc": ("面向学术文献的解析、翻译、版式重建、缓存与实时预览。", "Translate academic literature with parsing, layout reconstruction, caching, and live preview."),
+    "input_dir": ("输入目录", "Input directory"),
+    "model_profile": ("模型档案", "Model profile"),
+    "model_id": ("模型 ID", "Model ID"),
+    "api_url": ("API 地址", "API URL"),
+    "glossary": ("术语表", "Glossaries"),
+    "select_glossary": ("选择术语表", "Select glossaries"),
+    "refresh": ("刷新", "Refresh"),
+    "selected_count": ("已选择 {count} 个", "{count} selected"),
+    "layout_only": ("仅测试版式", "Layout only"),
+    "use_cache": ("使用缓存", "Use cache"),
+    "summary_page": ("追加摘要页", "Append summary page"),
+    "start_translate": ("开始翻译", "Start translation"),
+    "translate_started": ("翻译任务已启动，共 {count} 个 PDF。", "Translation started for {count} PDF(s)."),
+    "translate_done": ("翻译任务完成。", "Translation finished."),
+    "translate_failed": ("翻译失败：{error}", "Translation failed: {error}"),
+    "translate_cancelled": ("翻译任务已取消。", "Translation cancelled."),
+    "request_stop_translate": ("正在请求停止翻译任务...", "Requesting translation stop..."),
+    "waiting_job": ("等待任务", "Waiting for a job"),
+    "live_preview": ("实时翻译预览", "Live translation preview"),
+    "task_log": ("任务日志", "Task log"),
+    "preview_waiting": ("翻译开始后，这里会实时显示已经完成的译文。", "Completed translations will appear here while the job is running."),
+    "welcome": ("欢迎回来，{username}", "Welcome back, {username}"),
+    "current_version": ("当前版本", "Current version"),
+    "data_dir": ("用户数据目录", "User data directory"),
+    "ready_value": ("已就绪", "Ready"),
+    "update_status": ("更新状态", "Update status"),
+    "enter_download": ("进入下载", "Open downloads"),
+    "enter_translate": ("进入翻译", "Open translation"),
+    "all": ("全选", "Select all"),
+    "default": ("恢复默认", "Restore default"),
+    "batch_size": ("批大小", "Batch size"),
+    "batch_chars": ("批字符数", "Batch characters"),
+    "test_pages": ("测试页数", "Test pages"),
+    "all_pages": ("全部", "All"),
+    "translate_refs": ("翻译参考文献", "Translate references"),
+    "translate_headers": ("翻译页眉页脚", "Translate headers and footers"),
+    "unlock": ("解锁", "Unlock"),
+    "remember_key": ("加密记住", "Remember encrypted"),
+    "clear_key": ("清除已记住", "Clear remembered"),
+    "show": ("显示", "Show"),
+    "key_exists": ("已存在部署 Key 文件", "Deployment key file exists"),
+    "key_missing": ("尚未创建部署 Key 文件", "Deployment key file has not been created"),
+    "save_deployment_key": ("保存部署 Key", "Save deployment key"),
+    "remote_update": ("远程更新", "Remote update"),
+    "version_history": ("版本记录", "Version history"),
+    "download_confirm": ("确认下载版本 ", "Download version "),
+    "apply_confirm": ("确认应用已下载的更新？", "Apply the downloaded update?"),
+    "update_title": ("更新", "Updates"),
+    "check_update": ("检查更新", "Check for updates"),
+    "download_update": ("下载更新", "Download update"),
+    "apply_update": ("应用更新", "Apply update"),
+    "checking_update": ("正在检查更新...", "Checking for updates..."),
+    "no_update_history": ("暂无更新记录。", "No update history."),
+    "download_not_started": ("下载进度：未开始", "Download progress: not started"),
+    "latest_unknown": ("未检查", "Not checked"),
+    "sha_unknown": ("未获取", "Unavailable"),
+    "save": ("保存", "Save"),
+    "clear": ("清空", "Clear"),
+    "today": ("今天", "Today"),
+    "show_password": ("显示密码", "Show password"),
+    "hide_password": ("隐藏密码", "Hide password"),
+    "default_key_unconfigured": ("未配置部署 Key。", "Deployment key is not configured."),
+    "default_key_unlock_failed": ("部署 Key 解锁失败：{error}", "Failed to unlock the deployment key: {error}"),
+    "default_key_unlocked": ("已解锁部署 Key：{source}", "Unlocked the deployment key: {source}"),
+    "user_key_unlock_failed": ("用户 Key 解锁失败：{error}", "Failed to unlock the remembered user key: {error}"),
+    "user_key_unlocked": ("已解锁本地记住的用户 Key。", "Unlocked the remembered user key."),
+    "user_key_save_failed": ("保存用户 Key 失败：{error}", "Failed to save the user key: {error}"),
+    "user_key_saved": ("已加密保存用户 Key。", "Saved the encrypted user key."),
+    "user_key_cleared": ("已清除本地记住的用户 Key。", "Cleared the remembered user key."),
+    "key_write_failed": ("写入失败：{error}", "Write failed: {error}"),
+    "default_key_saved": ("已保存部署 Key，并载入当前会话。", "Saved the deployment key and loaded it into the current session."),
+    "invalid_update_source": ("更新源无效：{error}", "Invalid update source: {error}"),
+    "check_update_failed": ("检查更新失败：{error}", "Failed to check for updates: {error}"),
+    "downloading_version": ("正在下载版本 {version}...", "Downloading version {version}..."),
+    "downloaded_version": ("已下载版本 {version}。", "Downloaded version {version}."),
+    "download_update_failed": ("下载更新失败：{error}", "Failed to download the update: {error}"),
+    "manual_update": ("当前平台请打开下载目录并手动安装更新。", "Open the download directory and install the update manually on this platform."),
+    "apply_update_failed": ("应用更新失败：{error}", "Failed to apply the update: {error}"),
+    "input_dir_missing": ("输入目录不存在。", "The input directory does not exist."),
+    "api_key_required": ("请输入 API Key，或解锁已保存 Key，或启用仅测试版式。", "Enter an API key, unlock a saved key, or enable layout-only mode."),
+    "pdf_missing": ("输入目录中没有 PDF 文件。", "The input directory does not contain PDF files."),
+}
+
+
+def tr(language: str, key: str, **values: Any) -> str:
+    """翻译消息。参数：语言、键和值。返回值：格式化后的界面文本。"""
+    pair = TEXTS.get(key)
+    text = pair[1 if language == "en" else 0] if pair else key
+    return text.format(**values)
+
+
+class LocaleController(QObject):
+    """管理界面语言并持久化用户选择。"""
+
+    languageChanged = Signal()
+
+    def __init__(self, store) -> None:
+        """初始化语言控制器。参数：账号设置存储。返回值：无。"""
+        super().__init__()
+        self.store = store
+        saved = store.setting("language", "zh")
+        self._language = saved if saved in {"zh", "en"} else "zh"
+
+    @Property(str, notify=languageChanged)
+    def language(self) -> str:
+        """返回当前语言。参数：无。返回值：zh 或 en。"""
+        return self._language
+
+    @Slot(str, result=str)
+    def text(self, key: str) -> str:
+        """翻译 QML 文本。参数：翻译键。返回值：当前语言文本。"""
+        return tr(self._language, key)
+
+    @Slot(str, "QVariantMap", result=str)
+    def formatText(self, key: str, values: dict[str, Any]) -> str:
+        """翻译 QML 动态文本。参数：翻译键和值字典。返回值：格式化后的当前语言文本。"""
+        return tr(self._language, key, **dict(values or {}))
+
+    def textf(self, key: str, **values: Any) -> str:
+        """翻译 Python 动态文本。参数：翻译键和值。返回值：当前语言文本。"""
+        return tr(self._language, key, **values)
+
+    @Slot()
+    def toggleLanguage(self) -> None:
+        """切换中英文。参数：无。返回值：无。"""
+        self.setLanguage("en" if self._language == "zh" else "zh")
+
+    @Slot(str)
+    def setLanguage(self, language: str) -> None:
+        """设置并保存语言。参数：zh 或 en。返回值：无。"""
+        value = language if language in {"zh", "en"} else "zh"
+        if value == self._language:
+            return
+        self._language = value
+        self.store.set_setting("language", value)
+        self.languageChanged.emit()

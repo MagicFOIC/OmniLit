@@ -1,0 +1,203 @@
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
+
+Item {
+    id: root
+    property bool registerMode: false
+    Motion { id: motion }
+    I18n { id: i18n }
+    Theme { id: theme; dynamic: false }
+    LayoutMetrics { id: metrics; viewportWidth: root.width; viewportHeight: root.height }
+
+    Rectangle {
+        anchors.fill: parent
+        color: theme.canvasTop
+    }
+    Card {
+        id: loginCard
+        width: Math.min(440, parent.width - metrics.pageMargin * 2)
+        height: Math.min(548, parent.height - metrics.pageMargin * 2)
+        anchors.centerIn: parent
+        opacity: 0
+        scale: 0.98
+
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 22
+            spacing: 9
+
+            RowLayout {
+                id: titleRow
+                Layout.fillWidth: true
+                spacing: 12
+
+                Rectangle {
+                    Layout.preferredWidth: 48
+                    Layout.preferredHeight: 48
+                    radius: 14
+                    color: theme.accentSofter
+                    border.color: theme.border
+                    Image { anchors.fill: parent; anchors.margins: 7; source: appController.logoUrl; fillMode: Image.PreserveAspectFit }
+                }
+
+                ColumnLayout {
+                    spacing: 1
+                    Text { text: "OmniLit"; color: theme.text; font.pixelSize: 24; font.weight: Font.Bold }
+                    Text { text: i18n.text(registerMode ? "local_account" : "workspace_login"); color: theme.textMuted; font.pixelSize: 12 }
+                }
+
+                Item { Layout.fillWidth: true }
+
+                Button {
+                    id: languageButton
+                    implicitHeight: 32
+                    leftPadding: 10
+                    rightPadding: 10
+                    hoverEnabled: true
+                    text: i18n.text("language")
+                    onClicked: localeController.toggleLanguage()
+
+                    HoverHandler { cursorShape: Qt.PointingHandCursor }
+                    background: Rectangle {
+                        radius: 9
+                        color: languageButton.hovered ? theme.accentSoft : theme.surfaceSoft
+                        border.color: languageButton.hovered ? theme.accent : theme.border
+                        Behavior on color { ColorAnimation { duration: motion.fast } }
+                        Behavior on border.color { ColorAnimation { duration: motion.fast } }
+                    }
+                    contentItem: Text {
+                        text: languageButton.text
+                        color: theme.accentStrong
+                        font.pixelSize: 12
+                        font.weight: Font.DemiBold
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                }
+            }
+
+            Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: "#e2e8f0" }
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 8
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 4
+                    Text { text: i18n.text("username"); color: theme.textMuted; font.pixelSize: 12; font.weight: Font.DemiBold }
+                    AuthTextField {
+                        id: username
+                        Layout.fillWidth: true
+                        iconName: "user"
+                        placeholderText: i18n.text("username")
+                        text: authController.rememberedUsername
+                        onAccepted: password.forceActiveFocus()
+                    }
+                }
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 4
+                    Text { text: i18n.text("password"); color: theme.textMuted; font.pixelSize: 12; font.weight: Font.DemiBold }
+                    AuthTextField {
+                        id: password
+                        Layout.fillWidth: true
+                        iconName: "lock"
+                        placeholderText: i18n.text("password")
+                        text: authController.rememberedPassword
+                        echoMode: showPassword.checked ? TextInput.Normal : TextInput.Password
+                        onAccepted: root.submit()
+                    }
+                }
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 4
+                    visible: registerMode
+                    Text { text: i18n.text("confirm_password"); color: theme.textMuted; font.pixelSize: 12; font.weight: Font.DemiBold }
+                    AuthTextField {
+                        id: confirm
+                        Layout.fillWidth: true
+                        iconName: "lock"
+                        placeholderText: i18n.text("confirm_password")
+                        echoMode: TextInput.Password
+                        onAccepted: root.submit()
+                    }
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                CheckBox { id: remember; text: i18n.text("remember_password"); checked: authController.rememberPasswordChecked; font.pixelSize: 12 }
+                Item { Layout.fillWidth: true }
+                CheckBox { id: showPassword; text: i18n.text("show_password"); font.pixelSize: 12 }
+            }
+
+            StatusBanner { Layout.fillWidth: true; text: authController.statusText }
+
+            PillButton {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 44
+                primary: true
+                text: i18n.text(registerMode ? "register_login" : "login")
+                onClicked: root.submit()
+            }
+
+            Button {
+                id: modeSwitch
+                Layout.fillWidth: true
+                Layout.preferredHeight: 44
+                implicitHeight: 44
+                hoverEnabled: true
+                text: i18n.text(registerMode ? "back_login" : "create_account")
+                onClicked: {
+                    registerMode = !registerMode
+                    if (registerMode)
+                        confirm.forceActiveFocus()
+                    else
+                        username.forceActiveFocus()
+                }
+
+                HoverHandler { cursorShape: Qt.PointingHandCursor }
+                background: Rectangle {
+                    radius: 10
+                    color: modeSwitch.hovered ? theme.accentSoft : theme.surface
+                    border.color: modeSwitch.hovered ? theme.accent : theme.border
+                    Behavior on color { ColorAnimation { duration: motion.fast } }
+                    Behavior on border.color { ColorAnimation { duration: motion.fast } }
+                }
+                contentItem: Text {
+                    text: modeSwitch.text
+                    color: theme.accentStrong
+                    font.pixelSize: 13
+                    font.weight: Font.DemiBold
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
+            }
+
+            Item { Layout.fillHeight: true }
+            Text { text: "v" + appController.version; color: "#94a3b8"; font.pixelSize: 12; Layout.alignment: Qt.AlignHCenter }
+        }
+    }
+
+    ParallelAnimation {
+        id: appear
+        NumberAnimation { target: loginCard; property: "opacity"; from: 0; to: 1; duration: motion.normal; easing.type: Easing.OutCubic }
+        NumberAnimation { target: loginCard; property: "scale"; from: 0.98; to: 1; duration: motion.normal; easing.type: Easing.OutCubic }
+    }
+
+    Component.onCompleted: {
+        appear.start()
+        username.forceActiveFocus()
+    }
+
+    function submit() {
+        if (registerMode)
+            authController.registerUser(username.text, password.text, confirm.text, remember.checked)
+        else
+            authController.login(username.text, password.text, remember.checked)
+    }
+}

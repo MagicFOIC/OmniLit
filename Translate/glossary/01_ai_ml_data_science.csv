@@ -1,0 +1,42 @@
+﻿source,target
+artificial intelligence,人工智能
+machine learning,机器学习
+deep learning,深度学习
+large language model,大语言模型
+large language models,大语言模型
+LLM,LLM
+LLMs,LLMs
+GPT,GPT
+RAG,RAG
+retrieval-augmented generation,检索增强生成
+Agent,智能体
+Agents,智能体
+agent,智能体
+agents,智能体
+multi-agent,多智能体
+agentic framework,智能体框架
+tool-augmented LLM,工具增强的LLM
+prompt,提示词
+fine-tuning,微调
+embedding,嵌入
+knowledge graph,知识图谱
+graph database,图数据库
+node,节点
+edge,边
+entity extraction,实体抽取
+relation extraction,关系抽取
+classification,分类
+regression,回归
+prediction,预测
+training set,训练集
+test set,测试集
+feature sparsity,特征稀疏性
+ground truth,真实值
+accuracy,准确率
+precision,精确率
+recall,召回率
+F1 score,F1分数
+long-context,长上下文
+context window,上下文窗口
+hallucination,幻觉
+evidence-grounded,基于证据的

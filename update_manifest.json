@@ -1,0 +1,57 @@
+{
+  "version": "0.0.10",
+  "download_url": "https://originchaos.top/omnilit/OmniLit.exe",
+  "sha256": "99dcbba91c29c06efb4fdca85c5b6ba58a4c8d733a0008a73d4b7d434f68566c",
+  "mandatory": false,
+  "notes": "完成 Qt/QML 迁移收尾与交互抛光：程序目录数据、双语界面、日期选择器、密码记忆、旧账号兼容、可写术语表、页面过渡、弹窗动画和任务忙碌反馈。侧边栏设计。拓展栏集合所有设置，目前有头像设置，头像状态，界面语言，界面外观，更新管理",
+  "history": [
+    {
+      "version": "0.0.10",
+      "date": "2026-06-01 20:54:18",
+      "notes": "完成 Qt/QML 迁移收尾与交互抛光：程序目录数据、双语界面、日期选择器、密码记忆、旧账号兼容、可写术语表、页面过渡、弹窗动画和任务忙碌反馈。侧边栏设计。拓展栏集合所有设置，目前有头像设置，头像状态，界面语言，界面外观，更新管理",
+      "sha256": "99dcbba91c29c06efb4fdca85c5b6ba58a4c8d733a0008a73d4b7d434f68566c",
+      "download_url": "https://originchaos.top/omnilit/OmniLit.exe"
+    },
+    {
+      "version": "0.0.9",
+      "date": "2026-05-19 22:36:45",
+      "notes": "调整下载界面布局，更新界面布局",
+      "sha256": "7f583d349825a34faaa3db19762f59335749cac72cc72d4e66a1e7698083b656",
+      "download_url": "https://originchaos.top/omnilit/OmniLit.exe"
+    },
+    {
+      "version": "0.0.8",
+      "date": "2026-05-14 15:46:37",
+      "notes": "优化页眉页脚识别；优化长段落分页翻译过多导致文字变小；自适应屏幕分辨率；自动检查更新提示",
+      "sha256": "854e47131160f093a32e2fc22351bb6d20a7261db921667ddfb9a8d34352cbcb",
+      "download_url": "https://originchaos.top/omnilit/OmniLit.exe"
+    },
+    {
+      "version": "0.0.7",
+      "date": "2026-05-13 19:07:07",
+      "notes": "优化翻译，增加术语表",
+      "sha256": "9095cf6dc54bf67f464584b38be9fb9a901dee6c829172377554981102b498e2",
+      "download_url": "https://originchaos.top/omnilit/OmniLit.exe"
+    },
+    {
+      "version": "0.0.6",
+      "date": "2026-05-13 17:11:24",
+      "notes": "内测开始，完整优化",
+      "sha256": "72de69c41a837a87980d87202ee0a08ff5f8ec04bfc48589e8dbd51310983eba",
+      "download_url": "https://originchaos.top/omnilit/OmniLit.exe"
+    },
+    {
+      "version": "0.0.5",
+      "date": "2026-05-13 15:17:21",
+      "notes": "优化滚动条。",
+      "download_url": "https://originchaos.top/omnilit/OmniLit.exe"
+    },
+    {
+      "version": "0.0.4",
+      "date": "2026-05-13",
+      "notes": "修复更新打包。",
+      "sha256": "ec1b7e5f873659c6c5663730fcd4c0daa979e6fdf25c7d34c783761cd364dc19",
+      "download_url": "https://originchaos.top/omnilit/OmniLit.exe"
+    }
+  ]
+}

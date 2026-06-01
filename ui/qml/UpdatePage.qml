@@ -1,0 +1,74 @@
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
+
+ScrollView {
+    id: scroll
+    contentWidth: availableWidth
+    Motion { id: motion }
+    I18n { id: i18n }
+    Theme { id: theme }
+
+    Dialog {
+        id: downloadConfirm
+        title: i18n.text("download_update")
+        modal: true
+        anchors.centerIn: Overlay.overlay
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        onAccepted: updateController.download()
+        Text { text: i18n.text("download_confirm") + updateController.latestVersion + "?"; color: theme.text }
+    }
+    Dialog {
+        id: applyConfirm
+        title: i18n.text("apply_update")
+        modal: true
+        anchors.centerIn: Overlay.overlay
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        onAccepted: updateController.apply()
+        Text { text: i18n.text("apply_confirm"); color: theme.text }
+    }
+
+    ColumnLayout {
+        width: scroll.availableWidth
+        spacing: 12
+
+        Card {
+            Layout.fillWidth: true
+            Layout.leftMargin: 12
+            Layout.rightMargin: 12
+            implicitHeight: updatePanel.implicitHeight + 24
+            ColumnLayout {
+                id: updatePanel
+                anchors.fill: parent
+                anchors.margins: 12
+                spacing: 10
+                Text { text: i18n.text("remote_update"); color: theme.text; font.pixelSize: 17; font.weight: Font.Bold }
+                StatusBanner { Layout.fillWidth: true; text: updateController.statusText; busy: updateController.checking || updateController.downloading }
+                Text { text: "SHA-256: " + updateController.sha256Text; color: theme.textMuted; Layout.fillWidth: true; elide: Text.ElideMiddle; font.pixelSize: 12 }
+                PillButton { Layout.fillWidth: true; text: i18n.text("check_update"); primary: true; busy: updateController.checking; enabled: !updateController.checking && !updateController.downloading; onClicked: updateController.check() }
+                PillButton { Layout.fillWidth: true; text: i18n.text("download_update"); busy: updateController.downloading; enabled: updateController.available && !updateController.downloading; onClicked: downloadConfirm.open() }
+                PillButton { Layout.fillWidth: true; text: i18n.text("apply_update"); enabled: !!updateController.downloadedPath; onClicked: applyConfirm.open() }
+                SoftProgressBar { Layout.fillWidth: true; value: updateController.progressValue }
+                Text { text: updateController.progressText; color: theme.textMuted; Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: 12 }
+            }
+        }
+
+        Card {
+            Layout.fillWidth: true
+            Layout.leftMargin: 12
+            Layout.rightMargin: 12
+            Layout.preferredHeight: 260
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 12
+                Text { text: i18n.text("version_history"); color: theme.text; font.pixelSize: 16; font.weight: Font.Bold }
+                ScrollView {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    SoftTextArea { text: updateController.historyText; readOnly: true; wrapMode: TextArea.Wrap }
+                }
+            }
+        }
+        Item { Layout.preferredHeight: 12 }
+    }
+}

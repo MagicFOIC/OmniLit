@@ -1,0 +1,15 @@
+name: OmniLit
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - pyside6
+  - cryptography>=42.0.0
+  - pip:
+      - requests
+      - pymupdf==1.27.2.3
+      - openai>=2.0.0,<3
+      - reportlab>=4.5.0
+      - tqdm>=4.67.0
+      - pyinstaller>=6.0.0
