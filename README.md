@@ -32,14 +32,21 @@ OmniLit/
   Translate/
     literature_translate_core.py 文献翻译核心
     glossary/                   可写术语表
-    pdf/                        待翻译 PDF
-    out/                        翻译输出
+    pdf/                        待翻译 PDF；每篇文献的同名子目录保存译文、报告和缓存
+    out/                        旧版翻译输出，仅为兼容已有数据保留
     APIKey.enc                  加密部署 Key
   Update/
     update_core.py              更新核心
   omnilit_qt/
     app.py                      Qt 应用装配
-    controllers.py              页面控制器
+    controllers.py              控制器兼容导出层
+    app_controller.py           应用级状态控制器
+    auth_controller.py          本地账号控制器
+    preferences_controller.py   外观、头像和偏好控制器
+    download_controller.py      文献下载控制器
+    translation_controller.py   文献翻译控制器
+    update_controller.py        更新控制器
+    _controller_support.py      控制器共享辅助函数
     appearance.py               学术主题预设和外观选项
     paths.py                    资源和运行数据路径
     services.py                 动态模块加载和服务
@@ -55,7 +62,7 @@ OmniLit/
     smoke_update_apply.py       更新替换冒烟测试
   omnilit_qt_app.py             Qt/QML 启动入口
   encrypt_default_key.py        默认 Key 命令行生成器
-  sync_release_metadata.py      发布版本和哈希同步工具
+  sync_release_metadata.py      发布版本、哈希和签名同步工具
   build_omnilit_exe.bat         Windows 单文件构建脚本
   build_omnilit_macos.sh        macOS 构建脚本
   environment.yml               Conda 依赖声明
@@ -66,7 +73,7 @@ OmniLit/
   .omnilit-data-migrated-v2     运行数据迁移标记
 ```
 
-`.git/` 是版本库元数据。`.idea/`、`__pycache__/`、`build/`、`dist/`、`smoke_exe/`、QML 预览图和空闲时的 `updates/` 都属于可删除、可重建内容，已通过 `.gitignore` 排除。`updates/` 会在应用需要下载更新时自动创建。
+`.git/` 是版本库元数据。`.idea/`、`__pycache__/`、`build/`、`dist/`、`smoke_exe/`、QML 预览图和空闲时的 `updates/` 都属于可删除、可重建内容，已通过 `.gitignore` 排除。`updates/` 会在应用需要下载更新时自动创建。`.release/` 用于保存本机发布私钥，已排除提交，但必须单独安全备份。
 
 打包资源是只读的。账号库、下载记录、PDF、翻译输出、Key、可写术语表和更新临时文件保存在程序目录：
 
@@ -79,6 +86,8 @@ macOS:   OmniLit.app 同级目录
 首次启动新版 Qt 时，应用会从旧 `%LOCALAPPDATA%\magicfoic\OmniLit` 等目录补齐已有运行数据。只复制目标目录中不存在的文件，不删除旧数据，也不覆盖程序目录中的内容。需要隔离测试时可设置 `OMNILIT_DATA_DIR` 覆盖数据目录。
 
 `Translate/glossary` 是可写术语表目录。应用启动时补齐内置术语表，并动态扫描用户新增的 CSV、TSV、TXT、JSON 和 Markdown 文件。
+
+翻译页只使用一个“文献翻译目录”。每个 PDF 的新译文、报告和缓存写入该目录下以文献名命名的子目录；旧版 `Translate/out` 不会被删除，但新任务不再创建或依赖它。
 
 Qt 界面使用克制的短过渡动画：按钮按压、页面切换、日期和确认弹窗、任务忙碌态以及高级选项展开都会提供即时反馈，不改变后台任务行为。
 
@@ -166,7 +175,15 @@ build_omnilit_exe.bat --check-env
 
 `build_omnilit_exe.bat` 会优先使用已激活的 `OmniLit` 环境；未激活时也会通过 Conda 自动定位该环境。
 
-构建脚本使用 `omnilit_qt_app.py` 生成单文件 `OmniLit.exe`，并根据 `update_manifest.json` 同步版本信息和 SHA-256。
+构建脚本使用 `omnilit_qt_app.py` 生成单文件 `OmniLit.exe`，并根据 `update_manifest.json` 同步版本信息、SHA-256 和 Ed25519 发布签名。
+
+授权发布机必须提供与客户端内置公钥匹配的 Ed25519 私钥。默认路径为 `.release/update_ed25519_private_key.pem`，也可通过 `OMNILIT_UPDATE_SIGNING_KEY_FILE` 指向安全存储中的私钥。首次建立发布密钥或执行密钥轮换时运行：
+
+```bat
+conda run -n OmniLit python sync_release_metadata.py generate-signing-key
+```
+
+该命令会输出待内置公钥。密钥轮换必须显式更新 `Update/update_core.py` 中的信任表，并先发布同时信任新旧公钥的客户端。私钥不得提交到仓库。正式对外发布的 Windows 可执行文件仍建议使用 Authenticode 代码签名。
 
 ## 远程更新
 
@@ -176,7 +193,9 @@ build_omnilit_exe.bat --check-env
 https://originchaos.top/omnilit/update_manifest.json
 ```
 
-客户端每次检查都会绕过缓存读取最新清单，并比较远程版本和服务器发布文件 SHA-256。版本升高，或同版本 SHA-256 发生变化，都会触发更新。下载请求会携带目标 SHA-256 以隔离旧缓存，下载完成、替换前和替换后都会再次校验摘要。远程清单缺少合法 SHA-256 时拒绝更新。Windows 打包版可自动替换并重启；其他平台打开下载位置，由用户手动安装。
+客户端每次检查都会绕过缓存读取最新清单，并先使用内置 Ed25519 公钥验证清单签名。签名覆盖下载地址、SHA-256、版本、发布说明和强制更新标志等完整清单内容；无签名、未知公钥或字段被篡改的清单都会被拒绝。验签成功后，客户端比较远程版本和服务器发布文件 SHA-256。版本升高，或同版本 SHA-256 发生变化，都会触发更新。下载请求会携带目标 SHA-256 以隔离旧缓存，下载完成、替换前和替换后都会再次校验摘要。Windows 打包版可自动替换并重启；其他平台打开下载位置，由用户手动安装。
+
+下载、翻译和更新任务都使用可跟踪的非 daemon 后台线程。应用退出时会统一请求取消并等待任务完成当前原子写入；任务状态写入程序数据目录下的 `task_state/*.json`。下载 PDF 使用 `.part` 临时文件，断点 JSON 使用 `.tmp` 临时文件，元数据 JSONL 每条记录写入后都会刷新并同步到磁盘。
 
 macOS 打包说明见 [README_macOS.md](README_macOS.md)。
 

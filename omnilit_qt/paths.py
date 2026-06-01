@@ -110,7 +110,7 @@ class AppPaths:
 
     def ensure_data_dirs(self) -> None:
         """创建运行目录并补齐内置术语表。参数：无。返回值：无。"""
-        for relative in ("Download", "Download/pdfs", "Translate", "Translate/pdf", "Translate/out", "Translate/glossary", "updates"):
+        for relative in ("Download", "Download/pdfs", "Translate", "Translate/pdf", "Translate/glossary", "updates"):
             self.data(relative).mkdir(parents=True, exist_ok=True)
         resource_glossary = self.resource("Translate", "glossary")
         if resource_glossary != self.glossary_dir and resource_glossary.exists():

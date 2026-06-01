@@ -53,5 +53,10 @@
       "sha256": "ec1b7e5f873659c6c5663730fcd4c0daa979e6fdf25c7d34c783761cd364dc19",
       "download_url": "https://originchaos.top/omnilit/OmniLit.exe"
     }
-  ]
+  ],
+  "signature": {
+    "algorithm": "ed25519",
+    "key_id": "omnilit-release-2026-01",
+    "value": "sxQ9QQdQ/zJ/Sh9dM4jSihNv2c265mRHp0M+LkoLGE1hfPwX3k3fXCtDWwxwsH+UAI5gRPAWEGZWCqjE8eFaBA=="
+  }
 }

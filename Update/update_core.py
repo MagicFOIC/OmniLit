@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -14,13 +15,62 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
 
 NETWORK_TIMEOUT_SECONDS = 15
 CHUNK_SIZE = 1024 * 256
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
+MANIFEST_SIGNATURE_ALGORITHM = "ed25519"
+TRUSTED_MANIFEST_PUBLIC_KEYS = {
+    "omnilit-release-2026-01": "94qWrgdq+X8jvd81rRCztoPJ97Umclz8P4iN2XhhEuM=",
+}
 
 
 ProgressCallback = Callable[[int, int, str], None]
+
+
+def canonical_manifest_bytes(data: dict) -> bytes:
+    """Return stable bytes for signing all manifest fields except the signature."""
+    unsigned = {key: value for key, value in data.items() if key != "signature"}
+    return json.dumps(
+        unsigned,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def verify_manifest_signature(data: dict) -> str:
+    """Verify the manifest against the embedded Ed25519 release keys."""
+    signature = data.get("signature")
+    if not isinstance(signature, dict):
+        raise ValueError("Update manifest is unsigned; refusing an untrusted release.")
+    algorithm = str(signature.get("algorithm") or "").strip().lower()
+    if algorithm != MANIFEST_SIGNATURE_ALGORITHM:
+        raise ValueError(f"Unsupported update manifest signature algorithm: {algorithm or 'missing'}.")
+    key_id = str(signature.get("key_id") or "").strip()
+    public_key_text = TRUSTED_MANIFEST_PUBLIC_KEYS.get(key_id)
+    if not public_key_text:
+        raise ValueError(f"Update manifest uses an untrusted signing key: {key_id or 'missing'}.")
+    signature_text = str(signature.get("value") or "").strip()
+    try:
+        public_key_bytes = base64.b64decode(public_key_text, validate=True)
+        signature_bytes = base64.b64decode(signature_text, validate=True)
+        Ed25519PublicKey.from_public_bytes(public_key_bytes).verify(
+            signature_bytes,
+            canonical_manifest_bytes(data),
+        )
+    except (InvalidSignature, ValueError) as exc:
+        raise ValueError("Update manifest Ed25519 signature verification failed.") from exc
+    return key_id
+
+
+def validate_manifest_trust(manifest: "UpdateManifest") -> None:
+    """Reject manifest objects that did not pass embedded-key verification."""
+    if manifest.signature_key_id not in TRUSTED_MANIFEST_PUBLIC_KEYS:
+        raise ValueError("Update manifest is not trusted; refusing to download the release.")
 
 
 def localized(language: str, zh: str, en: str) -> str:
@@ -37,10 +87,12 @@ class UpdateManifest:
     notes: str = ""
     mandatory: bool = False
     history: tuple[dict[str, str], ...] = ()
+    signature_key_id: str = ""
 
     @classmethod
     def from_dict(cls, data: dict) -> "UpdateManifest":
         """解析清单。参数：JSON 字典。返回值：清单对象。"""
+        signature_key_id = verify_manifest_signature(data)
         version = str(data.get("version") or "").strip()
         download_url = str(data.get("download_url") or "").strip()
         if not version or not download_url:
@@ -69,6 +121,7 @@ class UpdateManifest:
             notes=str(data.get("notes") or "").strip(),
             mandatory=bool(data.get("mandatory")),
             history=tuple(history_items),
+            signature_key_id=signature_key_id,
         )
 
     def formatted_notes(self, limit: int | None = None) -> str:
@@ -217,8 +270,10 @@ def download_update(
     progress_callback: ProgressCallback | None = None,
     timeout: int = NETWORK_TIMEOUT_SECONDS,
     language: str = "zh",
+    stop_callback: Callable[[], bool] | None = None,
 ) -> Path:
     """下载并校验更新包。参数：清单、目录、进度回调、超时和语言。返回值：下载文件路径。"""
+    validate_manifest_trust(manifest)
     download_url = validate_remote_url(manifest.download_url, label="下载 URL")
     expected_sha256 = validate_sha256(manifest.sha256)
     request_url = _cache_busted_url(download_url, "_omnilit_sha256", expected_sha256)
@@ -228,26 +283,35 @@ def download_update(
     final_path = target_dir / f"OmniLit-{manifest.version}{suffix}"
     temporary_path = final_path.with_suffix(final_path.suffix + ".download")
 
-    with urllib.request.urlopen(_remote_request(request_url), timeout=timeout) as response:
-        total = int(response.headers.get("Content-Length") or 0)
-        downloaded = 0
-        if progress_callback:
-            progress_callback(downloaded, total, localized(language, f"准备下载 {manifest.version}", f"Preparing download {manifest.version}"))
-        with temporary_path.open("wb") as handle:
-            while True:
-                chunk = response.read(CHUNK_SIZE)
-                if not chunk:
-                    break
-                handle.write(chunk)
-                downloaded += len(chunk)
-                if progress_callback:
-                    progress_callback(downloaded, total, localized(language, f"正在下载 {manifest.version}", f"Downloading {manifest.version}"))
+    def raise_if_stopped() -> None:
+        if stop_callback and stop_callback():
+            raise RuntimeError(localized(language, "更新下载已取消。", "Update download cancelled."))
 
-    if not verify_sha256(temporary_path, expected_sha256):
+    try:
+        raise_if_stopped()
+        with urllib.request.urlopen(_remote_request(request_url), timeout=timeout) as response:
+            total = int(response.headers.get("Content-Length") or 0)
+            downloaded = 0
+            if progress_callback:
+                progress_callback(downloaded, total, localized(language, f"准备下载 {manifest.version}", f"Preparing download {manifest.version}"))
+            with temporary_path.open("wb") as handle:
+                while True:
+                    raise_if_stopped()
+                    chunk = response.read(CHUNK_SIZE)
+                    if not chunk:
+                        break
+                    handle.write(chunk)
+                    downloaded += len(chunk)
+                    if progress_callback:
+                        progress_callback(downloaded, total, localized(language, f"正在下载 {manifest.version}", f"Downloading {manifest.version}"))
+
+        raise_if_stopped()
+        if not verify_sha256(temporary_path, expected_sha256):
+            raise ValueError("安装包 SHA256 校验失败。")
+        temporary_path.replace(final_path)
+    except Exception:
         temporary_path.unlink(missing_ok=True)
-        raise ValueError("安装包 SHA256 校验失败。")
-
-    temporary_path.replace(final_path)
+        raise
     if progress_callback:
         progress_callback(final_path.stat().st_size, final_path.stat().st_size, localized(language, "下载完成", "Download complete"))
     return final_path

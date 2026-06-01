@@ -286,7 +286,20 @@ def save_crawl_state(path: Path, state: dict[str, CrawlStateEntry]) -> None:
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     with tmp_path.open("w", encoding="utf-8") as fout:
         json.dump(serializable, fout, ensure_ascii=False, indent=2)
+        fout.flush()
+        os.fsync(fout.fileno())
     tmp_path.replace(path)
+
+
+def append_jsonl_record(fout: TextIO, record: dict[str, Any]) -> None:
+    """Append one complete JSONL record and make it durable before reporting success."""
+    fout.write(json.dumps(record, ensure_ascii=False) + "\n")
+    fout.flush()
+    try:
+        os.fsync(fout.fileno())
+    except (AttributeError, OSError):
+        # In-memory streams used by callers and tests do not expose a descriptor.
+        pass
 
 
 def build_session(email: str) -> requests.Session:
@@ -1263,8 +1276,7 @@ def crawl_keyword(
                 )
                 if should_write:
                     record = build_record(keyword, item, unpaywall, download, pdf_candidates, config.meta_path)
-                    fout.write(json.dumps(record, ensure_ascii=False) + "\n")
-                    fout.flush()
+                    append_jsonl_record(fout, record)
                     stats.added_records += 1
                     emit_progress(config, stats, localized(config, f"已保存元数据：{record.get('title') or key}", f"Saved metadata: {record.get('title') or key}"))
             except requests.RequestException as exc:

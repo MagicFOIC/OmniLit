@@ -14,7 +14,7 @@ Item {
     LayoutMetrics { id: metrics; viewportWidth: root.width; viewportHeight: root.height }
 
     Timer { id: saveSettingsTimer; interval: 350; onTriggered: translationController.saveConfig(config()) }
-    Component.onCompleted: { restoreSavedConfig(); restoringSettings = false }
+    Component.onCompleted: { restoreSavedConfig(); syncPreview(); restoringSettings = false }
     onSelectedGlossariesChanged: scheduleSave()
 
     Dialog {
@@ -110,19 +110,59 @@ Item {
                     spacing: metrics.compact ? 5 : 7
                 GridLayout {
                     Layout.fillWidth: true; columns: 2; columnSpacing: 8; rowSpacing: 6
-                    Text { text: i18n.text("input_dir"); color: theme.textMuted }
+                    Text { text: i18n.text("translation_dir"); color: theme.textMuted }
                     RowLayout {
                         Layout.fillWidth: true
-                        TextField { id: inputDir; Layout.fillWidth: true; text: translationController.defaultInputDir; onTextChanged: root.scheduleSave() }
-                        PillButton { text: i18n.text("choose"); onClicked: { let p=translationController.chooseDirectory(i18n.text("input_dir"), inputDir.text); if(p) inputDir.text=p } }
-                        PillButton { text: i18n.text("open"); onClicked: translationController.openDirectory(inputDir.text) }
+                        TextField {
+                            id: translationDir
+                            Layout.fillWidth: true
+                            text: translationController.defaultInputDir
+                            onTextChanged: root.scheduleSave()
+                            onEditingFinished: translationController.refreshPendingDocuments(text)
+                        }
+                        PillButton {
+                            text: i18n.text("choose")
+                            onClicked: {
+                                let p=translationController.chooseDirectory(i18n.text("choose_translation_dir"), translationDir.text)
+                                if(p) {
+                                    translationDir.text=p
+                                    translationController.refreshPendingDocuments(p)
+                                }
+                            }
+                        }
+                        PillButton { text: i18n.text("open"); onClicked: translationController.openDirectory(translationDir.text) }
                     }
-                    Text { text: i18n.text("output_dir"); color: theme.textMuted }
-                    RowLayout {
+                    Card {
+                        Layout.columnSpan: 2
                         Layout.fillWidth: true
-                        TextField { id: outputDir; Layout.fillWidth: true; text: translationController.defaultOutputDir; onTextChanged: root.scheduleSave() }
-                        PillButton { text: i18n.text("choose"); onClicked: { let p=translationController.chooseDirectory(i18n.text("output_dir"), outputDir.text); if(p) outputDir.text=p } }
-                        PillButton { text: i18n.text("open"); onClicked: translationController.openDirectory(outputDir.text) }
+                        implicitHeight: pendingDocumentsContent.implicitHeight + 20
+                        ColumnLayout {
+                            id: pendingDocumentsContent
+                            anchors.fill: parent
+                            anchors.margins: 10
+                            spacing: 7
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Text { text: i18n.text("pending_literature"); color: theme.text; font.weight: Font.Bold }
+                                Item { Layout.fillWidth: true }
+                                PillButton { text: i18n.text("refresh"); onClicked: translationController.refreshPendingDocuments(translationDir.text) }
+                                PillButton { text: i18n.text("add_literature"); onClicked: translationController.addDocuments(translationDir.text) }
+                            }
+                            Text {
+                                visible: translationController.pendingDocumentCount === 0
+                                text: i18n.text("empty_translation_dir")
+                                color: theme.textMuted
+                            }
+                            Repeater {
+                                model: translationController.pendingDocuments
+                                delegate: RowLayout {
+                                    Layout.fillWidth: true
+                                    Text { Layout.fillWidth: true; text: modelData.name; color: theme.text; elide: Text.ElideMiddle }
+                                    Text { text: modelData.sizeText; color: theme.textMuted }
+                                    Text { text: modelData.modifiedText; color: theme.textMuted }
+                                }
+                            }
+                        }
                     }
                     Text { text: i18n.text("model_profile"); color: theme.textMuted }
                     ComboBox {
@@ -261,7 +301,18 @@ Item {
                 ColumnLayout {
                     anchors.fill: parent; anchors.margins: 12
                     Text { text: i18n.text("live_preview"); color: theme.text; font.weight: Font.Bold }
-                    ScrollView { Layout.fillWidth: true; Layout.fillHeight: true; SoftTextArea { text: translationController.previewText; readOnly: true; wrapMode: TextArea.Wrap } }
+                    ScrollView {
+                        id: previewScroll
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        clip: true
+                        SoftTextArea {
+                            id: previewArea
+                            width: previewScroll.availableWidth
+                            readOnly: true
+                            wrapMode: TextArea.Wrap
+                        }
+                    }
                 }
             }
             Card {
@@ -273,6 +324,11 @@ Item {
                 }
             }
         }
+    }
+
+    Connections {
+        target: translationController
+        function onChanged() { root.syncPreview() }
     }
 
     // 勾选状态由路径而不是列表索引驱动，刷新自定义术语表后仍能稳定保留选择。
@@ -292,8 +348,8 @@ Item {
     }
     function restoreSavedConfig() {
         let settings=translationController.savedConfig || {}
-        inputDir.text=savedValue(settings, "inputDir", translationController.defaultInputDir)
-        outputDir.text=savedValue(settings, "outputDir", translationController.defaultOutputDir)
+        translationDir.text=settings.translationDir || settings.inputDir || translationController.defaultInputDir
+        translationController.refreshPendingDocuments(translationDir.text)
         profile.currentIndex=savedValue(settings, "profileIndex", profile.currentIndex)
         profile.applyProfile()
         modelId.text=savedValue(settings, "model", modelId.text)
@@ -309,8 +365,20 @@ Item {
         references.checked=savedValue(settings, "translateReferences", false)
         headerFooter.checked=savedValue(settings, "translateHeaderFooter", false)
     }
+    function syncPreview() {
+        let flick=previewScroll.contentItem
+        if(!flick || previewArea.text === translationController.previewText) return
+        let oldY=flick.contentY
+        let maxY=Math.max(0, flick.contentHeight - flick.height)
+        let wasAtBottom=oldY >= maxY - 12
+        previewArea.text=translationController.previewText
+        Qt.callLater(function() {
+            let newMaxY=Math.max(0, flick.contentHeight - flick.height)
+            flick.contentY=wasAtBottom ? newMaxY : Math.min(oldY, newMaxY)
+        })
+    }
     function config() {
-        return { inputDir:inputDir.text, outputDir:outputDir.text, model:modelId.text, baseUrl:baseUrl.text, apiKey:apiKey.text,
+        return { translationDir:translationDir.text, model:modelId.text, baseUrl:baseUrl.text, apiKey:apiKey.text,
                  profileIndex:profile.currentIndex, glossaryPaths:selectedGlossaries, batchSize:batchSize.value, maxBatchChars:batchChars.value, maxPages:maxPages.text,
                  layoutOnly:layoutOnly.checked, useCache:useCache.checked, summaryPage:summary.checked,
                  translateReferences:references.checked, translateHeaderFooter:headerFooter.checked }

@@ -2976,6 +2976,27 @@ def output_name_for(input_pdf: Path, output_dir: Path, suffix: str) -> Path:
     return output_dir / f"{input_pdf.stem}{suffix}.pdf"
 
 
+def safe_document_folder_name(filename: str) -> str:
+    """Return a cross-platform-safe output folder name for a document."""
+    stem = str(filename).strip()
+    if stem.lower().endswith(".pdf"):
+        stem = stem[:-4]
+    stem = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", stem)
+    stem = re.sub(r"\s+", " ", stem).strip(" .")
+    if stem.upper() in {
+        "CON", "PRN", "AUX", "NUL",
+        *(f"COM{index}" for index in range(1, 10)),
+        *(f"LPT{index}" for index in range(1, 10)),
+    }:
+        stem += "_"
+    return stem or "untitled_document"
+
+
+def document_output_dir(input_pdf: Path, output_root: Path) -> Path:
+    """Return the reusable per-document output directory."""
+    return output_root / safe_document_folder_name(input_pdf.name)
+
+
 def find_pdf_files(input_dir: Path) -> list[Path]:
     """功能：扫描输入目录中的 PDF，兼容不同平台的扩展名大小写。参数：input_dir。返回值：list[Path]。"""
     return sorted(
@@ -3011,7 +3032,8 @@ def translate_pdf(input_pdf: Path, args: argparse.Namespace, translator: BaseTra
         waiting = "Waiting for translated segments..." if language == "en" else "等待首批翻译结果..."
         preview_callback(f"{input_pdf.name}\n\n{preview or waiting}")
 
-    output_dir = Path(args.output)
+    output_dir = document_output_dir(input_pdf, Path(args.output))
+    output_dir.mkdir(parents=True, exist_ok=True)
     output_pdf = output_name_for(input_pdf, output_dir, args.suffix)
     notify("prepare", f"准备处理 {input_pdf.name}", 0, 1)
     print(f"\nProcessing: {input_pdf}")
@@ -3117,7 +3139,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         description="Translate English academic PDFs to Chinese with DeepSeek while preserving the original page layout.",
     )
     parser.add_argument("--input", default="pdf", help="Input folder containing PDF files.")
-    parser.add_argument("--output", default="out", help="Output folder for translated PDFs and cache.")
+    parser.add_argument("--output", help="Parent folder for per-document translation output. Defaults to the input folder.")
     parser.add_argument("--suffix", default="_全文翻译", help="Suffix appended to translated PDF filenames.")
     parser.add_argument("--translator", choices=["deepseek", "copy"], default="deepseek", help="Use an OpenAI-compatible API for translation; copy is only for layout testing.")
     parser.add_argument("--target-lang", default="zh", help="Target language/cache label.")
@@ -3156,7 +3178,8 @@ def main(argv: list[str] | None = None) -> int:
     """功能：执行命令行入口流程。参数：argv。返回值：int。"""
     args = parse_args(argv or sys.argv[1:])
     input_dir = Path(args.input)
-    output_dir = Path(args.output)
+    output_dir = Path(args.output) if args.output else input_dir
+    args.output = str(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     try:
         glossary_text = load_glossary(args.glossary)

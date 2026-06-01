@@ -6,6 +6,7 @@ Item {
     id: root
     property int pageIndex: 0
     property int drawerPage: 0
+    property string draftAvatarStatus: ""
     readonly property bool sidebarExpanded: preferencesController.sidebarExpanded
     property int sidebarWidth: sidebarExpanded ? metrics.sidebarExpandedWidth : metrics.sidebarCollapsedWidth
     Motion { id: motion }
@@ -87,8 +88,8 @@ Item {
                             anchors.left: parent.right
                             anchors.leftMargin: 10
                             anchors.verticalCenter: parent.verticalCenter
-                            shown: !root.sidebarExpanded && navigationButton.hovered
-                            text: i18n.text(modelData.label)
+                            shown: navigationButton.hovered
+                            text: root.navigationTooltip(index, modelData.label)
                         }
                     }
                 }
@@ -160,18 +161,13 @@ Item {
                         Rectangle {
                             visible: !!preferencesController.avatarStatus
                             anchors.left: sidebarAvatar.right
-                            anchors.leftMargin: -8
+                            anchors.leftMargin: -5
                             anchors.bottom: sidebarAvatar.bottom
-                            width: 23
-                            height: 23
-                            radius: 12
-                            color: theme.surface
+                            width: 12
+                            height: 12
+                            radius: 6
+                            color: theme.accent
                             border.color: theme.borderStrong
-                            Text {
-                                anchors.centerIn: parent
-                                text: preferencesController.avatarStatus
-                                font.pixelSize: 13
-                            }
                         }
                         Rectangle {
                             visible: updateController.available
@@ -234,15 +230,22 @@ Item {
                     spacing: 12
 
                     Item { Layout.preferredHeight: 12 }
-                    RoundedAvatar {
+                    Button {
+                        id: drawerAvatarButton
                         Layout.alignment: Qt.AlignHCenter
                         Layout.preferredWidth: 82
                         Layout.preferredHeight: 82
-                        source: preferencesController.avatarUrl
-                        fallbackText: preferencesController.avatarInitial
-                        fallbackFontSize: 28
-                        backgroundColor: theme.accent
-                        borderColor: theme.borderStrong
+                        hoverEnabled: true
+                        onClicked: root.drawerPage = 3
+                        HoverHandler { cursorShape: Qt.PointingHandCursor }
+                        background: Rectangle { color: "transparent" }
+                        contentItem: RoundedAvatar {
+                            source: preferencesController.avatarUrl
+                            fallbackText: preferencesController.avatarInitial
+                            fallbackFontSize: 28
+                            backgroundColor: theme.accent
+                            borderColor: theme.borderStrong
+                        }
                     }
                     RowLayout {
                         Layout.alignment: Qt.AlignHCenter
@@ -253,10 +256,12 @@ Item {
                             font.pixelSize: 18
                             font.weight: Font.Bold
                         }
-                        Text {
-                            visible: !!preferencesController.avatarStatus
-                            text: preferencesController.avatarStatus
-                            font.pixelSize: 18
+                        PillButton {
+                            text: preferencesController.avatarStatus || i18n.text("set_status")
+                            onClicked: {
+                                root.draftAvatarStatus = preferencesController.avatarStatus
+                                root.drawerPage = 4
+                            }
                         }
                     }
                     Text {
@@ -269,41 +274,24 @@ Item {
                         wrapMode: Text.WordWrap
                         font.pixelSize: 12
                     }
-                    RowLayout {
-                        Layout.alignment: Qt.AlignHCenter
-                        PillButton { text: i18n.text("upload_avatar"); onClicked: preferencesController.uploadAvatar() }
-                        PillButton { text: i18n.text("clear_avatar"); enabled: !!preferencesController.avatarUrl; onClicked: preferencesController.clearAvatar() }
-                    }
-                    Text { Layout.leftMargin: 20; text: i18n.text("avatar_status"); color: theme.textMuted; font.pixelSize: 12 }
-                    Flow {
-                        Layout.fillWidth: true
-                        Layout.leftMargin: 18
-                        Layout.rightMargin: 18
-                        spacing: 7
-                        Repeater {
-                            model: ["🟢", "☕", "📚", "🎯", "🌙", "🚫"]
-                            PillButton {
-                                text: modelData
-                                primary: preferencesController.avatarStatus === modelData
-                                onClicked: preferencesController.setAvatarStatus(modelData)
-                            }
-                        }
-                        PillButton { text: i18n.text("clear_status"); enabled: !!preferencesController.avatarStatus; onClicked: preferencesController.setAvatarStatus("") }
-                    }
-
                     Rectangle { Layout.fillWidth: true; Layout.leftMargin: 16; Layout.rightMargin: 16; implicitHeight: 1; color: theme.border }
 
-                    AppearanceChoiceRow {
+                    Button {
+                        id: languageEntry
                         Layout.fillWidth: true
-                        Layout.leftMargin: 18
-                        Layout.rightMargin: 18
-                        label: i18n.text("interface_language")
-                        selectedValue: localeController.language
-                        choices: [
-                            { value: "zh", label: "language_zh" },
-                            { value: "en", label: "language_en" }
-                        ]
-                        onSelected: value => localeController.setLanguage(value)
+                        Layout.leftMargin: 14
+                        Layout.rightMargin: 14
+                        implicitHeight: 54
+                        hoverEnabled: true
+                        onClicked: root.drawerPage = 5
+                        HoverHandler { cursorShape: Qt.PointingHandCursor }
+                        background: Rectangle { radius: 12; color: languageEntry.hovered ? theme.navHover : "transparent" }
+                        contentItem: RowLayout {
+                            spacing: 12
+                            VectorIcon { name: "language"; color: theme.accent; Layout.preferredWidth: 22; Layout.preferredHeight: 22 }
+                            Text { text: i18n.text("interface_language"); color: theme.text; Layout.fillWidth: true }
+                            Text { text: ">"; color: theme.textMuted }
+                        }
                     }
 
                     Button {
@@ -628,6 +616,149 @@ Item {
                 }
                 UpdatePage { Layout.fillWidth: true; Layout.fillHeight: true }
             }
+
+            ColumnLayout {
+                spacing: 14
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.margins: 12
+                    Button {
+                        id: avatarSettingsBackButton
+                        implicitWidth: 42
+                        implicitHeight: 42
+                        onClicked: root.drawerPage = 0
+                        HoverHandler { cursorShape: Qt.PointingHandCursor }
+                        background: Rectangle { radius: theme.radiusMedium; color: avatarSettingsBackButton.hovered ? theme.navHover : "transparent" }
+                        contentItem: VectorIcon { name: "back"; color: theme.text }
+                    }
+                    Text { text: i18n.text("avatar_settings"); color: theme.text; font.pixelSize: 20; font.weight: Font.Bold }
+                }
+                RoundedAvatar {
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.preferredWidth: 112
+                    Layout.preferredHeight: 112
+                    source: preferencesController.avatarUrl
+                    fallbackText: preferencesController.avatarInitial
+                    fallbackFontSize: 36
+                    backgroundColor: theme.accent
+                    borderColor: theme.borderStrong
+                }
+                RowLayout {
+                    Layout.alignment: Qt.AlignHCenter
+                    PillButton { text: i18n.text("upload_avatar"); onClicked: preferencesController.uploadAvatar() }
+                    PillButton { text: i18n.text("clear_avatar"); enabled: !!preferencesController.avatarUrl; onClicked: preferencesController.clearAvatar() }
+                }
+                Item { Layout.fillHeight: true }
+            }
+
+            ScrollView {
+                contentWidth: availableWidth
+                ColumnLayout {
+                    width: accountDrawer.availableWidth
+                    spacing: 12
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Layout.margins: 12
+                        Button {
+                            id: avatarStatusBackButton
+                            implicitWidth: 42
+                            implicitHeight: 42
+                            onClicked: root.drawerPage = 0
+                            HoverHandler { cursorShape: Qt.PointingHandCursor }
+                            background: Rectangle { radius: theme.radiusMedium; color: avatarStatusBackButton.hovered ? theme.navHover : "transparent" }
+                            contentItem: VectorIcon { name: "back"; color: theme.text }
+                        }
+                        Text { text: i18n.text("avatar_status"); color: theme.text; font.pixelSize: 20; font.weight: Font.Bold }
+                    }
+                    TextField {
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 18
+                        Layout.rightMargin: 18
+                        text: root.draftAvatarStatus
+                        placeholderText: i18n.text("status_placeholder")
+                        onTextChanged: root.draftAvatarStatus = text
+                    }
+                    RowLayout {
+                        Layout.alignment: Qt.AlignHCenter
+                        PillButton { text: i18n.text("save"); primary: true; onClicked: root.applyAvatarStatus(root.draftAvatarStatus) }
+                        PillButton { text: i18n.text("clear_status"); enabled: !!preferencesController.avatarStatus; onClicked: root.applyAvatarStatus("") }
+                    }
+                    Text { Layout.leftMargin: 18; text: i18n.text("status_quick"); color: theme.textMuted; font.pixelSize: 12 }
+                    Flow {
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 18
+                        Layout.rightMargin: 18
+                        spacing: 7
+                        Repeater {
+                            model: ["status_online", "status_focused", "status_writing", "status_away"]
+                            PillButton {
+                                text: i18n.text(modelData)
+                                primary: preferencesController.avatarStatus === text
+                                onClicked: root.applyAvatarStatus(text)
+                            }
+                        }
+                    }
+                    Text { Layout.leftMargin: 18; text: i18n.text("status_more_emoji"); color: theme.textMuted; font.pixelSize: 12 }
+                    Flow {
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 18
+                        Layout.rightMargin: 18
+                        spacing: 7
+                        Repeater {
+                            model: ["🟢", "☕", "📚", "🎯", "🌙", "🚫", "✍️", "🔬", "💡", "📖", "🧠", "🚀", "⏳", "🏠", "🎓", "💻", "📝", "🧪", "📊", "🔕"]
+                            PillButton {
+                                text: modelData
+                                primary: preferencesController.avatarStatus === text
+                                onClicked: root.applyAvatarStatus(text)
+                            }
+                        }
+                    }
+                    Item { Layout.preferredHeight: 8 }
+                }
+            }
+
+            ColumnLayout {
+                spacing: 12
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.margins: 12
+                    Button {
+                        id: languageBackButton
+                        implicitWidth: 42
+                        implicitHeight: 42
+                        onClicked: root.drawerPage = 0
+                        HoverHandler { cursorShape: Qt.PointingHandCursor }
+                        background: Rectangle { radius: theme.radiusMedium; color: languageBackButton.hovered ? theme.navHover : "transparent" }
+                        contentItem: VectorIcon { name: "back"; color: theme.text }
+                    }
+                    Text { text: i18n.text("interface_language"); color: theme.text; font.pixelSize: 20; font.weight: Font.Bold }
+                }
+                AppearanceChoiceRow {
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 18
+                    Layout.rightMargin: 18
+                    label: i18n.text("interface_language")
+                    selectedValue: localeController.language
+                    choices: [
+                        { value: "zh", label: "language_zh" },
+                        { value: "en", label: "language_en" }
+                    ]
+                    onSelected: value => localeController.setLanguage(value)
+                }
+                Item { Layout.fillHeight: true }
+            }
         }
+    }
+
+    function navigationTooltip(index, fallbackLabel) {
+        if(index === 0 && downloadController.running && downloadController.activeTaskText.length > 0)
+            return downloadController.activeTaskText
+        if(index === 1 && translationController.running && translationController.activeTaskText.length > 0)
+            return translationController.activeTaskText
+        return i18n.text(fallbackLabel)
+    }
+    function applyAvatarStatus(status) {
+        root.draftAvatarStatus = status
+        preferencesController.setAvatarStatus(status)
     }
 }

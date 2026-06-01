@@ -1,17 +1,32 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+from Update.update_core import (
+    MANIFEST_SIGNATURE_ALGORITHM,
+    TRUSTED_MANIFEST_PUBLIC_KEYS,
+    canonical_manifest_bytes,
+    verify_manifest_signature,
+)
 
 
 ROOT = Path(__file__).resolve().parent
 APP_NAME = "OmniLit"
 MANIFEST_PATH = ROOT / "update_manifest.json"
 VERSION_INFO_PATH = ROOT / "version_info.txt"
+SIGNING_KEY_ID = "omnilit-release-2026-01"
+SIGNING_KEY_FILE_ENV = "OMNILIT_UPDATE_SIGNING_KEY_FILE"
+DEFAULT_SIGNING_KEY_PATH = ROOT / ".release" / "update_ed25519_private_key.pem"
 
 
 def load_manifest() -> dict[str, object]:
@@ -22,6 +37,71 @@ def load_manifest() -> dict[str, object]:
 def save_manifest(manifest: dict[str, object]) -> None:
     """写入发布清单。参数：清单字典。返回值：无。"""
     MANIFEST_PATH.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def signing_key_path() -> Path:
+    """Return the private key location without storing secrets in the repository."""
+    configured = os.environ.get(SIGNING_KEY_FILE_ENV, "").strip()
+    if not configured:
+        return DEFAULT_SIGNING_KEY_PATH
+    path = Path(configured).expanduser()
+    return path if path.is_absolute() else ROOT / path
+
+
+def load_signing_key() -> Ed25519PrivateKey:
+    """Load the Ed25519 release key and confirm that it matches the embedded public key."""
+    path = signing_key_path()
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Missing release signing key: {path}. Run generate-signing-key once and back up the private key securely."
+        )
+    private_key = serialization.load_pem_private_key(path.read_bytes(), password=None)
+    if not isinstance(private_key, Ed25519PrivateKey):
+        raise ValueError(f"Release signing key is not an Ed25519 private key: {path}")
+    public_key = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    expected = TRUSTED_MANIFEST_PUBLIC_KEYS.get(SIGNING_KEY_ID, "")
+    actual = base64.b64encode(public_key).decode("ascii")
+    if actual != expected:
+        raise ValueError(f"Release signing key does not match embedded public key {SIGNING_KEY_ID}.")
+    return private_key
+
+
+def sign_manifest(manifest: dict[str, object]) -> str:
+    """Attach an Ed25519 signature covering the complete release manifest."""
+    signature = load_signing_key().sign(canonical_manifest_bytes(manifest))
+    signature_text = base64.b64encode(signature).decode("ascii")
+    manifest["signature"] = {
+        "algorithm": MANIFEST_SIGNATURE_ALGORITHM,
+        "key_id": SIGNING_KEY_ID,
+        "value": signature_text,
+    }
+    verify_manifest_signature(manifest)
+    return signature_text
+
+
+def generate_signing_key(*, force: bool = False) -> tuple[Path, str]:
+    """Create a local ignored Ed25519 release key and return its public key."""
+    path = signing_key_path()
+    if path.exists() and not force:
+        raise FileExistsError(f"Release signing key already exists: {path}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    private_key = Ed25519PrivateKey.generate()
+    public_key = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    actual = base64.b64encode(public_key).decode("ascii")
+    path.write_bytes(
+        private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+    )
+    return path, actual
 
 
 def version_parts(version: str) -> tuple[int, int, int, int]:
@@ -146,9 +226,6 @@ def prebuild() -> str:
     if not version:
         raise ValueError("update_manifest.json must contain a non-empty version")
     version_parts(version)
-    manifest["download_url"] = download_url_for_version(manifest, version)
-    update_history(manifest)
-    save_manifest(manifest)
     write_version_info(version)
     return version
 
@@ -162,6 +239,7 @@ def postbuild(exe_path: Path) -> str:
     manifest["download_url"] = download_url_for_version(manifest, version)
     manifest["sha256"] = sha256_file(exe_path)
     update_history(manifest, sha256=str(manifest["sha256"]))
+    sign_manifest(manifest)
     save_manifest(manifest)
     return str(manifest["sha256"])
 
@@ -172,6 +250,9 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("prebuild")
     subparsers.add_parser("print-version")
+    subparsers.add_parser("sign-manifest")
+    generate_key_parser = subparsers.add_parser("generate-signing-key")
+    generate_key_parser.add_argument("--force", action="store_true")
     postbuild_parser = subparsers.add_parser("postbuild")
     postbuild_parser.add_argument("--exe", required=True, type=Path)
     args = parser.parse_args()
@@ -182,6 +263,14 @@ def main() -> None:
         print(str(load_manifest().get("version") or "").strip())
     elif args.command == "postbuild":
         print(postbuild(args.exe.resolve()))
+    elif args.command == "sign-manifest":
+        manifest = load_manifest()
+        print(sign_manifest(manifest))
+        save_manifest(manifest)
+    elif args.command == "generate-signing-key":
+        path, public_key = generate_signing_key(force=args.force)
+        print(path)
+        print(f"Embed this public key for {SIGNING_KEY_ID}: {public_key}")
 
 
 if __name__ == "__main__":

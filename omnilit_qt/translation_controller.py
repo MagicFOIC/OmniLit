@@ -1,0 +1,485 @@
+from __future__ import annotations
+
+import argparse
+import contextlib
+import shutil
+import threading
+import traceback
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+from PySide6.QtCore import QObject, Property, Signal, Slot
+from PySide6.QtWidgets import QFileDialog
+
+from ._controller_support import LogWriter, _format_bytes, _load_form_setting, _open_path, _save_form_setting
+from .app_controller import AppController
+from .background_tasks import ManagedWorker, shutdown_workers
+from .i18n import LocaleController, tr
+from .paths import AppPaths
+from .services import AccountStore, as_bool, as_int, import_resource_module
+from .support import (
+    DEFAULT_GLOSSARY_FILENAMES,
+    DEFAULT_KEY_FILE_NAME,
+    USER_KEY_FILE_NAME,
+    glossary_catalog,
+    load_default_key,
+    load_encrypted_key,
+    profile_maps,
+    write_encrypted_key,
+)
+
+TRANSLATION_FORM_SETTING = "translation_form_config"
+TRANSLATION_FORM_FIELDS = (
+    "translationDir",
+    "model",
+    "baseUrl",
+    "profileIndex",
+    "glossaryPaths",
+    "batchSize",
+    "maxBatchChars",
+    "maxPages",
+    "layoutOnly",
+    "useCache",
+    "summaryPage",
+    "translateReferences",
+    "translateHeaderFooter",
+)
+
+
+class TranslationCancelled(RuntimeError):
+    """表示用户主动取消翻译。"""
+
+
+class TranslationController(QObject):
+    """在后台线程中运行文献翻译和版式重建核心。"""
+
+    changed = Signal()
+    pendingDocumentsChanged = Signal()
+    progress = Signal(str, str, int, int)
+    log = Signal(str)
+    document = Signal(str)
+    preview = Signal(str)
+    finished = Signal(bool, str)
+
+    def __init__(self, app: AppController, paths: AppPaths, store: AccountStore, locale: LocaleController):
+        """初始化翻译控制器。参数：应用、路径和语言。返回值：无。"""
+        super().__init__()
+        self.app, self.paths, self.store, self.locale = app, paths, store, locale
+        self._saved_config = _load_form_setting(store, TRANSLATION_FORM_SETTING)
+        self._running, self._progress, self._workflow_index = False, 0.0, 0
+        self._status, self._current_document = locale.textf("not_started"), ""
+        self._pending_documents: list[dict[str, str]] = []
+        self._preview_text = locale.textf("preview_waiting")
+        self._logs: list[str] = []
+        self._stop = threading.Event()
+        self._worker: ManagedWorker | None = None
+        self._file_index, self._file_total = 0, 1
+        self._default_key = self._default_key_source = self._user_key = ""
+        self.progress.connect(self._on_progress)
+        self.log.connect(self._append_log)
+        self.document.connect(self._on_document)
+        self.preview.connect(self._on_preview)
+        self.finished.connect(self._on_finished)
+
+    @Property("QVariantList", constant=True)
+    def modelProfiles(self) -> list[dict[str, object]]:
+        """返回模型档案。参数：无。返回值：档案列表。"""
+        return profile_maps()
+
+    @Property("QVariantList", notify=changed)
+    def glossaryCatalog(self) -> list[dict[str, object]]:
+        """返回可写目录中的术语表。参数：无。返回值：术语表列表。"""
+        return glossary_catalog(self.paths.glossary_dir)
+
+    @Property(str, constant=True)
+    def defaultInputDir(self) -> str:
+        """返回默认输入目录。参数：无。返回值：目录文本。"""
+        return str(self.paths.data("Translate", "pdf"))
+
+    @Property(str, constant=True)
+    def defaultOutputDir(self) -> str:
+        """返回兼容旧调用方的默认目录。参数：无。返回值：文献翻译目录。"""
+        return self.defaultInputDir
+
+    @Property("QVariantMap", constant=True)
+    def savedConfig(self) -> dict[str, Any]:
+        """Return the saved non-sensitive translation form fields."""
+        return dict(self._saved_config)
+
+    @Slot("QVariantMap")
+    def saveConfig(self, config_map: dict[str, Any]) -> None:
+        """Persist translation form fields without credentials."""
+        raw = dict(config_map or {})
+        raw["translationDir"] = raw.get("translationDir") or raw.get("inputDir") or self.defaultInputDir
+        self._saved_config = _save_form_setting(
+            self.store,
+            TRANSLATION_FORM_SETTING,
+            raw,
+            TRANSLATION_FORM_FIELDS,
+        )
+
+    @Property(bool, notify=changed)
+    def running(self) -> bool:
+        """返回任务状态。参数：无。返回值：是否运行。"""
+        return self._running
+
+    @Property(str, notify=changed)
+    def statusText(self) -> str:
+        """返回翻译状态。参数：无。返回值：状态文本。"""
+        return self._status
+
+    @Property(float, notify=changed)
+    def progressValue(self) -> float:
+        """返回整体进度。参数：无。返回值：0 到 1。"""
+        return self._progress
+
+    @Property(int, notify=changed)
+    def workflowIndex(self) -> int:
+        """返回当前阶段。参数：无。返回值：阶段索引。"""
+        return self._workflow_index
+
+    @Property(str, notify=changed)
+    def currentDocument(self) -> str:
+        """返回当前文档。参数：无。返回值：文档文本。"""
+        return self._current_document
+
+    @Property(str, notify=changed)
+    def activeTaskText(self) -> str:
+        """返回当前翻译文献摘要。参数：无。返回值：任务摘要或空文本。"""
+        if not self._running or not self._current_document:
+            return ""
+        return self.locale.textf("translating_document", document=self._current_document)
+
+    @Property("QVariantList", notify=pendingDocumentsChanged)
+    def pendingDocuments(self) -> list[dict[str, str]]:
+        """返回文献翻译目录中的 PDF。参数：无。返回值：待翻译文献列表。"""
+        return list(self._pending_documents)
+
+    @Property(int, notify=pendingDocumentsChanged)
+    def pendingDocumentCount(self) -> int:
+        """返回待翻译文献数量。参数：无。返回值：PDF 数量。"""
+        return len(self._pending_documents)
+
+    @Property(str, notify=changed)
+    def logText(self) -> str:
+        """返回翻译日志。参数：无。返回值：多行文本。"""
+        return "\n".join(self._logs)
+
+    @Property(str, notify=changed)
+    def previewText(self) -> str:
+        """Return translated text completed so far for live preview."""
+        return self._preview_text
+
+    @Property(bool, notify=changed)
+    def defaultKeyLoaded(self) -> bool:
+        """返回默认 Key 状态。参数：无。返回值：是否已加载。"""
+        return bool(self._default_key)
+
+    @Property(str, notify=changed)
+    def defaultKeySource(self) -> str:
+        """返回默认 Key 来源。参数：无。返回值：来源文本。"""
+        return self._default_key_source
+
+    @Property(str, constant=True)
+    def defaultKeyPath(self) -> str:
+        """返回可写部署 Key 路径。参数：无。返回值：路径文本。"""
+        return str(self.paths.data("Translate", DEFAULT_KEY_FILE_NAME))
+
+    @Property(bool, notify=changed)
+    def defaultKeyExists(self) -> bool:
+        """返回可写部署 Key 文件状态。参数：无。返回值：是否存在。"""
+        return Path(self.defaultKeyPath).exists()
+
+    @Property(bool, notify=changed)
+    def rememberedKeyExists(self) -> bool:
+        """返回用户 Key 文件状态。参数：无。返回值：是否存在。"""
+        return self.paths.data("Translate", USER_KEY_FILE_NAME).exists()
+
+    @staticmethod
+    def _stage_fraction(stage: str, current: int, total: int) -> float:
+        """计算单文件阶段进度。参数：阶段、当前值和总数。返回值：0 到 1。"""
+        ratio = max(0.0, min(1.0, current / max(1, total)))
+        start, width = {"prepare": (0.0, 0.02), "extract": (0.02, 0.10), "translate": (0.12, 0.64), "summary": (0.76, 0.06), "render": (0.82, 0.16), "done": (1.0, 0.0)}.get(stage, (0.0, 0.0))
+        return start + width * ratio
+
+    def _append_log(self, message: str) -> None:
+        """追加日志并限制长度。参数：日志文本。返回值：无。"""
+        self._logs.extend(line.strip() for line in str(message).splitlines() if line.strip())
+        self._logs = self._logs[-1000:]
+        self.changed.emit()
+
+    def _on_document(self, document: str) -> None:
+        """切换当前文档。参数：文档文本。返回值：无。"""
+        self._current_document = document
+        self.changed.emit()
+
+    def _on_preview(self, text: str) -> None:
+        """Refresh the live translation preview."""
+        self._preview_text = str(text)
+        self.changed.emit()
+
+    def _on_progress(self, stage: str, message: str, current: int, total: int) -> None:
+        """合并核心阶段进度。参数：阶段、消息、当前值和总数。返回值：无。"""
+        self._workflow_index = {"prepare": 0, "extract": 1, "translate": 2, "summary": 3, "render": 4, "done": 5}.get(stage, self._workflow_index)
+        self._progress = ((max(1, self._file_index) - 1) + self._stage_fraction(stage, current, total)) / max(1, self._file_total)
+        self._status = message
+        self._append_log(f"{stage}: {message}")
+        self.app.set_status(message)
+        self.changed.emit()
+
+    def _on_finished(self, ok: bool, message: str) -> None:
+        """完成翻译状态流转。参数：成功标志和消息。返回值：无。"""
+        self._running, self._status = False, message
+        if ok:
+            self._progress, self._workflow_index = 1.0, 5
+        self._append_log(message)
+        self.app.set_status(message)
+        self.changed.emit()
+
+    @Slot(str, str, result=str)
+    def chooseDirectory(self, title: str, initial_dir: str) -> str:
+        """选择目录。参数：标题和初始目录。返回值：所选目录。"""
+        return str(QFileDialog.getExistingDirectory(None, title, initial_dir or str(self.paths.data("Translate"))) or "")
+
+    @Slot(str)
+    def openDirectory(self, path: str) -> None:
+        """打开目录。参数：目录文本。返回值：无。"""
+        _open_path(Path(path or self.defaultInputDir))
+
+    @Slot(str)
+    def refreshPendingDocuments(self, directory: str) -> None:
+        """扫描文献翻译目录。参数：目录文本。返回值：无。"""
+        root = Path(directory or self.defaultInputDir).expanduser()
+        documents: list[dict[str, str]] = []
+        if root.is_dir():
+            for path in sorted(
+                (item for item in root.iterdir() if item.is_file() and item.suffix.lower() == ".pdf"),
+                key=lambda item: item.name.lower(),
+            ):
+                stat = path.stat()
+                documents.append(
+                    {
+                        "name": path.name,
+                        "path": str(path.resolve()),
+                        "sizeText": _format_bytes(stat.st_size),
+                        "modifiedText": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
+                    }
+                )
+        self._pending_documents = documents
+        self.pendingDocumentsChanged.emit()
+
+    @Slot(str)
+    def addDocuments(self, directory: str) -> None:
+        """选择 PDF 并复制到文献翻译目录。参数：目录文本。返回值：无。"""
+        root = Path(directory or self.defaultInputDir).expanduser()
+        root.mkdir(parents=True, exist_ok=True)
+        selected, _filter = QFileDialog.getOpenFileNames(
+            None,
+            self.locale.textf("add_literature"),
+            str(root),
+            "PDF (*.pdf *.PDF)",
+        )
+        for source_text in selected:
+            source = Path(source_text)
+            if not source.is_file():
+                continue
+            target = root / source.name
+            if target.exists() and source.resolve() == target.resolve():
+                continue
+            index = 2
+            while target.exists():
+                target = root / f"{source.stem}_{index}{source.suffix}"
+                index += 1
+            shutil.copy2(source, target)
+        self.refreshPendingDocuments(str(root))
+
+    @Slot()
+    def openGlossaryDirectory(self) -> None:
+        """打开可写术语表目录。参数：无。返回值：无。"""
+        self.openDirectory(str(self.paths.glossary_dir))
+
+    @Slot()
+    def refreshGlossaries(self) -> None:
+        """刷新术语表列表。参数：无。返回值：无。"""
+        self.changed.emit()
+
+    @Slot(str, result=bool)
+    def unlockDefaultKey(self, password: str) -> bool:
+        """解锁部署 Key。参数：加密密码。返回值：是否成功。"""
+        try:
+            self._default_key, self._default_key_source = load_default_key(self.paths.data("Translate"), self.paths.resource("Translate"), password)
+            if not self._default_key:
+                raise ValueError(self.locale.textf("default_key_unconfigured"))
+        except Exception as exc:
+            self._default_key = self._default_key_source = ""
+            self._status = self.locale.textf("default_key_unlock_failed", error=exc)
+            self.changed.emit()
+            return False
+        self._status = self.locale.textf("default_key_unlocked", source=self._default_key_source)
+        self.changed.emit()
+        return True
+
+    @Slot(str, str, str, result=bool)
+    def saveDefaultKey(self, api_key: str, password: str, confirm_password: str) -> bool:
+        """保存并载入部署 Key。参数：Key 和两次密码。返回值：是否成功。"""
+        if password != confirm_password:
+            self._status = self.locale.textf("password_mismatch")
+            self.changed.emit()
+            return False
+        try:
+            write_encrypted_key(Path(self.defaultKeyPath), api_key, password)
+        except Exception as exc:
+            self._status = self.locale.textf("key_write_failed", error=exc)
+            self.changed.emit()
+            return False
+        self._default_key = api_key.strip()
+        self._default_key_source = self.defaultKeyPath
+        self._status = self.locale.textf("default_key_saved")
+        self.app.set_status(self._status)
+        self.changed.emit()
+        return True
+
+    @Slot(str, result=bool)
+    def unlockRememberedKey(self, password: str) -> bool:
+        """解锁用户 Key。参数：加密密码。返回值：是否成功。"""
+        try:
+            self._user_key = load_encrypted_key(self.paths.data("Translate", USER_KEY_FILE_NAME), password)
+        except Exception as exc:
+            self._status = self.locale.textf("user_key_unlock_failed", error=exc)
+            self.changed.emit()
+            return False
+        self._status = self.locale.textf("user_key_unlocked")
+        self.changed.emit()
+        return True
+
+    @Slot(str, str, str, result=bool)
+    def rememberUserKey(self, api_key: str, password: str, confirm_password: str) -> bool:
+        """保存用户 Key。参数：Key 和两次密码。返回值：是否成功。"""
+        if password != confirm_password:
+            self._status = self.locale.textf("password_mismatch")
+            self.changed.emit()
+            return False
+        try:
+            write_encrypted_key(self.paths.data("Translate", USER_KEY_FILE_NAME), api_key, password)
+        except Exception as exc:
+            self._status = self.locale.textf("user_key_save_failed", error=exc)
+            self.changed.emit()
+            return False
+        self._user_key, self._status = api_key.strip(), self.locale.textf("user_key_saved")
+        self.changed.emit()
+        return True
+
+    @Slot()
+    def clearRememberedKey(self) -> None:
+        """清除用户 Key。参数：无。返回值：无。"""
+        self.paths.data("Translate", USER_KEY_FILE_NAME).unlink(missing_ok=True)
+        self._user_key, self._status = "", self.locale.textf("user_key_cleared")
+        self.changed.emit()
+
+    def _glossary_paths(self, raw: Any) -> list[Path]:
+        """规范化术语表路径。参数：QML 列表或文本。返回值：路径列表。"""
+        values = [str(item).strip() for item in raw if str(item).strip()] if isinstance(raw, list) else [item.strip() for item in str(raw or "").replace(";", "\n").splitlines() if item.strip()]
+        if not values:
+            values = [str(self.paths.glossary_dir / DEFAULT_GLOSSARY_FILENAMES[0])]
+        return [Path(item).expanduser() for item in values]
+
+    def _build_config(self, raw: dict[str, Any], language: str):
+        """构建翻译核心配置。参数：QML 配置和固定语言。返回值：核心、参数和 PDF 列表。"""
+        core = import_resource_module(self.paths, "Translate", "literature_translate_core")
+        translation_dir = Path(str(raw.get("translationDir") or raw.get("inputDir") or self.defaultInputDir)).expanduser()
+        if not translation_dir.is_dir():
+            raise ValueError(tr(language, "translation_dir_missing"))
+        layout_only = as_bool(raw.get("layoutOnly"))
+        api_key = str(raw.get("apiKey") or "").strip() or self._user_key or self._default_key
+        if not layout_only and not api_key:
+            raise ValueError(tr(language, "api_key_required"))
+        args = argparse.Namespace(input=str(translation_dir), output=str(translation_dir), suffix="_全文翻译", translator="copy" if layout_only else "deepseek", target_lang="zh", api_key=api_key or None, base_url=str(raw.get("baseUrl") or "https://api.deepseek.com").strip(), model=str(raw.get("model") or "deepseek-v4-flash").strip(), temperature=0.15, max_retries=4, disable_json_mode=False, glossary=self._glossary_paths(raw.get("glossaryPaths")), batch_size=as_int(raw.get("batchSize"), 3), max_batch_chars=as_int(raw.get("maxBatchChars"), 3500), render_scale=2.0, whiteout_padding_x=1.4, whiteout_padding_y=0.9, font=None, bold_font=None, translate_references=as_bool(raw.get("translateReferences")), translate_header_footer=as_bool(raw.get("translateHeaderFooter")), summary_page=as_bool(raw.get("summaryPage"), True), max_pages=int(raw["maxPages"]) if str(raw.get("maxPages") or "").strip() else None, no_cache=not as_bool(raw.get("useCache"), True), progress_callback=None, language=language)
+        pdfs = core.find_pdf_files(translation_dir)
+        if not pdfs:
+            raise ValueError(tr(language, "pdf_missing"))
+        return core, args, pdfs
+
+    @Slot("QVariantMap", result=bool)
+    def start(self, config_map: dict[str, Any]) -> bool:
+        """启动翻译线程。参数：QML 配置。返回值：是否成功启动。"""
+        if self._running:
+            return False
+        language = self.locale.language
+        try:
+            raw = dict(config_map or {})
+            core, args, pdfs = self._build_config(raw, language)
+            self.saveConfig(raw)
+        except Exception as exc:
+            self._on_finished(False, tr(language, "config_error", error=exc))
+            return False
+
+        def progress(stage: str, message: str, current: int | None = None, total: int | None = None) -> None:
+            """转发进度并响应取消。参数：阶段、消息和计数。返回值：无。"""
+            if self._stop.is_set():
+                raise TranslationCancelled(tr(language, "translate_cancelled"))
+            self.progress.emit(stage, message, int(current or 0), int(total or 1))
+
+        def worker() -> None:
+            """执行翻译任务并通过信号回到界面线程。参数：无。返回值：无。"""
+            try:
+                core.tqdm = None
+                args.progress_callback = progress
+                args.preview_callback = lambda text: self.preview.emit(str(text))
+                glossary_text = core.load_glossary(args.glossary)
+                translator = core.make_translator(args, glossary_text)
+                writer = LogWriter(lambda text: self.log.emit(text))
+                with contextlib.redirect_stdout(writer), contextlib.redirect_stderr(writer):
+                    for index, pdf in enumerate(pdfs, start=1):
+                        if self._stop.is_set():
+                            raise TranslationCancelled(tr(language, "translate_cancelled"))
+                        self._file_index = index
+                        self.document.emit(pdf.name)
+                        core.translate_pdf(pdf, args, translator, glossary_text)
+            except TranslationCancelled as exc:
+                message = str(exc)
+                task.update_state("cancelled", detail=message)
+                self.finished.emit(False, message)
+            except Exception as exc:
+                self.log.emit(traceback.format_exc())
+                message = tr(language, "translate_failed", error=exc)
+                task.update_state("failed", detail=message)
+                self.finished.emit(False, message)
+            else:
+                message = tr(language, "translate_done")
+                task.update_state("completed", detail=message)
+                self.finished.emit(True, message)
+
+        self._stop.clear()
+        self._logs, self._progress, self._workflow_index = [], 0.0, 0
+        self._current_document = pdfs[0].name
+        self._preview_text = tr(language, "preview_waiting")
+        self._file_index, self._file_total, self._running = 0, len(pdfs), True
+        self._status = tr(language, "translate_started", count=len(pdfs))
+        self.changed.emit()
+        task = ManagedWorker(
+            name="AcademicPdfTranslation",
+            target=worker,
+            state_path=self.paths.data("task_state", "literature_translation.json"),
+            cancel_event=self._stop,
+            metadata={"documents": [pdf.name for pdf in pdfs]},
+        )
+        self._worker = task
+        task.start()
+        return True
+
+    @Slot()
+    def stop(self) -> None:
+        """请求停止翻译。参数：无。返回值：无。"""
+        if self._running:
+            if self._worker is not None:
+                self._worker.request_cancel()
+            else:
+                self._stop.set()
+            self._status = self.locale.textf("request_stop_translate")
+        self.app.set_status(self._status)
+        self.changed.emit()
+
+    def shutdown(self, timeout: float = 15.0) -> bool:
+        """Request translation cancellation and wait for atomic output writes."""
+        return shutdown_workers([self._worker], timeout)

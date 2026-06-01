@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import io
 import json
@@ -7,6 +8,7 @@ import re
 import sqlite3
 import sys
 import tempfile
+import threading
 import unittest
 from contextlib import closing
 from datetime import date
@@ -28,7 +30,8 @@ from omnilit_qt.controllers import (
     TranslationController,
     UpdateController,
 )
-from omnilit_qt.app import _center_window_frame_on_current_screen, _center_window_on_cursor_screen
+from omnilit_qt.app import _center_window_frame_on_current_screen, _center_window_on_cursor_screen, _shutdown_background_tasks
+from omnilit_qt.background_tasks import ManagedWorker
 from omnilit_qt.date_utils import month_grid, parse_iso_date, shift_month
 from omnilit_qt.i18n import LocaleController, tr
 from omnilit_qt.paths import AppPaths, MIGRATION_MARKER, _macos_bundle_sibling
@@ -73,6 +76,14 @@ class AppPathsTests(unittest.TestCase):
     def test_environment_override_has_priority(self) -> None:
         with tempfile.TemporaryDirectory() as temp, patch.dict("os.environ", {"OMNILIT_DATA_DIR": temp}):
             self.assertEqual(AppPaths.discover().data_root, Path(temp).resolve())
+
+    def test_data_directory_initialization_does_not_create_legacy_translation_out(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            paths = AppPaths(root / "resource", root / "data", ())
+            paths.ensure_data_dirs()
+            self.assertTrue(paths.data("Translate", "pdf").is_dir())
+            self.assertFalse(paths.data("Translate", "out").exists())
 
     def test_macos_bundle_uses_app_sibling(self) -> None:
         executable = Path("/Applications/OmniLit.app/Contents/MacOS/OmniLit")
@@ -395,24 +406,52 @@ class DownloadConfigTests(unittest.TestCase):
             def main(cls, _config) -> None:
                 cls.called = True
 
-        class InstantThread:
+        class InstantWorker:
             def __init__(self, *, target, **_kwargs):
                 self.target = target
 
             def start(self) -> None:
                 self.target()
 
+            def update_state(self, *_args, **_kwargs) -> None:
+                return None
+
         with tempfile.TemporaryDirectory() as temp:
             paths = AppPaths(ROOT, Path(temp), ())
             store = AccountStore(paths.data("accounts.sqlite3"))
             locale = LocaleController(store)
             controller = DownloadController(AppController(paths, locale), paths, store, locale)
-            with patch("omnilit_qt.controllers.build_download_config", return_value=(FakeCore, object())), patch(
-                "omnilit_qt.controllers.threading.Thread", InstantThread
+            with patch("omnilit_qt.download_controller.build_download_config", return_value=(FakeCore, object())), patch(
+                "omnilit_qt.download_controller.ManagedWorker", InstantWorker
             ):
                 self.assertTrue(controller.start({"loop": True}))
             self.assertTrue(FakeCore.called)
             self.assertFalse(controller.running)
+
+    def test_download_controller_exposes_active_keyword_summary(self) -> None:
+        class FakeCore:
+            @staticmethod
+            def validate_config(_config) -> None:
+                return None
+
+        class HoldingWorker:
+            def __init__(self, *, target, **_kwargs):
+                self.target = target
+
+            def start(self) -> None:
+                return None
+
+        with tempfile.TemporaryDirectory() as temp:
+            paths = AppPaths(ROOT, Path(temp), ())
+            store = AccountStore(paths.data("accounts.sqlite3"))
+            locale = LocaleController(store)
+            controller = DownloadController(AppController(paths, locale), paths, store, locale)
+            with patch("omnilit_qt.download_controller.build_download_config", return_value=(FakeCore, object())), patch(
+                "omnilit_qt.download_controller.ManagedWorker", HoldingWorker
+            ):
+                self.assertTrue(controller.start({"keywords": "alpha\nbeta,gamma,delta"}))
+            expected_keywords = "alpha、beta、gamma" + tr("zh", "keyword_count_suffix", count=4)
+            self.assertEqual(controller.activeTaskText, tr("zh", "downloading_keywords", keywords=expected_keywords))
 
 
 class FormPersistenceTests(unittest.TestCase):
@@ -461,7 +500,9 @@ class FormPersistenceTests(unittest.TestCase):
             restored = TranslationController(AppController(paths, locale), paths, store, locale).savedConfig
             stored_json = store.setting(TRANSLATION_FORM_SETTING)
 
-            self.assertEqual(restored["inputDir"], "input-pdfs")
+            self.assertEqual(restored["translationDir"], "input-pdfs")
+            self.assertNotIn("inputDir", restored)
+            self.assertNotIn("outputDir", restored)
             self.assertEqual(restored["model"], "deepseek-test")
             self.assertEqual(restored["profileIndex"], 2)
             self.assertNotIn("apiKey", restored)
@@ -493,9 +534,11 @@ class TranslationDeploymentKeyTests(unittest.TestCase):
             self.assertEqual(controller.defaultKeySource, controller.defaultKeyPath)
             self.assertEqual(load_encrypted_key(Path(controller.defaultKeyPath), "password"), "sk-deploy")
 
-            with patch("omnilit_qt.controllers.import_resource_module", return_value=FakeCore):
+            with patch("omnilit_qt.translation_controller.import_resource_module", return_value=FakeCore):
                 _core, args, _pdfs = controller._build_config({"inputDir": str(input_dir)}, "zh")
                 self.assertEqual(args.api_key, "sk-deploy")
+                self.assertEqual(args.input, str(input_dir))
+                self.assertEqual(args.output, str(input_dir))
                 controller._user_key = "sk-user"
                 _core, args, _pdfs = controller._build_config({"inputDir": str(input_dir)}, "zh")
                 self.assertEqual(args.api_key, "sk-user")
@@ -517,6 +560,46 @@ class TranslationDeploymentKeyTests(unittest.TestCase):
             fresh = TranslationController(AppController(paths, locale), paths, store, locale)
             self.assertFalse(fresh.unlockDefaultKey("wrong"))
             self.assertIn("解锁失败", fresh.statusText)
+
+
+class TranslationPendingDocumentsTests(unittest.TestCase):
+    def test_pending_documents_scan_and_add_duplicate_pdf(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            paths = AppPaths(root / "resource", root / "data", ())
+            store = AccountStore(paths.data("accounts.sqlite3"))
+            locale = LocaleController(store)
+            controller = TranslationController(AppController(paths, locale), paths, store, locale)
+            translation_dir = root / "translations"
+            source_dir = root / "source"
+            translation_dir.mkdir()
+            source_dir.mkdir()
+            (translation_dir / "b.PDF").write_bytes(b"%PDF-b")
+            (translation_dir / "a.pdf").write_bytes(b"%PDF-a")
+            (translation_dir / "notes.txt").write_text("ignore", encoding="utf-8")
+            source = source_dir / "a.pdf"
+            source.write_bytes(b"%PDF-copy")
+
+            controller.refreshPendingDocuments(str(translation_dir))
+            self.assertEqual([item["name"] for item in controller.pendingDocuments], ["a.pdf", "b.PDF"])
+            self.assertEqual(controller.pendingDocumentCount, 2)
+            self.assertTrue(all(item["sizeText"] and item["modifiedText"] for item in controller.pendingDocuments))
+
+            with patch("omnilit_qt.translation_controller.QFileDialog.getOpenFileNames", return_value=([str(source)], "")):
+                controller.addDocuments(str(translation_dir))
+            self.assertTrue((translation_dir / "a_2.pdf").exists())
+            self.assertEqual(controller.pendingDocumentCount, 3)
+
+    def test_active_translation_task_uses_current_pdf_name(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            paths = AppPaths(root / "resource", root / "data", ())
+            store = AccountStore(paths.data("accounts.sqlite3"))
+            locale = LocaleController(store)
+            controller = TranslationController(AppController(paths, locale), paths, store, locale)
+            controller._running = True
+            controller._on_document("paper.pdf")
+            self.assertEqual(controller.activeTaskText, tr("zh", "translating_document", document="paper.pdf"))
 
 
 class DownloadCoreTests(unittest.TestCase):
@@ -652,6 +735,12 @@ class DownloadCoreTests(unittest.TestCase):
 
 
 class TranslationCoreTests(unittest.TestCase):
+    def test_document_output_folder_name_is_cross_platform_safe(self) -> None:
+        core = import_resource_module(AppPaths(ROOT, ROOT, ()), "Translate", "literature_translate_core")
+        self.assertEqual(core.safe_document_folder_name('  paper<>:"/\\|?*  .pdf'), "paper_________")
+        self.assertEqual(core.safe_document_folder_name("CON.pdf"), "CON_")
+        self.assertEqual(core.safe_document_folder_name(" .pdf"), "untitled_document")
+
     def test_translation_batches_publish_live_preview(self) -> None:
         core = import_resource_module(AppPaths(ROOT, ROOT, ()), "Translate", "literature_translate_core")
         segment = core.Segment("s1", 0, "body", "Preview source paragraph.", [], True)
@@ -701,12 +790,35 @@ class TranslationCoreTests(unittest.TestCase):
                 ),
                 0,
             )
-            outputs = list(output_dir.glob("*.pdf"))
+            outputs = list((output_dir / "SAMPLE").glob("*.pdf"))
             self.assertEqual(len(outputs), 1)
             self.assertTrue(outputs[0].with_suffix(".report.json").exists())
+            self.assertTrue((output_dir / "SAMPLE" / "cache" / "translation_cache.json").exists())
 
 
 class UpdateCoreTests(unittest.TestCase):
+    @staticmethod
+    def _signed_manifest_data(update_core):
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+        private_key = Ed25519PrivateKey.generate()
+        public_key = private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+        data = {
+            "version": "0.0.10",
+            "download_url": "https://example.test/OmniLit.exe",
+            "sha256": hashlib.sha256(b"signed-release").hexdigest(),
+        }
+        data["signature"] = {
+            "algorithm": "ed25519",
+            "key_id": "test-release-key",
+            "value": base64.b64encode(private_key.sign(update_core.canonical_manifest_bytes(data))).decode("ascii"),
+        }
+        return data, base64.b64encode(public_key).decode("ascii")
+
     def test_version_and_sha256_verification(self) -> None:
         update_dir = ROOT / "Update"
         if str(update_dir) not in sys.path:
@@ -759,6 +871,82 @@ class UpdateCoreTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             update_core.UpdateManifest.from_dict({"version": "0.0.10", "download_url": "https://example.test/OmniLit.exe"})
 
+    def test_manifest_requires_a_trusted_ed25519_signature(self) -> None:
+        update_dir = ROOT / "Update"
+        if str(update_dir) not in sys.path:
+            sys.path.insert(0, str(update_dir))
+        import update_core
+
+        data, public_key = self._signed_manifest_data(update_core)
+        with patch.dict(update_core.TRUSTED_MANIFEST_PUBLIC_KEYS, {"test-release-key": public_key}, clear=True):
+            manifest = update_core.UpdateManifest.from_dict(data)
+        self.assertEqual(manifest.signature_key_id, "test-release-key")
+
+    def test_manifest_rejects_missing_or_tampered_signature(self) -> None:
+        update_dir = ROOT / "Update"
+        if str(update_dir) not in sys.path:
+            sys.path.insert(0, str(update_dir))
+        import update_core
+
+        data, public_key = self._signed_manifest_data(update_core)
+        unsigned = {key: value for key, value in data.items() if key != "signature"}
+        with self.assertRaisesRegex(ValueError, "unsigned"):
+            update_core.UpdateManifest.from_dict(unsigned)
+
+        data["download_url"] = "https://attacker.example.invalid/OmniLit.exe"
+        with patch.dict(update_core.TRUSTED_MANIFEST_PUBLIC_KEYS, {"test-release-key": public_key}, clear=True):
+            with self.assertRaisesRegex(ValueError, "signature verification failed"):
+                update_core.UpdateManifest.from_dict(data)
+
+    def test_download_rejects_manifest_that_was_not_verified(self) -> None:
+        update_dir = ROOT / "Update"
+        if str(update_dir) not in sys.path:
+            sys.path.insert(0, str(update_dir))
+        import update_core
+
+        manifest = update_core.UpdateManifest(
+            "0.0.10",
+            "https://example.test/OmniLit.exe",
+            hashlib.sha256(b"unsigned-release").hexdigest(),
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            with self.assertRaisesRegex(ValueError, "not trusted"):
+                update_core.download_update(manifest, Path(temp))
+
+    def test_cancelled_update_download_does_not_leave_temporary_file(self) -> None:
+        update_dir = ROOT / "Update"
+        if str(update_dir) not in sys.path:
+            sys.path.insert(0, str(update_dir))
+        import update_core
+
+        manifest = update_core.UpdateManifest(
+            "0.0.10",
+            "https://example.test/OmniLit.exe",
+            hashlib.sha256(b"cancelled-release").hexdigest(),
+            signature_key_id="omnilit-release-2026-01",
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            target_dir = Path(temp)
+            with patch.object(update_core.urllib.request, "urlopen") as urlopen:
+                with self.assertRaisesRegex(RuntimeError, "cancelled"):
+                    update_core.download_update(
+                        manifest,
+                        target_dir,
+                        language="en",
+                        stop_callback=lambda: True,
+                    )
+            urlopen.assert_not_called()
+            self.assertFalse(list(target_dir.glob("*.download")))
+
+    def test_repository_manifest_has_a_valid_release_signature(self) -> None:
+        update_dir = ROOT / "Update"
+        if str(update_dir) not in sys.path:
+            sys.path.insert(0, str(update_dir))
+        import update_core
+
+        data = json.loads((ROOT / "update_manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(update_core.verify_manifest_signature(data), "omnilit-release-2026-01")
+
 
 class UpdateControllerTests(unittest.TestCase):
     def test_check_ignores_legacy_manifest_url_setting(self) -> None:
@@ -784,12 +972,15 @@ class UpdateControllerTests(unittest.TestCase):
                 checked.append(url)
                 return FakeResult()
 
-        class InstantThread:
+        class InstantWorker:
             def __init__(self, *, target, **_kwargs):
                 self.target = target
 
             def start(self) -> None:
                 self.target()
+
+            def update_state(self, *_args, **_kwargs) -> None:
+                return None
 
         with tempfile.TemporaryDirectory() as temp:
             paths = AppPaths(ROOT, Path(temp), ())
@@ -798,8 +989,8 @@ class UpdateControllerTests(unittest.TestCase):
             locale = LocaleController(store)
             controller = UpdateController(AppController(paths, locale), paths, store, locale)
 
-            with patch("omnilit_qt.controllers.import_resource_module", return_value=FakeCore), patch(
-                "omnilit_qt.controllers.threading.Thread", InstantThread
+            with patch("omnilit_qt.update_controller.import_resource_module", return_value=FakeCore), patch(
+                "omnilit_qt.update_controller.ManagedWorker", InstantWorker
             ):
                 controller.check()
 
@@ -808,7 +999,88 @@ class UpdateControllerTests(unittest.TestCase):
             self.assertEqual(store.setting("manifest_url"), "https://legacy.example.invalid/custom.json")
 
 
+class BackgroundTaskTests(unittest.TestCase):
+    def test_managed_worker_is_non_daemon_cancellable_and_persists_final_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            state_path = Path(temp) / "task_state" / "download.json"
+            cancel_event = threading.Event()
+            started = threading.Event()
+
+            def target() -> None:
+                started.set()
+                cancel_event.wait(2)
+
+            worker = ManagedWorker(
+                name="TestDownload",
+                target=target,
+                state_path=state_path,
+                cancel_event=cancel_event,
+                metadata={"kind": "download"},
+            )
+            self.assertFalse(worker.daemon)
+            worker.start()
+            self.assertTrue(started.wait(1))
+            worker.request_cancel()
+            self.assertTrue(worker.join(1))
+
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(state["status"], "cancelled")
+            self.assertTrue(state["cancellation_requested"])
+            self.assertEqual(state["metadata"], {"kind": "download"})
+            self.assertFalse(state_path.with_suffix(".json.tmp").exists())
+
+    def test_app_shutdown_waits_for_all_background_controllers(self) -> None:
+        calls: list[tuple[str, float]] = []
+
+        class FakeController:
+            def __init__(self, name: str, result: bool = True):
+                self.name = name
+                self.result = result
+
+            def shutdown(self, timeout: float) -> bool:
+                calls.append((self.name, timeout))
+                return self.result
+
+        self.assertFalse(
+            _shutdown_background_tasks(
+                FakeController("download"),
+                FakeController("translation", result=False),
+                FakeController("update"),
+                timeout=3.5,
+            )
+        )
+        self.assertEqual(calls, [("download", 3.5), ("translation", 3.5), ("update", 3.5)])
+
+
 class QtOnlyTests(unittest.TestCase):
+    def test_controller_implementations_are_split_by_responsibility(self) -> None:
+        controller_dir = ROOT / "omnilit_qt"
+        aggregate = (controller_dir / "controllers.py").read_text(encoding="utf-8")
+        self.assertLess(len(aggregate.splitlines()), 60)
+        for name in (
+            "app_controller.py",
+            "auth_controller.py",
+            "preferences_controller.py",
+            "download_controller.py",
+            "translation_controller.py",
+            "update_controller.py",
+        ):
+            self.assertTrue((controller_dir / name).is_file(), name)
+        self.assertIn("from .auth_controller import AuthController", aggregate)
+        self.assertNotIn("class AuthController", aggregate)
+
+    def test_background_workers_are_non_daemon_and_shutdown_is_wired(self) -> None:
+        background = (ROOT / "omnilit_qt" / "background_tasks.py").read_text(encoding="utf-8")
+        app = (ROOT / "omnilit_qt" / "app.py").read_text(encoding="utf-8")
+        active_sources = "\n".join(
+            (ROOT / "omnilit_qt" / name).read_text(encoding="utf-8")
+            for name in ("download_controller.py", "translation_controller.py", "update_controller.py")
+        )
+        self.assertIn("daemon=False", background)
+        self.assertNotIn("daemon=True", active_sources)
+        self.assertIn("app.aboutToQuit.connect", app)
+        self.assertIn("_shutdown_background_tasks(download, translation, updater)", app)
+
     def test_active_sources_do_not_reference_tkinter(self) -> None:
         files = [
             ROOT / "omnilit_qt_app.py",
@@ -839,8 +1111,35 @@ class QtOnlyTests(unittest.TestCase):
         workspace = (qml_dir / "Workspace.qml").read_text(encoding="utf-8")
         self.assertIn("Layout.preferredHeight: 84", stats)
         self.assertNotIn("Layout.preferredHeight: 76", download)
-        self.assertIn("translationController.openDirectory(inputDir.text)", translation)
+        self.assertIn("translationController.openDirectory(translationDir.text)", translation)
         self.assertIn("navigationButton.hovered || navigationButton.activeFocus ? theme.navHover", workspace)
+
+    def test_translation_page_uses_one_directory_pending_list_and_scroll_preserving_preview(self) -> None:
+        translation = (ROOT / "ui" / "qml" / "TranslationPage.qml").read_text(encoding="utf-8")
+        self.assertIn("id: translationDir", translation)
+        self.assertNotIn("id: outputDir", translation)
+        self.assertIn("translationDir.text=settings.translationDir || settings.inputDir || translationController.defaultInputDir", translation)
+        self.assertIn("translationController.pendingDocuments", translation)
+        self.assertIn("translationController.addDocuments(translationDir.text)", translation)
+        self.assertIn("function onChanged() { root.syncPreview() }", translation)
+        self.assertIn("let oldY=flick.contentY", translation)
+        self.assertIn("let wasAtBottom=oldY >= maxY - 12", translation)
+        self.assertNotIn("text: translationController.previewText", translation)
+
+    def test_workspace_uses_drawer_pages_for_account_controls_and_active_task_tooltips(self) -> None:
+        workspace = (ROOT / "ui" / "qml" / "Workspace.qml").read_text(encoding="utf-8")
+        self.assertNotIn("languageExpanded", workspace)
+        self.assertNotIn("avatarExpanded", workspace)
+        self.assertNotIn("statusExpanded", workspace)
+        self.assertNotIn("panelHeight", workspace)
+        self.assertIn("onClicked: root.drawerPage = 3", workspace)
+        self.assertIn("root.drawerPage = 4", workspace)
+        self.assertIn("onClicked: root.drawerPage = 5", workspace)
+        self.assertIn("downloadController.activeTaskText", workspace)
+        self.assertIn("translationController.activeTaskText", workspace)
+        self.assertIn('model: ["status_online", "status_focused", "status_writing", "status_away"]', workspace)
+        self.assertIn('"🟢", "☕", "📚", "🎯", "🌙", "🚫", "✍️", "🔬"', workspace)
+        self.assertIn("preferencesController.setAvatarStatus(status)", workspace)
 
     def test_navigation_hover_uses_dynamic_semantic_colors(self) -> None:
         qml_dir = ROOT / "ui" / "qml"
@@ -972,17 +1271,18 @@ class QtOnlyTests(unittest.TestCase):
     def test_drawer_language_switch_uses_themed_choice_row(self) -> None:
         workspace = (ROOT / "ui" / "qml" / "Workspace.qml").read_text(encoding="utf-8")
         drawer_home = workspace[workspace.index("id: accountDrawer"):workspace.index("id: appearanceEntry")]
-        self.assertIn("AppearanceChoiceRow {", drawer_home)
-        self.assertIn('label: i18n.text("interface_language")', drawer_home)
-        self.assertIn("selectedValue: localeController.language", drawer_home)
-        self.assertIn("onSelected: value => localeController.setLanguage(value)", drawer_home)
+        self.assertIn("onClicked: root.drawerPage = 5", drawer_home)
+        self.assertNotIn("AppearanceChoiceRow {", drawer_home)
+        self.assertIn('label: i18n.text("interface_language")', workspace)
+        self.assertIn("selectedValue: localeController.language", workspace)
+        self.assertIn("onSelected: value => localeController.setLanguage(value)", workspace)
         self.assertNotIn("ComboBox {", drawer_home)
 
     def test_uploaded_images_use_high_quality_cache_busting_rendering(self) -> None:
         workspace = (ROOT / "ui" / "qml" / "Workspace.qml").read_text(encoding="utf-8")
         avatar = (ROOT / "ui" / "qml" / "RoundedAvatar.qml").read_text(encoding="utf-8")
         background = (ROOT / "ui" / "qml" / "WorkspaceBackground.qml").read_text(encoding="utf-8")
-        controller = (ROOT / "omnilit_qt" / "controllers.py").read_text(encoding="utf-8")
+        controller = (ROOT / "omnilit_qt" / "preferences_controller.py").read_text(encoding="utf-8")
         self.assertGreaterEqual(workspace.count("cache: false") + avatar.count("cache: false") + background.count("cache: false"), 2)
         self.assertGreaterEqual(workspace.count("smooth: true") + avatar.count("smooth: true") + background.count("smooth: true"), 2)
         self.assertGreaterEqual(workspace.count("mipmap: true") + avatar.count("mipmap: true") + background.count("mipmap: true"), 2)
@@ -1000,7 +1300,7 @@ class QtOnlyTests(unittest.TestCase):
         self.assertIn('workspaceOverlay: dark ? "#d90b1220" : "#b8f8fafc"', theme)
         self.assertIn('{ value: "auto_night", label: "theme_auto_night" }', workspace)
         self.assertIn("preferencesController.localTimezoneName", workspace)
-        self.assertIn("preferencesController.setAvatarStatus(modelData)", workspace)
+        self.assertIn("preferencesController.setAvatarStatus(status)", workspace)
         self.assertIn("MultiEffect {", avatar)
         self.assertIn("maskEnabled: true", avatar)
         self.assertIn("logoutButton.hovered ? theme.error : theme.accent", workspace)
@@ -1013,7 +1313,7 @@ class QtOnlyTests(unittest.TestCase):
         background = (qml_dir / "WorkspaceBackground.qml").read_text(encoding="utf-8")
         preview = (qml_dir / "AppearancePreview.qml").read_text(encoding="utf-8")
         motion = (qml_dir / "Motion.qml").read_text(encoding="utf-8")
-        controller = (ROOT / "omnilit_qt" / "controllers.py").read_text(encoding="utf-8")
+        controller = (ROOT / "omnilit_qt" / "preferences_controller.py").read_text(encoding="utf-8")
         for preset in ("scholar_light", "manuscript_sepia", "library_dark", "journal_blue", "arxiv_minimal", "nature_green"):
             self.assertIn(preset, theme)
         self.assertIn("AppearancePreview {", workspace)

@@ -205,7 +205,7 @@ if errorlevel 1 goto fail
 copy /y "dist\%APP_NAME%.exe" "%OUTPUT_EXE%" >nul
 if errorlevel 1 goto fail
 
-echo [9/9] Updating update_manifest.json SHA-256...
+echo [9/9] Updating update_manifest.json SHA-256 and Ed25519 signature...
 call "%PYTHON_CMD%" "%RELEASE_HELPER%" postbuild --exe "%OUTPUT_EXE%"
 if errorlevel 1 goto fail
 
@@ -216,7 +216,7 @@ if exist "%APP_NAME%.spec" del /f /q "%APP_NAME%.spec"
 
 echo Done: %OUTPUT_EXE%
 echo Release file: %OUTPUT_EXE%
-echo update_manifest.json has been updated with version %APP_VERSION% and the release SHA-256.
+echo update_manifest.json has been updated with version %APP_VERSION%, the release SHA-256, and its Ed25519 signature.
 if not defined SKIP_KEY if exist "%DEFAULT_KEY_FILE%" echo Encrypted default key included in the packaged resources and also kept at: %DEFAULT_KEY_FILE%
 pause
 exit /b 0

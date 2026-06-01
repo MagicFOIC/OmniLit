@@ -22,6 +22,14 @@ from .paths import AppPaths
 from .services import AccountStore
 
 
+def _shutdown_background_tasks(*controllers, timeout: float = 15.0) -> bool:
+    """Request cancellation and wait for controller workers during app exit."""
+    clean = True
+    for controller in controllers:
+        clean = bool(controller.shutdown(timeout=timeout)) and clean
+    return clean
+
+
 def _center_window_on_cursor_screen(app: QApplication, window) -> None:
     """Center the window on the screen containing the startup cursor."""
     screen = app.screenAt(QCursor.pos()) or app.primaryScreen()
@@ -78,6 +86,7 @@ def run() -> int:
     updater = UpdateController(shell, paths, store, locale)
     shell.set_migration_summary(copied)
     auth.authenticated.connect(updater.check)
+    app.aboutToQuit.connect(lambda: _shutdown_background_tasks(download, translation, updater))
 
     icon_path = paths.resource("assets", "omnilit_logo.ico")
     if icon_path.exists():

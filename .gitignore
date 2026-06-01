@@ -4,6 +4,7 @@ __pycache__/
 *.enc
 .venv/
 .idea/
+.release/
 
 OmniLit.exe
 dist/
