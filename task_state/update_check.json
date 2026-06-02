@@ -1,9 +1,9 @@
 {
   "cancellation_requested": false,
-  "detail": "检查更新失败：Update manifest is unsigned; refusing an untrusted release.",
+  "detail": "已是最新版本。",
   "metadata": {},
   "name": "UpdateCheck",
-  "started_at": "2026-06-01T17:22:42+00:00",
-  "status": "failed",
-  "updated_at": "2026-06-01T17:22:43+00:00"
+  "started_at": "2026-06-02T08:01:12+00:00",
+  "status": "completed",
+  "updated_at": "2026-06-02T08:01:12+00:00"
 }

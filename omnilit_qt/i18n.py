@@ -84,30 +84,45 @@ TEXTS: dict[str, tuple[str, str]] = {
     "status_detail": ("显示你当前的工作状态", "Show your current work status"),
     "status_placeholder": ("输入当前状态", "Enter current status"),
     "clear_status": ("清除状态", "Clear status"),
-    "status_quick": ("快捷状态", "Quick statuses"),
+    "status_quick": ("默认状态", "Default statuses"),
     "status_more_emoji": ("更多 Emoji", "More emoji"),
     "status_online": ("在线", "Online"),
     "status_focused": ("专注", "Focused"),
     "status_writing": ("写作中", "Writing"),
     "status_away": ("离开", "Away"),
+    "status_busy": ("忙碌", "Busy"),
+    "status_meeting": ("会议中", "In a meeting"),
+    "status_break": ("休息中", "On a break"),
+    "status_offline": ("离线", "Offline"),
+    "custom_statuses": ("自定义常用状态", "Custom statuses"),
+    "add_status": ("添加状态", "Add status"),
+    "rename_status": ("修改", "Rename"),
+    "delete_status": ("删除", "Delete"),
     "interface_language": ("界面语言", "Interface language"),
     "language_zh": ("简体中文", "Chinese"),
     "language_en": ("English", "English"),
+    "language_ru": ("Русский", "Russian"),
     "appearance": ("界面外观", "Appearance"),
     "academic_appearance_desc": ("面向长时间科研阅读的学术外观系统", "Academic appearance for long research sessions"),
     "academic_theme_presets": ("学术主题预设", "Academic theme presets"),
-    "preset_scholar_light": ("Scholar Light", "Scholar Light"),
+    "preset_scholar_light": ("学者蓝", "Scholar Blue"),
+    "preset_scholar_blue": ("学者蓝", "Scholar Blue"),
     "preset_manuscript_sepia": ("Manuscript Sepia", "Manuscript Sepia"),
     "preset_library_dark": ("Library Dark", "Library Dark"),
-    "preset_journal_blue": ("Journal Blue", "Journal Blue"),
+    "preset_journal_blue": ("期刊海军蓝", "Journal Navy"),
+    "preset_journal_navy": ("期刊海军蓝", "Journal Navy"),
     "preset_arxiv_minimal": ("arXiv Minimal", "arXiv Minimal"),
     "preset_nature_green": ("Nature Green", "Nature Green"),
+    "preset_citation_purple": ("引文紫", "Citation Purple"),
+    "preset_nordic_slate": ("北欧石板灰", "Nordic Slate"),
+    "preset_focus_amber": ("专注琥珀", "Focus Amber"),
     "update_management": ("更新管理", "Update management"),
     "theme_mode": ("主题模式", "Theme mode"),
     "theme_light": ("浅色", "Light"),
     "theme_dark": ("深色", "Dark"),
     "theme_system": ("跟随系统", "Follow system"),
-    "theme_auto_night": ("自动夜间", "Automatic night"),
+    "theme_auto_night": ("自适应", "Adaptive"),
+    "theme_adaptive": ("自适应", "Adaptive"),
     "local_timezone": ("本地时区", "Local timezone"),
     "accent_color": ("强调色", "Accent color"),
     "accent_scholar_blue": ("Scholar Blue", "Scholar Blue"),
@@ -140,11 +155,15 @@ TEXTS: dict[str, tuple[str, str]] = {
     "translation_line_height": ("翻译区行距", "Translation line height"),
     "line_height_comfortable": ("舒适", "Comfortable"),
     "workspace_background": ("工作区背景", "Workspace background"),
-    "background_none": ("无背景", "None"),
+    "background_none": ("默认", "Default"),
+    "background_default": ("默认", "Default"),
     "background_solid": ("纯色", "Solid"),
     "background_gradient": ("渐变", "Gradient"),
     "background_paper": ("纸张纹理", "Paper"),
     "background_grid": ("网格纸", "Grid"),
+    "background_dots": ("点阵", "Dots"),
+    "background_glow": ("柔光", "Soft glow"),
+    "background_focus": ("专注纸张", "Focus paper"),
     "background_image": ("自定义图片", "Custom image"),
     "background_opacity": ("背景透明度", "Background opacity"),
     "background_blur": ("背景模糊", "Background blur"),
@@ -284,11 +303,138 @@ TEXTS: dict[str, tuple[str, str]] = {
     "pdf_missing": ("输入目录中没有 PDF 文件。", "The input directory does not contain PDF files."),
 }
 
+LANGUAGE_OPTIONS = (
+    {"value": "zh", "label": "简体中文"},
+    {"value": "en", "label": "English"},
+    {"value": "ru", "label": "Русский"},
+)
+
+# Russian is kept alongside the existing bilingual catalog so legacy tuple callers
+# remain compatible while the public locale API grows to three languages.
+RU_TEXTS: dict[str, str] = {
+    "sort": "Сортировка", "sort_default": "По умолчанию", "sort_relevance": "Релевантность",
+    "sort_citations": "Цитирования", "sort_date": "Дата публикации", "max_records": "Максимум записей",
+    "optional": "Необязательно", "advanced": "Расширенные параметры", "collapse_advanced": "Скрыть параметры",
+    "request_delay": "Задержка запроса", "page_delay": "Задержка страницы", "min_pdf_bytes": "Минимальный размер PDF",
+    "match_ratio": "Порог совпадения заголовка", "loop_sleep": "Пауза цикла, сек.", "runtime_hours": "Максимум часов",
+    "retry_missing": "Повторить пропущенные PDF", "write_retry": "Записать список повторов", "strict_match": "Строгое совпадение",
+    "loop_job": "Циклическая задача", "fast_forward": "Пропускать обработанные страницы", "fetched": "Получено",
+    "saved": "Сохранено", "downloaded": "Загружено", "metadata": "Метаданные", "ready": "Готово",
+    "language": "Язык", "login": "Войти", "register_login": "Создать аккаунт и войти",
+    "create_account": "Создать аккаунт", "back_login": "Вернуться ко входу", "local_account": "Локальный аккаунт",
+    "workspace_login": "Вход в OmniLit", "auth_login_eyebrow": "НАУЧНОЕ РАБОЧЕЕ МЕСТО", "auth_register_eyebrow": "ЛОКАЛЬНЫЙ АККАУНТ",
+    "auth_login_desc": "Управляйте загрузками, переводами и настройками чтения в одном рабочем пространстве.",
+    "auth_register_desc": "Создайте локальный аккаунт и настройте научное рабочее пространство.",
+    "username": "Имя пользователя", "password": "Пароль", "confirm_password": "Подтвердите пароль",
+    "remember_password": "Запомнить пароль", "password_mismatch": "Пароли не совпадают.",
+    "logged_in": "Выполнен вход: {username}", "registered": "Аккаунт создан: {username}", "logged_out": "Выполнен выход.",
+    "migrated": "Восстановлено элементов старых данных: {count}.", "nav_download": "Загрузка литературы",
+    "nav_translate": "Перевод литературы", "nav_update": "Обновления", "sidebar_expand": "Развернуть боковую панель",
+    "sidebar_collapse": "Свернуть боковую панель", "logout": "Выйти", "upload_avatar": "Загрузить аватар",
+    "clear_avatar": "Удалить аватар", "avatar_settings": "Настройки аватара", "avatar_settings_detail": "Персонализация профиля",
+    "avatar_status": "Статус", "avatar_status_detail": "Покажите текущий рабочий статус", "set_status": "Настроить статус",
+    "account_center": "Личное рабочее пространство", "language_detail": "Изменить язык интерфейса",
+    "language_page_detail": "Выберите язык интерфейса", "appearance": "Внешний вид",
+    "appearance_detail": "Темы, чтение и фон", "update_detail": "Проверить и установить обновления",
+    "update_page_detail": "Обновляйте функции и исправления безопасности OmniLit", "status_detail": "Ваш текущий рабочий статус",
+    "status_placeholder": "Введите статус", "clear_status": "Сбросить статус", "status_quick": "Статусы по умолчанию",
+    "custom_statuses": "Пользовательские статусы", "add_status": "Добавить статус", "rename_status": "Изменить", "delete_status": "Удалить",
+    "status_online": "В сети", "status_focused": "Фокус", "status_writing": "Пишу", "status_away": "Отошёл",
+    "status_busy": "Занят", "status_meeting": "На встрече", "status_break": "Перерыв", "status_offline": "Не в сети",
+    "interface_language": "Язык интерфейса", "language_zh": "Китайский", "language_en": "English", "language_ru": "Русский",
+    "academic_appearance_desc": "Оформление для долгих научных сессий", "academic_theme_presets": "Предустановки темы",
+    "preset_scholar_blue": "Академический синий", "preset_manuscript_sepia": "Рукопись сепия", "preset_journal_navy": "Журнальный синий",
+    "preset_arxiv_minimal": "Минимализм arXiv", "preset_nature_green": "Природный зелёный", "preset_citation_purple": "Цитатный фиолетовый",
+    "preset_nordic_slate": "Северный сланец", "preset_focus_amber": "Янтарный фокус", "update_management": "Управление обновлениями",
+    "theme_mode": "Режим темы", "theme_light": "Светлая", "theme_dark": "Тёмная", "theme_system": "Как в системе",
+    "theme_auto_night": "Адаптивная", "theme_adaptive": "Адаптивная", "local_timezone": "Часовой пояс",
+    "accent_color": "Акцентный цвет", "apply": "Применить", "extract_background_accent": "Извлечь цвет",
+    "reading_comfort": "Комфорт чтения", "font_size": "Размер шрифта", "size_small": "Маленький", "size_standard": "Стандартный",
+    "size_large": "Большой", "size_xlarge": "Очень большой", "interface_density": "Плотность интерфейса",
+    "density_compact": "Компактно", "density_standard": "Стандартно", "density_relaxed": "Свободно",
+    "corner_radius": "Скругление", "radius_square": "Прямые углы", "radius_subtle": "Лёгкое", "radius_modern": "Современное",
+    "pdf_reading_background": "Фон чтения PDF", "background_white": "Белый", "background_sepia": "Сепия",
+    "background_gray": "Мягкий серый", "background_dark": "Тёмный", "translation_line_height": "Интервал перевода",
+    "line_height_comfortable": "Комфортный", "workspace_background": "Фон рабочего пространства", "background_default": "По умолчанию",
+    "background_solid": "Однотонный", "background_gradient": "Градиент", "background_paper": "Бумага", "background_grid": "Сетка",
+    "background_dots": "Точки", "background_glow": "Мягкое свечение", "background_focus": "Бумага для фокуса", "background_image": "Своё изображение",
+    "background_opacity": "Прозрачность фона", "background_blur": "Размытие фона", "advanced_appearance": "Дополнительно",
+    "high_contrast": "Высокий контраст", "reduce_motion": "Уменьшить анимацию", "night_start": "Начало ночи", "night_end": "Конец ночи",
+    "reset_appearance": "Сбросить оформление", "appearance_preview": "Предпросмотр", "upload_background": "Загрузить фон",
+    "clear_background": "Удалить фон", "choose": "Выбрать", "open": "Открыть", "stop": "Остановить", "running": "Выполняется",
+    "not_started": "Не запущено", "download_title": "Загрузка литературы", "literature_sources": "Базы литературы",
+    "literature_records": "Записи", "email": "Email", "output_dir": "Папка вывода", "from_date": "С даты", "to_date": "По дату",
+    "keywords": "Ключевые слова", "pages": "Страницы", "per_page": "На странице", "download_pdf": "Загружать PDF",
+    "resume": "Продолжить", "oa_only": "Только открытый доступ", "start_download": "Начать загрузку",
+    "download_started": "Загрузка запущена.", "download_done": "Загрузка завершена.", "download_stopped": "Загрузка остановлена.",
+    "config_error": "Ошибка конфигурации: {error}", "download_failed": "Ошибка загрузки: {error}",
+    "downloading_keywords": "Загрузка по ключевым словам: {keywords}", "unknown_keywords": "ключевые слова не указаны",
+    "translate_title": "Перевод литературы", "translation_dir": "Папка перевода", "pending_literature": "Ожидающие документы",
+    "empty_translation_dir": "Папка пуста. Добавьте документы.", "add_literature": "Добавить документы", "model_profile": "Профиль модели",
+    "model_id": "ID модели", "api_url": "API URL", "glossary": "Глоссарии", "select_glossary": "Выбрать глоссарии",
+    "refresh": "Обновить", "selected_count": "Выбрано: {count}", "layout_only": "Только макет", "use_cache": "Использовать кэш",
+    "summary_page": "Добавить страницу итогов", "start_translate": "Начать перевод", "translate_started": "Перевод запущен для PDF: {count}.",
+    "translate_done": "Перевод завершён.", "translate_failed": "Ошибка перевода: {error}", "translate_cancelled": "Перевод отменён.",
+    "waiting_job": "Ожидание задачи", "live_preview": "Предпросмотр перевода", "task_log": "Журнал задачи",
+    "preview_waiting": "Готовые фрагменты перевода появятся здесь.", "all": "Выбрать все", "default": "По умолчанию",
+    "batch_size": "Размер пакета", "batch_chars": "Символов в пакете", "test_pages": "Тестовые страницы", "all_pages": "Все",
+    "translate_refs": "Переводить ссылки", "translate_headers": "Переводить колонтитулы", "unlock": "Разблокировать",
+    "remember_key": "Зашифровать и запомнить", "clear_key": "Удалить сохранённое", "show": "Показать",
+    "remote_update": "Удалённое обновление", "version_history": "История версий", "download_update": "Загрузить обновление",
+    "apply_update": "Установить обновление", "check_update": "Проверить обновления", "checking_update": "Проверка обновлений...",
+    "no_update_history": "История обновлений пуста.", "download_not_started": "Загрузка не началась", "sha_unknown": "Недоступно",
+    "save": "Сохранить", "clear": "Очистить", "today": "Сегодня", "show_password": "Показать пароль",
+    "invalid_update_source": "Некорректный источник обновления: {error}", "check_update_failed": "Ошибка проверки обновления: {error}",
+    "downloading_version": "Загрузка версии {version}...", "downloaded_version": "Версия {version} загружена.",
+    "download_update_failed": "Ошибка загрузки обновления: {error}", "manual_update": "Откройте папку загрузки и установите обновление вручную.",
+    "apply_update_failed": "Ошибка установки обновления: {error}", "input_dir_missing": "Папка ввода не существует.",
+    "translation_dir_missing": "Папка перевода не существует.", "api_key_required": "Введите API Key, разблокируйте сохранённый ключ или включите режим макета.",
+    "pdf_missing": "В папке ввода нет PDF-файлов.",
+}
+RU_TEXTS.update({
+    "accent_citation_purple": "Цитатный фиолетовый", "accent_doi_teal": "Бирюзовый DOI",
+    "accent_ink_navy": "Чернильно-синий", "accent_nature_green": "Природный зелёный",
+    "accent_review_magenta": "Малиновый рецензента", "accent_scholar_blue": "Академический синий",
+    "account_preferences": "Управление языком, темой и обновлениями",
+    "appearance_preview_desc": "Изменения темы, чтения и фона отображаются здесь сразу.",
+    "apply_confirm": "Установить загруженное обновление?", "avatar_detail": "Загрузить или заменить аватар",
+    "background_none": "По умолчанию", "choose_translation_dir": "Выберите папку перевода",
+    "collapse_deployment_key_advanced": "Скрыть параметры ключа развёртывания", "current_version": "Текущая версия",
+    "data_dir": "Папка данных пользователя", "default_key_password": "Пароль ключа развёртывания",
+    "default_key_saved": "Ключ развёртывания сохранён и загружен в текущий сеанс.",
+    "default_key_unconfigured": "Ключ развёртывания не настроен.",
+    "default_key_unlock_failed": "Не удалось разблокировать ключ развёртывания: {error}",
+    "default_key_unlocked": "Ключ развёртывания разблокирован: {source}",
+    "deployment_key_advanced": "Дополнительные параметры ключа развёртывания", "deployment_key_path": "Путь к ключу развёртывания",
+    "download_busy": "Загрузка уже выполняется.", "download_confirm": "Загрузить версию ",
+    "download_desc": "Выберите открытые базы литературы, загрузите PDF и продолжайте прерванные задачи.",
+    "enter_download": "Открыть загрузки", "enter_translate": "Открыть перевод", "hide_password": "Скрыть пароль",
+    "input_dir": "Папка ввода", "key_exists": "Файл ключа развёртывания существует",
+    "key_missing": "Файл ключа развёртывания ещё не создан", "key_write_failed": "Ошибка записи: {error}",
+    "keyword_count_suffix": " и всего ключевых слов: {count}", "latest_unknown": "Не проверено",
+    "locked": "Заблокировано", "login_hint": "Введите имя пользователя и пароль.",
+    "no_background": "Своё фоновое изображение не загружено", "pdf_download_progress": "Прогресс загрузки PDF",
+    "pdf_downloaded": "PDF загружен", "preset_journal_blue": "Журнальный синий",
+    "preset_library_dark": "Тёмная библиотека", "preset_scholar_light": "Академический синий",
+    "ready_value": "Готово", "request_stop_download": "Запрашивается остановка загрузки...",
+    "request_stop_translate": "Запрашивается остановка перевода...", "save_deployment_key": "Сохранить ключ развёртывания",
+    "search_papers": "Поиск по названию, DOI или arXiv ID", "status_more_emoji": "Другие Emoji",
+    "translate_desc": "Перевод научной литературы с разбором, восстановлением макета, кэшированием и предпросмотром.",
+    "translating_document": "Перевод: {document}", "unlock_default_key": "Разблокировать ключ развёртывания",
+    "unlocked": "Разблокировано", "update_status": "Статус обновления", "update_title": "Обновления",
+    "user_key_cleared": "Сохранённый пользовательский ключ удалён.",
+    "user_key_save_failed": "Не удалось сохранить пользовательский ключ: {error}",
+    "user_key_saved": "Пользовательский ключ зашифрован и сохранён.",
+    "user_key_unlock_failed": "Не удалось разблокировать пользовательский ключ: {error}",
+    "user_key_unlocked": "Сохранённый пользовательский ключ разблокирован.",
+    "welcome": "С возвращением, {username}", "workspace_eyebrow": "НАУЧНОЕ РАБОЧЕЕ МЕСТО OMNILIT",
+})
+
 
 def tr(language: str, key: str, **values: Any) -> str:
     """翻译消息。参数：语言、键和值。返回值：格式化后的界面文本。"""
     pair = TEXTS.get(key)
-    text = pair[1 if language == "en" else 0] if pair else key
+    text = RU_TEXTS.get(key, pair[1] if pair else key) if language == "ru" else pair[1 if language == "en" else 0] if pair else key
     return text.format(**values)
 
 
@@ -302,11 +448,15 @@ class LocaleController(QObject):
         super().__init__()
         self.store = store
         saved = store.setting("language", "zh")
-        self._language = saved if saved in {"zh", "en"} else "zh"
+        self._language = saved if saved in {"zh", "en", "ru"} else "zh"
+
+    @Property("QVariantList", constant=True)
+    def availableLanguages(self) -> list[dict[str, str]]:
+        return [dict(item) for item in LANGUAGE_OPTIONS]
 
     @Property(str, notify=languageChanged)
     def language(self) -> str:
-        """返回当前语言。参数：无。返回值：zh 或 en。"""
+        """返回当前语言。参数：无。返回值：zh、en 或 ru。"""
         return self._language
 
     @Slot(str, result=str)
@@ -325,13 +475,14 @@ class LocaleController(QObject):
 
     @Slot()
     def toggleLanguage(self) -> None:
-        """切换中英文。参数：无。返回值：无。"""
-        self.setLanguage("en" if self._language == "zh" else "zh")
+        """循环切换可用语言。参数：无。返回值：无。"""
+        values = [item["value"] for item in LANGUAGE_OPTIONS]
+        self.setLanguage(values[(values.index(self._language) + 1) % len(values)])
 
     @Slot(str)
     def setLanguage(self, language: str) -> None:
-        """设置并保存语言。参数：zh 或 en。返回值：无。"""
-        value = language if language in {"zh", "en"} else "zh"
+        """设置并保存语言。参数：zh、en 或 ru。返回值：无。"""
+        value = language if language in {"zh", "en", "ru"} else "zh"
         if value == self._language:
             return
         self._language = value

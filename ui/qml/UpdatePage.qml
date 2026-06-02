@@ -62,10 +62,40 @@ ScrollView {
                 anchors.fill: parent
                 anchors.margins: 12
                 Text { text: i18n.text("version_history"); color: theme.text; font.pixelSize: 16; font.weight: Font.Bold }
-                ScrollView {
+                Text {
+                    visible: updateController.historyItems.length === 0
+                    text: i18n.text("no_update_history")
+                    color: theme.textMuted
+                    font.pixelSize: 12
+                }
+                ListView {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    SoftTextArea { text: updateController.historyText; readOnly: true; wrapMode: TextArea.Wrap }
+                    clip: true
+                    spacing: 8
+                    model: updateController.historyItems
+                    delegate: Rectangle {
+                        required property var modelData
+                        width: ListView.view.width
+                        implicitHeight: historyColumn.implicitHeight + 18
+                        radius: theme.radiusMedium
+                        color: theme.surfaceSoft
+                        border.color: theme.border
+                        ColumnLayout {
+                            id: historyColumn
+                            anchors.fill: parent
+                            anchors.margins: 9
+                            spacing: 4
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Text { text: "v" + modelData.version; color: theme.accent; font.weight: Font.Bold }
+                                Item { Layout.fillWidth: true }
+                                Text { visible: !!modelData.date; text: modelData.date; color: theme.textMuted; font.pixelSize: 11 }
+                            }
+                            Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: theme.divider }
+                            Text { Layout.fillWidth: true; text: modelData.notes; color: theme.text; font.pixelSize: 12; wrapMode: Text.WordWrap }
+                        }
+                    }
                 }
             }
         }

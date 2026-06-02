@@ -5,6 +5,7 @@ Button {
     id: control
     property bool primary: false
     property bool busy: false
+    property string iconName: ""
     Theme { id: theme }
     Motion { id: motion }
     implicitHeight: 42
@@ -38,8 +39,18 @@ Button {
                 visible: running
                 palette.dark: control.primary ? theme.accentText : theme.accent
             }
+            VectorIcon {
+                anchors.verticalCenter: parent.verticalCenter
+                width: 18
+                height: 18
+                visible: !!control.iconName && !control.busy
+                name: control.iconName
+                color: !control.enabled ? theme.disabledText : control.primary ? theme.accentText : theme.text
+                strokeWidth: 2
+            }
             Text {
                 anchors.verticalCenter: parent.verticalCenter
+                visible: !!control.text
                 text: control.text
                 color: !control.enabled && !control.busy ? theme.disabledText : control.primary ? theme.accentText : theme.text
                 font: control.font

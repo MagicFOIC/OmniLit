@@ -8,7 +8,13 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        color: root.mode === "none" ? "transparent" : theme.canvas
+        color: theme.canvas
+    }
+
+    Rectangle {
+        anchors.fill: parent
+        visible: root.mode === "solid"
+        color: theme.surface
     }
 
     Rectangle {
@@ -23,17 +29,27 @@ Item {
     Canvas {
         id: pattern
         anchors.fill: parent
-        visible: root.mode === "paper" || root.mode === "grid"
-        opacity: root.mode === "paper" ? 0.28 : 0.42
+        visible: root.mode === "paper" || root.mode === "grid" || root.mode === "dots" || root.mode === "focus"
+        opacity: root.mode === "paper" ? 0.22 : root.mode === "focus" ? 0.18 : 0.38
         onVisibleChanged: requestPaint()
         onWidthChanged: requestPaint()
         onHeightChanged: requestPaint()
         onPaint: {
             const context = getContext("2d")
             context.reset()
-            context.strokeStyle = theme.border
+            context.strokeStyle = root.mode === "focus" ? theme.accentSoft : theme.border
+            context.fillStyle = theme.borderStrong
             context.lineWidth = 1
-            const step = root.mode === "paper" ? 28 : 20
+            const step = root.mode === "paper" || root.mode === "focus" ? 28 : 20
+            if (root.mode === "dots") {
+                for (let x = step / 2; x <= width; x += step)
+                    for (let y = step / 2; y <= height; y += step) {
+                        context.beginPath()
+                        context.arc(x, y, 1.25, 0, Math.PI * 2)
+                        context.fill()
+                    }
+                return
+            }
             for (let x = 0; x <= width; x += step) {
                 context.beginPath()
                 context.moveTo(x, 0)
@@ -47,6 +63,18 @@ Item {
                 context.stroke()
             }
         }
+    }
+
+    Rectangle {
+        anchors.fill: parent
+        visible: root.mode === "glow"
+        gradient: Gradient {
+            orientation: Gradient.Horizontal
+            GradientStop { position: 0.0; color: theme.accentSofter }
+            GradientStop { position: 0.55; color: theme.canvas }
+            GradientStop { position: 1.0; color: theme.surfaceSoft }
+        }
+        opacity: 0.68
     }
 
     Connections {

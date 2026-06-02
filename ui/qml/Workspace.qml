@@ -85,11 +85,7 @@ Item {
                         HoverHandler { cursorShape: Qt.PointingHandCursor }
                         background: Rectangle {
                             radius: 15
-                            color: navigationButton.selected ? theme.navSelected
-                                                             : navigationButton.down ? theme.navPressed
-                                                             : navigationButton.hovered || navigationButton.activeFocus ? theme.navHover
-                                                             : "transparent"
-                            Behavior on color { ColorAnimation { duration: motion.normal; easing.type: Easing.OutCubic } }
+                            color: navigationButton.selected ? theme.navSelected : "transparent"
                             Rectangle {
                                 visible: navigationButton.selected
                                 anchors.left: parent.left
@@ -100,23 +96,25 @@ Item {
                                 color: theme.accent
                             }
                         }
-                        contentItem: Row {
-                            anchors.centerIn: parent
-                            spacing: 12
-                            VectorIcon {
-                                anchors.verticalCenter: parent.verticalCenter
-                                width: 24
-                                height: 24
-                                name: modelData.icon
-                                color: navigationButton.selected || navigationButton.hovered ? theme.accent : theme.textMuted
-                            }
-                            Text {
-                                anchors.verticalCenter: parent.verticalCenter
-                                visible: root.sidebarExpanded
-                                text: i18n.text(modelData.label)
-                                color: navigationButton.selected || navigationButton.hovered ? theme.accent : theme.textMuted
-                                font.pixelSize: 14
-                                font.weight: navigationButton.selected ? Font.DemiBold : Font.Medium
+                        contentItem: Item {
+                            Row {
+                                anchors.centerIn: parent
+                                spacing: 12
+                                VectorIcon {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    width: 24
+                                    height: 24
+                                    name: modelData.icon
+                                    color: navigationButton.selected || navigationButton.hovered ? theme.accent : theme.textMuted
+                                }
+                                Text {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    visible: root.sidebarExpanded
+                                    text: i18n.text(modelData.label)
+                                    color: navigationButton.selected || navigationButton.hovered ? theme.accent : theme.textMuted
+                                    font.pixelSize: 14
+                                    font.weight: navigationButton.selected ? Font.DemiBold : Font.Medium
+                                }
                             }
                         }
                         ModernToolTip {
@@ -143,22 +141,24 @@ Item {
                         radius: 13
                         color: sidebarModeButton.hovered ? theme.navHover : "transparent"
                     }
-                    contentItem: Row {
-                        anchors.centerIn: parent
-                        spacing: 12
-                        VectorIcon {
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: 21
-                            height: 21
-                            name: root.sidebarExpanded ? "sidebar-collapse" : "sidebar-expand"
-                            color: sidebarModeButton.hovered ? theme.accent : theme.textMuted
-                        }
-                        Text {
-                            anchors.verticalCenter: parent.verticalCenter
-                            visible: root.sidebarExpanded
-                            text: i18n.text("sidebar_collapse")
-                            color: sidebarModeButton.hovered ? theme.accent : theme.textMuted
-                            font.pixelSize: 13
+                    contentItem: Item {
+                        Row {
+                            anchors.centerIn: parent
+                            spacing: 12
+                            VectorIcon {
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: 21
+                                height: 21
+                                name: root.sidebarExpanded ? "sidebar-collapse" : "sidebar-expand"
+                                color: sidebarModeButton.hovered ? theme.accent : theme.textMuted
+                            }
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                visible: root.sidebarExpanded
+                                text: i18n.text("sidebar_collapse")
+                                color: sidebarModeButton.hovered ? theme.accent : theme.textMuted
+                                font.pixelSize: 13
+                            }
                         }
                     }
                     ModernToolTip {
@@ -185,36 +185,43 @@ Item {
                     }
                     contentItem: RowLayout {
                         spacing: 9
-                        RoundedAvatar {
-                            id: sidebarAvatar
+                        Item {
                             Layout.preferredWidth: 42
                             Layout.preferredHeight: 42
-                            source: preferencesController.avatarUrl
-                            fallbackText: preferencesController.avatarInitial
-                            backgroundColor: theme.accent
-                            borderColor: theme.borderStrong
-                        }
-                        AvatarStatusBadge {
-                            status: preferencesController.avatarStatus
-                            compact: true
-                            Layout.leftMargin: -18
-                            Layout.topMargin: 26
+                            RoundedAvatar {
+                                id: sidebarAvatar
+                                anchors.fill: parent
+                                source: preferencesController.avatarUrl
+                                fallbackText: preferencesController.avatarInitial
+                                backgroundColor: theme.accent
+                                borderColor: theme.borderStrong
+                            }
+                            AvatarStatusBadge {
+                                anchors.right: parent.right
+                                anchors.bottom: parent.bottom
+                                status: preferencesController.avatarStatus
+                                statusColor: preferencesController.avatarStatusColor
+                                compact: true
+                            }
+                            Rectangle {
+                                visible: updateController.available
+                                anchors.right: parent.right
+                                anchors.top: parent.top
+                                anchors.rightMargin: -2
+                                anchors.topMargin: -2
+                                width: 10
+                                height: 10
+                                radius: 5
+                                color: theme.error
+                                border.color: theme.surfaceSoft
+                            }
                         }
                         ColumnLayout {
                             visible: root.sidebarExpanded
                             Layout.fillWidth: true
                             spacing: 1
                             Text { text: authController.username; color: theme.text; font.pixelSize: 12; font.weight: Font.DemiBold; elide: Text.ElideRight; Layout.fillWidth: true }
-                            Text { text: preferencesController.avatarStatus || i18n.text("set_status"); color: theme.textMuted; font.pixelSize: 10; elide: Text.ElideRight; Layout.fillWidth: true }
-                        }
-                        Rectangle {
-                            visible: updateController.available
-                            Layout.alignment: Qt.AlignTop | Qt.AlignRight
-                            Layout.preferredWidth: 10
-                            Layout.preferredHeight: 10
-                            radius: 5
-                            color: theme.error
-                            border.color: theme.surfaceSoft
+                            Text { text: preferencesController.avatarStatusLabel; color: theme.textMuted; font.pixelSize: 10; elide: Text.ElideRight; Layout.fillWidth: true }
                         }
                     }
                 }
@@ -301,6 +308,7 @@ Item {
                                         anchors.right: parent.right
                                         anchors.bottom: parent.bottom
                                         status: preferencesController.avatarStatus
+                                        statusColor: preferencesController.avatarStatusColor
                                         compact: true
                                     }
                                 }
@@ -320,38 +328,18 @@ Item {
                             }
                         }
                     }
-                    RowLayout {
-                        Layout.alignment: Qt.AlignHCenter
-                        spacing: 8
-                        PillButton {
-                            text: preferencesController.avatarStatus || i18n.text("set_status")
-                            onClicked: {
-                                root.draftAvatarStatus = preferencesController.avatarStatus
-                                root.drawerPage = 4
-                            }
-                        }
-                    }
-                    Text {
-                        Layout.fillWidth: true
-                        Layout.leftMargin: 18
-                        Layout.rightMargin: 18
-                        text: i18n.text("account_preferences")
-                        color: theme.textMuted
-                        horizontalAlignment: Text.AlignHCenter
-                        wrapMode: Text.WordWrap
-                        font.pixelSize: 11
-                    }
-                    Text {
-                        Layout.fillWidth: true
-                        Layout.leftMargin: 18
-                        Layout.rightMargin: 18
-                        text: appController.statusText
-                        color: theme.textMuted
-                        horizontalAlignment: Text.AlignHCenter
-                        wrapMode: Text.WordWrap
-                        font.pixelSize: 12
-                    }
                     Rectangle { Layout.fillWidth: true; Layout.leftMargin: 16; Layout.rightMargin: 16; implicitHeight: 1; color: theme.border }
+
+                    DrawerMenuItem {
+                        id: avatarSettingsEntry
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 14
+                        Layout.rightMargin: 14
+                        iconName: "user"
+                        label: i18n.text("avatar_settings")
+                        detail: preferencesController.avatarStatusLabel
+                        onClicked: root.drawerPage = 3
+                    }
 
                     DrawerMenuItem {
                         id: languageEntry
@@ -382,7 +370,7 @@ Item {
                         Layout.rightMargin: 14
                         iconName: "update"
                         label: i18n.text("update_management")
-                        detail: i18n.text("update_detail")
+                        detail: updateController.hasCheckStatus ? updateController.statusText : i18n.text("update_detail")
                         attention: updateController.available
                         onClicked: root.drawerPage = 2
                     }
@@ -424,9 +412,7 @@ Item {
                             Item { Layout.fillWidth: true }
                         }
                         ModernToolTip {
-                            anchors.left: parent.right
-                            anchors.leftMargin: 10
-                            anchors.verticalCenter: parent.verticalCenter
+                            target: logoutButton
                             shown: logoutButton.hovered
                             text: i18n.text("logout")
                         }
@@ -468,13 +454,26 @@ Item {
                                 Text { text: i18n.text("academic_theme_presets"); color: theme.text; font.pixelSize: theme.baseFontSize + 2; font.weight: Font.Bold }
                                 Flow {
                                     Layout.fillWidth: true
-                                    spacing: 7
+                                    spacing: 8
                                     Repeater {
                                         model: preferencesController.themePresets
-                                        PillButton {
-                                            text: i18n.text(modelData.label)
-                                            primary: preferencesController.themePreset === modelData.value
+                                        Button {
+                                            implicitWidth: 142
+                                            implicitHeight: 52
+                                            hoverEnabled: true
                                             onClicked: preferencesController.setThemePreset(modelData.value)
+                                            HoverHandler { cursorShape: Qt.PointingHandCursor }
+                                            background: Rectangle {
+                                                radius: theme.radiusMedium
+                                                color: preferencesController.themePreset === modelData.value ? theme.navSelected : parent.hovered ? theme.navHover : theme.surface
+                                                border.width: preferencesController.themePreset === modelData.value ? 2 : 1
+                                                border.color: preferencesController.themePreset === modelData.value ? theme.accent : theme.border
+                                            }
+                                            contentItem: RowLayout {
+                                                spacing: 7
+                                                Rectangle { Layout.preferredWidth: 18; Layout.preferredHeight: 28; radius: 6; color: modelData.preview; border.color: modelData.swatch }
+                                                Text { Layout.fillWidth: true; text: i18n.text(modelData.label); color: theme.text; font.pixelSize: 11; wrapMode: Text.WordWrap }
+                                            }
                                         }
                                     }
                                 }
@@ -487,12 +486,12 @@ Item {
                                         { value: "light", label: "theme_light" },
                                         { value: "dark", label: "theme_dark" },
                                         { value: "system", label: "theme_system" },
-                                        { value: "auto_night", label: "theme_auto_night" }
+                                        { value: "adaptive", label: "theme_adaptive" }
                                     ]
                                     onSelected: value => preferencesController.setThemeMode(value)
                                 }
                                 Text {
-                                    visible: preferencesController.themeMode === "auto_night"
+                                    visible: preferencesController.themeMode === "adaptive"
                                     text: i18n.text("local_timezone") + ": " + preferencesController.localTimezoneName + "  ·  " + preferencesController.autoNightStart + "-" + preferencesController.autoNightEnd
                                     color: theme.textMuted
                                     font.pixelSize: theme.baseFontSize - 2
@@ -516,8 +515,8 @@ Item {
                                                 border.color: preferencesController.accentName === modelData.value ? theme.text : theme.border
                                             }
                                             ModernToolTip {
-                                                anchors.top: parent.bottom
-                                                anchors.topMargin: 7
+                                                target: parent
+                                                placement: "bottom"
                                                 shown: parent.hovered
                                                 text: i18n.text(modelData.label)
                                             }
@@ -590,15 +589,30 @@ Item {
                                 }
 
                                 Text { text: i18n.text("workspace_background"); color: theme.text; font.pixelSize: theme.baseFontSize + 2; font.weight: Font.Bold }
-                                AppearanceChoiceRow {
+                                Flow {
                                     Layout.fillWidth: true
-                                    selectedValue: preferencesController.backgroundMode
-                                    choices: [
-                                        { value: "none", label: "background_none" }, { value: "solid", label: "background_solid" },
-                                        { value: "gradient", label: "background_gradient" }, { value: "paper", label: "background_paper" },
-                                        { value: "grid", label: "background_grid" }, { value: "image", label: "background_image" }
-                                    ]
-                                    onSelected: value => preferencesController.setBackgroundMode(value)
+                                    spacing: 8
+                                    Repeater {
+                                        model: preferencesController.backgroundPresets
+                                        Button {
+                                            implicitWidth: 142
+                                            implicitHeight: 44
+                                            hoverEnabled: true
+                                            onClicked: preferencesController.setBackgroundMode(modelData.value)
+                                            HoverHandler { cursorShape: Qt.PointingHandCursor }
+                                            background: Rectangle {
+                                                radius: theme.radiusMedium
+                                                color: preferencesController.backgroundMode === modelData.value ? theme.navSelected : parent.hovered ? theme.navHover : theme.surface
+                                                border.width: preferencesController.backgroundMode === modelData.value ? 2 : 1
+                                                border.color: preferencesController.backgroundMode === modelData.value ? theme.accent : theme.border
+                                            }
+                                            contentItem: RowLayout {
+                                                spacing: 7
+                                                Rectangle { Layout.preferredWidth: 22; Layout.preferredHeight: 22; radius: 7; color: modelData.swatch; border.color: theme.borderStrong }
+                                                Text { Layout.fillWidth: true; text: i18n.text(modelData.label); color: theme.text; font.pixelSize: 11; wrapMode: Text.WordWrap }
+                                            }
+                                        }
+                                    }
                                 }
                                 Rectangle {
                                     Layout.fillWidth: true
@@ -626,11 +640,11 @@ Item {
 
                                 Text { text: i18n.text("advanced_appearance"); color: theme.text; font.pixelSize: theme.baseFontSize + 2; font.weight: Font.Bold }
                                 RowLayout {
-                                    CheckBox { text: i18n.text("high_contrast"); checked: preferencesController.highContrast; onToggled: preferencesController.setHighContrast(checked) }
-                                    CheckBox { text: i18n.text("reduce_motion"); checked: preferencesController.reduceMotion; onToggled: preferencesController.setReduceMotion(checked) }
+                                    ModernCheckBox { text: i18n.text("high_contrast"); checked: preferencesController.highContrast; onToggled: preferencesController.setHighContrast(checked) }
+                                    ModernCheckBox { text: i18n.text("reduce_motion"); checked: preferencesController.reduceMotion; onToggled: preferencesController.setReduceMotion(checked) }
                                 }
                                 RowLayout {
-                                    visible: preferencesController.themeMode === "auto_night"
+                                    visible: preferencesController.themeMode === "adaptive"
                                     Text { text: i18n.text("night_start"); color: theme.textMuted }
                                     TextField { implicitWidth: 76; text: preferencesController.autoNightStart; onEditingFinished: preferencesController.setAutoNightStart(text) }
                                     Text { text: i18n.text("night_end"); color: theme.textMuted }
@@ -688,7 +702,15 @@ Item {
                         }
                         AvatarStatusBadge {
                             Layout.alignment: Qt.AlignHCenter
-                            status: preferencesController.avatarStatus
+                            status: preferencesController.avatarStatusLabel
+                            statusColor: preferencesController.avatarStatusColor
+                        }
+                        DrawerMenuItem {
+                            Layout.fillWidth: true
+                            iconName: "status"
+                            label: i18n.text("avatar_status")
+                            detail: preferencesController.avatarStatusLabel
+                            onClicked: root.drawerPage = 4
                         }
                         RowLayout {
                             Layout.alignment: Qt.AlignHCenter
@@ -708,7 +730,7 @@ Item {
                     DrawerPageHeader {
                         title: i18n.text("avatar_status")
                         detail: i18n.text("avatar_status_detail")
-                        onBack: root.drawerPage = 0
+                        onBack: root.drawerPage = 3
                     }
                     Card {
                         Layout.fillWidth: true
@@ -720,7 +742,7 @@ Item {
                             anchors.fill: parent
                             anchors.margins: 14
                             spacing: 9
-                            AvatarStatusBadge { status: root.draftAvatarStatus || preferencesController.avatarStatus }
+                            AvatarStatusBadge { status: preferencesController.avatarStatusLabel; statusColor: preferencesController.avatarStatusColor }
                             TextField {
                                 Layout.fillWidth: true
                                 text: root.draftAvatarStatus
@@ -729,8 +751,15 @@ Item {
                             }
                             RowLayout {
                                 Item { Layout.fillWidth: true }
-                                PillButton { text: i18n.text("save"); primary: true; onClicked: root.applyAvatarStatus(root.draftAvatarStatus) }
-                                PillButton { text: i18n.text("clear_status"); enabled: !!preferencesController.avatarStatus; onClicked: root.applyAvatarStatus("") }
+                                PillButton {
+                                    text: i18n.text("add_status")
+                                    primary: true
+                                    enabled: !!root.draftAvatarStatus.trim()
+                                    onClicked: {
+                                        if (preferencesController.addCustomAvatarStatus(root.draftAvatarStatus))
+                                            root.draftAvatarStatus = ""
+                                    }
+                                }
                             }
                         }
                     }
@@ -741,26 +770,40 @@ Item {
                         Layout.rightMargin: 18
                         spacing: 7
                         Repeater {
-                            model: ["status_online", "status_focused", "status_writing", "status_away"]
-                            PillButton {
-                                text: i18n.text(modelData)
-                                primary: preferencesController.avatarStatus === text
-                                onClicked: root.applyAvatarStatus(text)
+                            model: root.defaultStatuses()
+                            Button {
+                                implicitWidth: 150
+                                implicitHeight: 40
+                                hoverEnabled: true
+                                onClicked: preferencesController.setAvatarStatusId(modelData.id)
+                                HoverHandler { cursorShape: Qt.PointingHandCursor }
+                                background: Rectangle {
+                                    radius: theme.radiusMedium
+                                    color: preferencesController.avatarStatusId === modelData.id ? theme.navSelected : parent.hovered ? theme.navHover : theme.surface
+                                    border.color: preferencesController.avatarStatusId === modelData.id ? theme.accent : theme.border
+                                }
+                                contentItem: AvatarStatusBadge { status: modelData.label; statusColor: modelData.color }
                             }
                         }
                     }
-                    Text { Layout.leftMargin: 18; text: i18n.text("status_more_emoji"); color: theme.textMuted; font.pixelSize: 12 }
-                    Flow {
+                    Text { Layout.leftMargin: 18; text: i18n.text("custom_statuses"); color: theme.textMuted; font.pixelSize: 12 }
+                    ColumnLayout {
                         Layout.fillWidth: true
                         Layout.leftMargin: 18
                         Layout.rightMargin: 18
                         spacing: 7
                         Repeater {
-                            model: ["🟢", "☕", "📚", "🎯", "🌙", "🚫", "✍️", "🔬", "💡", "📖", "🧠", "🚀", "⏳", "🏠", "🎓", "💻", "📝", "🧪", "📊", "🔕"]
-                            PillButton {
-                                text: modelData
-                                primary: preferencesController.avatarStatus === text
-                                onClicked: root.applyAvatarStatus(text)
+                            model: root.customStatuses()
+                            RowLayout {
+                                Layout.fillWidth: true
+                                AvatarStatusBadge { status: modelData.label; statusColor: modelData.color }
+                                TextField {
+                                    Layout.fillWidth: true
+                                    text: modelData.label
+                                    onEditingFinished: preferencesController.renameCustomAvatarStatus(modelData.id, text)
+                                }
+                                PillButton { text: i18n.text("apply"); onClicked: preferencesController.setAvatarStatusId(modelData.id) }
+                                PillButton { text: i18n.text("delete_status"); onClicked: preferencesController.deleteCustomAvatarStatus(modelData.id) }
                             }
                         }
                     }
@@ -788,7 +831,8 @@ Item {
                         selectedValue: localeController.language
                         choices: [
                             { value: "zh", label: "language_zh" },
-                            { value: "en", label: "language_en" }
+                            { value: "en", label: "language_en" },
+                            { value: "ru", label: "language_ru" }
                         ]
                         onSelected: value => localeController.setLanguage(value)
                     }
@@ -805,8 +849,10 @@ Item {
             return translationController.activeTaskText
         return i18n.text(fallbackLabel)
     }
-    function applyAvatarStatus(status) {
-        root.draftAvatarStatus = status
-        preferencesController.setAvatarStatus(status)
+    function defaultStatuses() {
+        return preferencesController.avatarStatusOptions.filter(item => !item.custom)
+    }
+    function customStatuses() {
+        return preferencesController.avatarStatusOptions.filter(item => item.custom)
     }
 }

@@ -17,7 +17,7 @@ RowLayout {
         placeholderText: "YYYY-MM-DD"
         selectByMouse: true
     }
-    PillButton { text: "▼"; onClicked: { root.rebuild(); popup.open() } }
+    PillButton { iconName: "calendar"; onClicked: { root.rebuild(); popup.open() } }
 
     ListModel { id: days }
 
@@ -41,7 +41,7 @@ RowLayout {
             anchors.margins: 12
             RowLayout {
                 Layout.fillWidth: true
-                PillButton { text: "<"; onClicked: root.moveMonth(-1) }
+                PillButton { iconName: "chevron-left"; onClicked: root.moveMonth(-1) }
                 Text {
                     Layout.fillWidth: true
                     horizontalAlignment: Text.AlignHCenter
@@ -49,7 +49,7 @@ RowLayout {
                     color: theme.text
                     font.weight: Font.Bold
                 }
-                PillButton { text: ">"; onClicked: root.moveMonth(1) }
+                PillButton { iconName: "chevron-right"; onClicked: root.moveMonth(1) }
             }
             GridLayout {
                 columns: 7

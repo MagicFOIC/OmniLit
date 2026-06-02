@@ -85,8 +85,8 @@ Item {
                     leftPadding: 10
                     rightPadding: 10
                     hoverEnabled: true
-                    text: i18n.text("language")
-                    onClicked: localeController.toggleLanguage()
+                    text: root.currentLanguageLabel()
+                    onClicked: languageMenu.open()
 
                     HoverHandler { cursorShape: Qt.PointingHandCursor }
                     background: Rectangle {
@@ -96,13 +96,42 @@ Item {
                         Behavior on color { ColorAnimation { duration: motion.fast } }
                         Behavior on border.color { ColorAnimation { duration: motion.fast } }
                     }
-                    contentItem: Text {
-                        text: languageButton.text
-                        color: theme.accentStrong
-                        font.pixelSize: 12
-                        font.weight: Font.DemiBold
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
+                    contentItem: Item {
+                        implicitWidth: languageRow.implicitWidth
+                        implicitHeight: languageRow.implicitHeight
+                        Row {
+                            id: languageRow
+                            anchors.centerIn: parent
+                            spacing: 5
+                            VectorIcon {
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: 16
+                                height: 16
+                                name: "language"
+                                color: theme.accentStrong
+                                strokeWidth: 2
+                            }
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: languageButton.text
+                                color: theme.accentStrong
+                                font.pixelSize: 12
+                                font.weight: Font.DemiBold
+                            }
+                        }
+                    }
+                }
+                Menu {
+                    id: languageMenu
+                    y: languageButton.height + 6
+                    Repeater {
+                        model: localeController.availableLanguages
+                        MenuItem {
+                            text: modelData.label
+                            checkable: true
+                            checked: localeController.language === modelData.value
+                            onTriggered: localeController.setLanguage(modelData.value)
+                        }
                     }
                 }
             }
@@ -168,9 +197,9 @@ Item {
 
             RowLayout {
                 Layout.fillWidth: true
-                CheckBox { id: remember; text: i18n.text("remember_password"); checked: authController.rememberPasswordChecked; font.pixelSize: 12 }
+                ModernCheckBox { id: remember; text: i18n.text("remember_password"); checked: authController.rememberPasswordChecked; font.pixelSize: 12 }
                 Item { Layout.fillWidth: true }
-                CheckBox { id: showPassword; text: i18n.text("show_password"); font.pixelSize: 12 }
+                ModernCheckBox { id: showPassword; text: i18n.text("show_password"); font.pixelSize: 12 }
             }
 
             StatusBanner { Layout.fillWidth: true; text: authController.statusText }
@@ -237,5 +266,12 @@ Item {
             authController.registerUser(username.text, password.text, confirm.text, remember.checked)
         else
             authController.login(username.text, password.text, remember.checked)
+    }
+
+    function currentLanguageLabel() {
+        for (let item of localeController.availableLanguages)
+            if (item.value === localeController.language)
+                return item.label
+        return "Language"
     }
 }

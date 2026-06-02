@@ -33,20 +33,30 @@ Button {
             Layout.preferredWidth: 38
             Layout.preferredHeight: 38
             radius: 12
-            color: control.hovered ? theme.accentSoft : theme.accentSofter
+            color: "transparent"
             VectorIcon {
                 anchors.centerIn: parent
-                width: 20
-                height: 20
+                width: 24
+                height: 24
                 name: control.iconName
-                color: theme.accent
+                color: theme.accentStrong
+                strokeWidth: 2
             }
         }
         ColumnLayout {
             Layout.fillWidth: true
             spacing: 1
             Text { text: control.label; color: theme.text; font.pixelSize: 14; font.weight: Font.DemiBold }
-            Text { visible: !!control.detail; text: control.detail; color: theme.textMuted; font.pixelSize: 11 }
+            Text {
+                visible: !!control.detail
+                Layout.fillWidth: true
+                text: control.detail
+                color: theme.textMuted
+                font.pixelSize: 11
+                wrapMode: Text.WordWrap
+                maximumLineCount: 2
+                elide: Text.ElideRight
+            }
         }
         Rectangle { visible: control.attention; Layout.preferredWidth: 8; Layout.preferredHeight: 8; radius: 4; color: theme.error }
         VectorIcon { name: "chevron-right"; color: theme.textMuted; Layout.preferredWidth: 17; Layout.preferredHeight: 17; strokeWidth: 2.1 }

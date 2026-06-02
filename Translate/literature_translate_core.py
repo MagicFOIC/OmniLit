@@ -199,9 +199,9 @@ DEFAULT_GLOSSARY_FILENAMES = tuple(
 
 def localized_log(language: str, message: str) -> str:
     """翻译核心进度日志。参数：语言和中文消息。返回值：任务启动语言对应的文本。"""
-    if language != "en":
+    if language == "zh":
         return message
-    replacements = (
+    english_replacements = (
         ("准备处理 ", "Preparing "),
         ("读取 PDF 并提取文本段", "Reading PDF and extracting text segments"),
         ("已提取 ", "Extracted "),
@@ -3003,6 +3003,27 @@ def find_pdf_files(input_dir: Path) -> list[Path]:
         (path for path in input_dir.iterdir() if path.is_file() and path.suffix.lower() == ".pdf"),
         key=lambda path: path.name.lower(),
     )
+    russian_replacements = (
+        ("准备处理 ", "Подготовка "),
+        ("读取 PDF 并提取文本段", "Чтение PDF и извлечение фрагментов"),
+        ("已提取", "Извлечено "),
+        (" 段，需要翻译", " фрагментов; требуется перевод: "),
+        ("构建上下文，准备翻译 ", "Подготовка контекста для перевода: "),
+        ("待翻译", "Ожидают перевода: "),
+        (" 段，分为 ", " фрагментов в "),
+        (" 个批次", " пакетах"),
+        ("全部段落命中缓存，无需调用模型", "Все фрагменты загружены из кэша; обращение к модели не требуется"),
+        ("正在翻译批次 ", "Перевод пакета "),
+        ("已完成翻译批次", "Завершён пакет перевода "),
+        ("生成文献核心要点概况", "Создание краткого обзора документа"),
+        ("文献核心要点概况已生成", "Краткий обзор документа готов"),
+        ("加载字体并生成输出 PDF", "Загрузка шрифтов и создание PDF"),
+        ("准备渲染 ", "Подготовка отрисовки "),
+        ("已渲染页面", "Отрисована страница "),
+        ("追加文献概况页", "Добавление страницы итогов"),
+        ("已保存", "Сохранено "),
+    )
+    replacements = russian_replacements if language == "ru" else english_replacements
 
 
 def translate_pdf(input_pdf: Path, args: argparse.Namespace, translator: BaseTranslator, glossary_text: str) -> None:
@@ -3029,7 +3050,7 @@ def translate_pdf(input_pdf: Path, args: argparse.Namespace, translator: BaseTra
         if not preview_callback:
             return
         preview = translation_preview_text(segments, partial_translations)
-        waiting = "Waiting for translated segments..." if language == "en" else "等待首批翻译结果..."
+        waiting = "Ожидание переведённых фрагментов..." if language == "ru" else "Waiting for translated segments..." if language == "en" else "等待首批翻译结果..."
         preview_callback(f"{input_pdf.name}\n\n{preview or waiting}")
 
     output_dir = document_output_dir(input_pdf, Path(args.output))

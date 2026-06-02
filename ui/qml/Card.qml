@@ -19,13 +19,4 @@ Rectangle {
         opacity: 0.9
     }
 
-    Rectangle {
-        anchors.left: parent.left
-        anchors.top: parent.top
-        anchors.bottom: parent.bottom
-        width: 2
-        radius: 1
-        color: theme.accent
-        opacity: 0.16
-    }
 }

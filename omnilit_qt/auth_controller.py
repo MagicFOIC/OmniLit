@@ -61,16 +61,25 @@ class AuthController(QObject):
     def _error_text(self, exc: Exception) -> str:
         """翻译账号存储异常。参数：底层异常。返回值：当前语言错误文本。"""
         message = str(exc)
-        if self.locale.language != "en":
+        if self.locale.language == "zh":
             return message
-        return {
+        translations = {
             "用户名至少需要 3 个字符。": "Username must contain at least 3 characters.",
             "密码至少需要 6 个字符。": "Password must contain at least 6 characters.",
             "用户名已存在。": "Username already exists.",
             "请输入用户名和密码。": "Enter your username and password.",
             "账号不存在。": "Account does not exist.",
             "密码不正确。": "Incorrect password.",
-        }.get(message, message)
+        }
+        russian = {
+            "用户名至少需要 3 个字符。": "Имя пользователя должно содержать не менее 3 символов.",
+            "密码至少需要 6 个字符。": "Пароль должен содержать не менее 6 символов.",
+            "用户名已存在。": "Имя пользователя уже существует.",
+            "请输入用户名和密码。": "Введите имя пользователя и пароль.",
+            "账号不存在。": "Аккаунт не существует.",
+            "密码不正确。": "Неверный пароль.",
+        }
+        return (russian if self.locale.language == "ru" else translations).get(message, message)
 
     @Property(bool, notify=changed)
     def loggedIn(self) -> bool:
@@ -138,5 +147,5 @@ class AuthController(QObject):
     def logout(self) -> None:
         """退出当前账号但保留用户选择的密文。参数：无。返回值：无。"""
         self._username = ""
-        self._set_status(self.locale.textf("logged_out"))
+        self._set_status("")
         self.loggedOut.emit()

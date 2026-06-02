@@ -25,7 +25,7 @@ OmniLit/
   assets/                       应用图标和发布资源
   Download/
     literature_download_core.py 多来源文献检索和下载核心
-    pdfs/                       已下载文献 PDF
+    pdfs/                       已下载文献 PDF；按关键词拆分为子目录
     metadata_battery.jsonl      文献元数据
     crawl_state.json            下载断点状态
     gui_settings.json           下载页设置

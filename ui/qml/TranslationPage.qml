@@ -32,7 +32,7 @@ Item {
                     width: parent.width
                     Repeater {
                         model: translationController.glossaryCatalog
-                        CheckBox {
+                        ModernCheckBox {
                             Layout.fillWidth: true
                             text: modelData.name + "  ·  " + modelData.terms
                             checked: selectedGlossaries.indexOf(modelData.path) >= 0
@@ -179,7 +179,7 @@ Item {
                     RowLayout {
                         Layout.fillWidth: true
                         TextField { id: apiKey; Layout.fillWidth: true; echoMode: showKey.checked ? TextInput.Normal : TextInput.Password }
-                        CheckBox { id: showKey; text: i18n.text("show") }
+                        ModernCheckBox { id: showKey; text: i18n.text("show") }
                     }
                 }
                 RowLayout {
@@ -267,14 +267,14 @@ Item {
                     TextField { id: maxPages; Layout.preferredWidth: 90; placeholderText: i18n.text("all_pages"); onTextChanged: root.scheduleSave() }
                 }
                 RowLayout {
-                    CheckBox { id: layoutOnly; text: i18n.text("layout_only"); onToggled: root.scheduleSave() }
-                    CheckBox { id: useCache; text: i18n.text("use_cache"); checked: true; onToggled: root.scheduleSave() }
-                    CheckBox { id: summary; text: i18n.text("summary_page"); checked: true; onToggled: root.scheduleSave() }
+                    ModernCheckBox { id: layoutOnly; text: i18n.text("layout_only"); onToggled: root.scheduleSave() }
+                    ModernCheckBox { id: useCache; text: i18n.text("use_cache"); checked: true; onToggled: root.scheduleSave() }
+                    ModernCheckBox { id: summary; text: i18n.text("summary_page"); checked: true; onToggled: root.scheduleSave() }
                     Item { Layout.fillWidth: true }
                 }
                 RowLayout {
-                    CheckBox { id: references; text: i18n.text("translate_refs"); onToggled: root.scheduleSave() }
-                    CheckBox { id: headerFooter; text: i18n.text("translate_headers"); onToggled: root.scheduleSave() }
+                    ModernCheckBox { id: references; text: i18n.text("translate_refs"); onToggled: root.scheduleSave() }
+                    ModernCheckBox { id: headerFooter; text: i18n.text("translate_headers"); onToggled: root.scheduleSave() }
                     Item { Layout.fillWidth: true }
                     PillButton { text: translationController.running ? i18n.text("running") : i18n.text("start_translate"); primary: true; busy: translationController.running; onClicked: translationController.start(config()) }
                     PillButton { text: i18n.text("stop"); enabled: translationController.running; onClicked: translationController.stop() }

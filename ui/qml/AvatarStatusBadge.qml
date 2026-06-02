@@ -4,6 +4,7 @@ import QtQuick.Layouts
 Rectangle {
     id: root
     property string status: ""
+    property color statusColor: theme.presence
     property bool compact: false
     Theme { id: theme }
 
@@ -28,7 +29,7 @@ Rectangle {
             Layout.preferredWidth: 7
             Layout.preferredHeight: 7
             radius: 4
-            color: theme.presence
+            color: root.statusColor
         }
         Text {
             text: root.status
@@ -44,6 +45,6 @@ Rectangle {
         width: 8
         height: 8
         radius: 4
-        color: theme.presence
+        color: root.statusColor
     }
 }

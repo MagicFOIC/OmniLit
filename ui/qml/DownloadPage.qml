@@ -69,7 +69,7 @@ Item {
                     Text { text: i18n.text("literature_sources"); color: theme.textMuted }
                     Repeater {
                         model: downloadController.availableSources
-                        CheckBox {
+                        ModernCheckBox {
                             text: modelData.label
                             checked: root.selectedSources.indexOf(modelData.key) >= 0
                             onToggled: root.toggleSource(modelData.key, checked)
@@ -86,9 +86,9 @@ Item {
                     PillButton { text: root.advancedVisible ? i18n.text("collapse_advanced") : i18n.text("advanced"); onClicked: root.advancedVisible = !root.advancedVisible }
                 }
                 RowLayout {
-                    CheckBox { id: downloadPdfs; text: i18n.text("download_pdf"); checked: true; onToggled: root.scheduleSave() }
-                    CheckBox { id: resume; text: i18n.text("resume"); checked: true; onToggled: root.scheduleSave() }
-                    CheckBox { id: oaOnly; text: i18n.text("oa_only"); onToggled: root.scheduleSave() }
+                    ModernCheckBox { id: downloadPdfs; text: i18n.text("download_pdf"); checked: true; onToggled: root.scheduleSave() }
+                    ModernCheckBox { id: resume; text: i18n.text("resume"); checked: true; onToggled: root.scheduleSave() }
+                    ModernCheckBox { id: oaOnly; text: i18n.text("oa_only"); onToggled: root.scheduleSave() }
                     Item { Layout.fillWidth: true }
                 }
                 Item {
@@ -121,11 +121,11 @@ Item {
                         GridLayout {
                             Layout.fillWidth: true
                             columns: metrics.narrow ? 2 : 3
-                            CheckBox { id: retryMissing; text: i18n.text("retry_missing"); checked: true; onToggled: root.scheduleSave() }
-                            CheckBox { id: writeRetry; text: i18n.text("write_retry"); onToggled: root.scheduleSave() }
-                            CheckBox { id: strictMatch; text: i18n.text("strict_match"); checked: true; onToggled: root.scheduleSave() }
-                            CheckBox { id: loopJob; text: i18n.text("loop_job"); onToggled: root.scheduleSave() }
-                            CheckBox { id: fastForward; text: i18n.text("fast_forward"); checked: true; onToggled: root.scheduleSave() }
+                            ModernCheckBox { id: retryMissing; text: i18n.text("retry_missing"); checked: true; onToggled: root.scheduleSave() }
+                            ModernCheckBox { id: writeRetry; text: i18n.text("write_retry"); onToggled: root.scheduleSave() }
+                            ModernCheckBox { id: strictMatch; text: i18n.text("strict_match"); checked: true; onToggled: root.scheduleSave() }
+                            ModernCheckBox { id: loopJob; text: i18n.text("loop_job"); onToggled: root.scheduleSave() }
+                            ModernCheckBox { id: fastForward; text: i18n.text("fast_forward"); checked: true; onToggled: root.scheduleSave() }
                         }
                     }
                 }

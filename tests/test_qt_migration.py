@@ -182,6 +182,18 @@ class LoginSecretTests(unittest.TestCase):
             controller = AuthController(AppController(paths, locale), store, locale)
             self.assertEqual(controller.statusText, "")
 
+    def test_logout_clears_the_login_page_status_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            store = AccountStore(Path(temp) / "accounts.sqlite3")
+            locale = LocaleController(store)
+            paths = AppPaths(ROOT, Path(temp), ())
+            controller = AuthController(AppController(paths, locale), store, locale)
+            store.register("alice", "secret12")
+            self.assertTrue(controller.login("alice", "secret12"))
+            self.assertNotEqual(controller.statusText, "")
+            controller.logout()
+            self.assertEqual(controller.statusText, "")
+
 
 class WindowPlacementTests(unittest.TestCase):
     def test_window_is_centered_on_screen_containing_startup_cursor(self) -> None:
@@ -299,6 +311,18 @@ class LocaleTests(unittest.TestCase):
 
     def test_update_message_supports_english(self) -> None:
         self.assertEqual(tr("en", "download_done"), "Download job finished.")
+
+    def test_russian_language_is_persisted_and_catalog_is_complete(self) -> None:
+        from omnilit_qt.i18n import RU_TEXTS, TEXTS
+
+        with tempfile.TemporaryDirectory() as temp:
+            store = AccountStore(Path(temp) / "accounts.sqlite3")
+            locale = LocaleController(store)
+            locale.setLanguage("ru")
+            self.assertEqual(store.setting("language"), "ru")
+            self.assertEqual(LocaleController(store).text("login"), "Войти")
+            self.assertEqual({item["value"] for item in locale.availableLanguages}, {"zh", "en", "ru"})
+        self.assertEqual(set(TEXTS) - set(RU_TEXTS), set())
 
     def test_qml_dynamic_text_uses_current_language(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -603,7 +627,48 @@ class TranslationPendingDocumentsTests(unittest.TestCase):
 
 
 class DownloadCoreTests(unittest.TestCase):
+    @staticmethod
+    def _valid_pdf_bytes() -> bytes:
+        import fitz
+
+        document = fitz.open()
+        document.new_page()
+        try:
+            return document.tobytes()
+        finally:
+            document.close()
+
     def test_pdf_download_writes_only_valid_pdf_content(self) -> None:
+        core = import_resource_module(AppPaths(ROOT, ROOT, ()), "Download", "literature_download_core")
+        payload = self._valid_pdf_bytes()
+
+        class Response:
+            status_code = 200
+            headers = {"content-type": "application/pdf"}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return None
+
+            @staticmethod
+            def iter_content(chunk_size):
+                del chunk_size
+                yield payload
+
+        class Session:
+            @staticmethod
+            def get(*_args, **_kwargs):
+                return Response()
+
+        with tempfile.TemporaryDirectory() as temp:
+            config = core.CrawlConfig(out_dir=Path(temp), min_pdf_bytes=8)
+            result = core.download_pdf(Session(), "https://example.test/paper.pdf", "10.1/test", config)
+            self.assertEqual(result.status, "downloaded")
+            self.assertTrue(Path(result.path).read_bytes().startswith(b"%PDF"))
+
+    def test_pdf_download_rejects_unparseable_pdf_content(self) -> None:
         core = import_resource_module(AppPaths(ROOT, ROOT, ()), "Download", "literature_download_core")
 
         class Response:
@@ -619,8 +684,7 @@ class DownloadCoreTests(unittest.TestCase):
             @staticmethod
             def iter_content(chunk_size):
                 del chunk_size
-                yield b"%PDF-1.7\n"
-                yield b"translated-download-check"
+                yield b"%PDF-1.7\nnot-a-real-document\n%%EOF\n"
 
         class Session:
             @staticmethod
@@ -628,10 +692,90 @@ class DownloadCoreTests(unittest.TestCase):
                 return Response()
 
         with tempfile.TemporaryDirectory() as temp:
-            config = core.CrawlConfig(out_dir=Path(temp), min_pdf_bytes=8)
-            result = core.download_pdf(Session(), "https://example.test/paper.pdf", "10.1/test", config)
-            self.assertEqual(result.status, "downloaded")
-            self.assertTrue(Path(result.path).read_bytes().startswith(b"%PDF"))
+            output_dir = Path(temp)
+            config = core.CrawlConfig(out_dir=output_dir, min_pdf_bytes=8)
+            result = core.download_pdf(Session(), "https://example.test/not-really.pdf", "10.1/fake", config)
+            self.assertEqual(result.status, "invalid_pdf")
+            self.assertFalse(list(output_dir.glob("*.pdf")))
+            self.assertFalse(list(output_dir.glob("*.part")))
+
+    def test_crawl_keyword_downloads_into_keyword_specific_folder(self) -> None:
+        core = import_resource_module(AppPaths(ROOT, ROOT, ()), "Download", "literature_download_core")
+        payload = self._valid_pdf_bytes()
+        keyword = "battery/cathode"
+        item = {
+            "id": "https://openalex.org/W1",
+            "title": "Battery cathode paper",
+            "open_access": {"is_oa": True, "oa_url": "https://example.test/paper.pdf"},
+        }
+
+        class Response:
+            status_code = 200
+            headers = {"content-type": "application/pdf"}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return None
+
+            @staticmethod
+            def iter_content(chunk_size):
+                del chunk_size
+                yield payload
+
+        class Session:
+            @staticmethod
+            def get(*_args, **_kwargs):
+                return Response()
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            config = core.CrawlConfig(
+                out_dir=root / "pdfs",
+                meta_path=root / "metadata.jsonl",
+                state_path=root / "state.json",
+                min_pdf_bytes=8,
+                request_delay=0,
+                page_delay=0,
+                strict_keyword_match=False,
+                resume=False,
+            )
+            stats = core.CrawlStats()
+            output = io.StringIO()
+            with patch.object(core, "search_literature_source", return_value={"results": [item], "meta": {"next_cursor": None}}):
+                core.crawl_keyword(Session(), core.SOURCE_OPENALEX, keyword, core.ExistingIndex(set(), set(), set()), output, config, stats, {})
+
+            keyword_dir = core.keyword_pdf_dir(keyword, config.out_dir)
+            downloaded = list(keyword_dir.glob("*.pdf"))
+            record = json.loads(output.getvalue())
+            self.assertEqual(len(downloaded), 1)
+            self.assertTrue(core.validate_existing_pdf(downloaded[0], config.min_pdf_bytes))
+            self.assertEqual(Path(record["local_pdf_path"]).parts[:2], ("pdfs", keyword_dir.name))
+            self.assertEqual(stats.downloaded_pdfs, 1)
+
+    def test_existing_index_recognizes_legacy_root_pdf_location(self) -> None:
+        core = import_resource_module(AppPaths(ROOT, ROOT, ()), "Download", "literature_download_core")
+        source_record_id = "https://openalex.org/W1"
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            output_dir = root / "pdfs"
+            output_dir.mkdir()
+            core.path_for_pdf(source_record_id, output_dir).write_bytes(self._valid_pdf_bytes())
+            metadata_path = root / "metadata.jsonl"
+            metadata_path.write_text(
+                json.dumps({
+                    "keyword": "battery/cathode",
+                    "literature_source": core.SOURCE_OPENALEX,
+                    "source_record_id": source_record_id,
+                    "openalex_id": source_record_id,
+                }) + "\n",
+                encoding="utf-8",
+            )
+
+            existing = core.load_existing_index(metadata_path, 8, output_dir)
+
+            self.assertIn(f"openalex:{source_record_id}", existing.downloaded_keys)
 
     def test_unpaywall_failure_falls_back_to_openalex_metadata(self) -> None:
         core = import_resource_module(AppPaths(ROOT, ROOT, ()), "Download", "literature_download_core")
@@ -949,6 +1093,19 @@ class UpdateCoreTests(unittest.TestCase):
 
 
 class UpdateControllerTests(unittest.TestCase):
+    def test_failed_update_check_exposes_drawer_status(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            paths = AppPaths(ROOT, Path(temp), ())
+            store = AccountStore(paths.data("accounts.sqlite3"))
+            locale = LocaleController(store)
+            controller = UpdateController(AppController(paths, locale), paths, store, locale)
+
+            self.assertFalse(controller.hasCheckStatus)
+            controller._on_check_finished(None, False, "manifest unavailable")
+            self.assertTrue(controller.hasCheckStatus)
+            self.assertFalse(controller.available)
+            self.assertEqual(controller.statusText, "manifest unavailable")
+
     def test_check_ignores_legacy_manifest_url_setting(self) -> None:
         validated: list[str] = []
         checked: list[str] = []
@@ -997,6 +1154,28 @@ class UpdateControllerTests(unittest.TestCase):
             self.assertEqual(validated, [DEFAULT_UPDATE_MANIFEST_URL])
             self.assertEqual(checked, [DEFAULT_UPDATE_MANIFEST_URL])
             self.assertEqual(store.setting("manifest_url"), "https://legacy.example.invalid/custom.json")
+
+    def test_history_items_are_structured_and_deduplicated(self) -> None:
+        class Manifest:
+            version = "2.0.0"
+            notes = "Current release"
+            history = [
+                {"version": "2.0.0", "date": "2026-06-02", "notes": "Current release"},
+                {"version": "1.9.0", "date": "2026-05-01", "notes": "Previous release"},
+            ]
+
+        with tempfile.TemporaryDirectory() as temp:
+            paths = AppPaths(ROOT, Path(temp), ())
+            store = AccountStore(paths.data("accounts.sqlite3"))
+            locale = LocaleController(store)
+            controller = UpdateController(AppController(paths, locale), paths, store, locale)
+            self.assertEqual(
+                controller._manifest_history_items(Manifest()),
+                [
+                    {"version": "2.0.0", "date": "2026-06-02", "notes": "Current release"},
+                    {"version": "1.9.0", "date": "2026-05-01", "notes": "Previous release"},
+                ],
+            )
 
 
 class BackgroundTaskTests(unittest.TestCase):
@@ -1103,6 +1282,11 @@ class QtOnlyTests(unittest.TestCase):
         self.assertIn("Qt.PointingHandCursor", (qml_dir / "Workspace.qml").read_text(encoding="utf-8"))
         self.assertIn("Qt.PointingHandCursor", (qml_dir / "DatePickerField.qml").read_text(encoding="utf-8"))
 
+    def test_cards_do_not_draw_an_accent_line_over_the_rounded_border(self) -> None:
+        card = (ROOT / "ui" / "qml" / "Card.qml").read_text(encoding="utf-8")
+        self.assertNotIn("anchors.bottom: parent.bottom", card)
+        self.assertNotIn("opacity: 0.16", card)
+
     def test_compact_pages_keep_status_and_directory_actions_visible(self) -> None:
         qml_dir = ROOT / "ui" / "qml"
         stats = (qml_dir / "StatCard.qml").read_text(encoding="utf-8")
@@ -1112,7 +1296,7 @@ class QtOnlyTests(unittest.TestCase):
         self.assertIn("Layout.preferredHeight: 84", stats)
         self.assertNotIn("Layout.preferredHeight: 76", download)
         self.assertIn("translationController.openDirectory(translationDir.text)", translation)
-        self.assertIn("navigationButton.hovered || navigationButton.activeFocus ? theme.navHover", workspace)
+        self.assertIn('color: navigationButton.selected ? theme.navSelected : "transparent"', workspace)
 
     def test_translation_page_uses_one_directory_pending_list_and_scroll_preserving_preview(self) -> None:
         translation = (ROOT / "ui" / "qml" / "TranslationPage.qml").read_text(encoding="utf-8")
@@ -1137,9 +1321,10 @@ class QtOnlyTests(unittest.TestCase):
         self.assertIn("onClicked: root.drawerPage = 5", workspace)
         self.assertIn("downloadController.activeTaskText", workspace)
         self.assertIn("translationController.activeTaskText", workspace)
-        self.assertIn('model: ["status_online", "status_focused", "status_writing", "status_away"]', workspace)
-        self.assertIn('"🟢", "☕", "📚", "🎯", "🌙", "🚫", "✍️", "🔬"', workspace)
-        self.assertIn("preferencesController.setAvatarStatus(status)", workspace)
+        self.assertIn("model: root.defaultStatuses()", workspace)
+        self.assertIn("model: root.customStatuses()", workspace)
+        self.assertIn("preferencesController.setAvatarStatusId(modelData.id)", workspace)
+        self.assertIn("preferencesController.addCustomAvatarStatus(root.draftAvatarStatus)", workspace)
 
     def test_navigation_hover_uses_dynamic_semantic_colors(self) -> None:
         qml_dir = ROOT / "ui" / "qml"
@@ -1148,8 +1333,10 @@ class QtOnlyTests(unittest.TestCase):
         self.assertIn("readonly property color navHover: mix(accent, surfaceSoft", theme)
         self.assertIn("readonly property color navPressed: mix(accent, surfaceSoft", theme)
         self.assertIn("readonly property color navSelected: mix(accent, surfaceSoft", theme)
-        self.assertIn("navigationButton.down ? theme.navPressed", workspace)
-        self.assertIn("ColorAnimation { duration: motion.normal; easing.type: Easing.OutCubic }", workspace)
+        self.assertIn('color: navigationButton.selected ? theme.navSelected : "transparent"', workspace)
+        self.assertNotIn("navigationButton.down ? theme.navPressed", workspace)
+        self.assertNotIn("navigationButton.hovered || navigationButton.activeFocus ? theme.navHover", workspace)
+        self.assertNotIn("Behavior on color { ColorAnimation { duration: motion.normal; easing.type: Easing.OutCubic } }", workspace)
         self.assertNotIn("#f1f5f9", workspace)
 
     def test_translation_feature_is_named_literature_translation(self) -> None:
@@ -1194,8 +1381,9 @@ class QtOnlyTests(unittest.TestCase):
         self.assertNotIn("radius: width / 2", auth)
         title_row = auth.split("id: titleRow", 1)[1].split("Rectangle { Layout.fillWidth", 1)[0]
         self.assertIn("id: languageButton", title_row)
-        self.assertIn("localeController.toggleLanguage()", title_row)
-        self.assertEqual(auth.count("localeController.toggleLanguage()"), 1)
+        self.assertIn("languageMenu.open()", title_row)
+        self.assertIn("localeController.availableLanguages", title_row)
+        self.assertIn("localeController.setLanguage(modelData.value)", title_row)
         auth_field = (qml_dir / "AuthTextField.qml").read_text(encoding="utf-8")
         self.assertIn("border.color: control.activeFocus ? theme.accent : theme.border", auth_field)
         self.assertIn('iconName: "user"', auth)
@@ -1283,6 +1471,79 @@ class QtOnlyTests(unittest.TestCase):
         self.assertIn("preferencesController.toggleSidebarExpanded()", workspace)
         self.assertIn("color: theme.tooltipSurface", tooltip)
         self.assertIn("color: theme.tooltipText", tooltip)
+        self.assertIn("parent: root.target", tooltip)
+        self.assertIn("margins: 8", tooltip)
+        self.assertNotIn("target.mapToItem(Overlay.overlay", tooltip)
+
+    def test_native_checkboxes_are_replaced_with_the_shared_modern_checkbox(self) -> None:
+        qml_dir = ROOT / "ui" / "qml"
+        component = (qml_dir / "ModernCheckBox.qml").read_text(encoding="utf-8")
+        self.assertIn("CheckBox {", component)
+        self.assertIn("Canvas {", component)
+        for name in ("AuthPage.qml", "DownloadPage.qml", "TranslationPage.qml", "Workspace.qml"):
+            page = (qml_dir / name).read_text(encoding="utf-8")
+            self.assertNotIn("\nCheckBox {", page, name)
+            self.assertIn("ModernCheckBox {", page, name)
+
+    def test_update_history_uses_structured_release_cards(self) -> None:
+        update_page = (ROOT / "ui" / "qml" / "UpdatePage.qml").read_text(encoding="utf-8")
+        self.assertIn("model: updateController.historyItems", update_page)
+        self.assertIn('text: "v" + modelData.version', update_page)
+        self.assertIn("text: modelData.date", update_page)
+        self.assertIn("text: modelData.notes", update_page)
+
+    def test_drawer_home_reports_update_status_and_keeps_red_dot_bindings(self) -> None:
+        workspace = (ROOT / "ui" / "qml" / "Workspace.qml").read_text(encoding="utf-8")
+        drawer_home = workspace[workspace.index("id: accountDrawer"):workspace.index("DrawerPageHeader {")]
+        self.assertNotIn('text: i18n.text("account_preferences")', drawer_home)
+        self.assertNotIn("text: appController.statusText", drawer_home)
+        self.assertIn('id: avatarSettingsEntry', drawer_home)
+        self.assertIn('label: i18n.text("avatar_settings")', drawer_home)
+        self.assertIn("detail: preferencesController.avatarStatusLabel", drawer_home)
+        self.assertIn("detail: updateController.hasCheckStatus ? updateController.statusText : i18n.text(\"update_detail\")", drawer_home)
+        self.assertGreaterEqual(workspace.count("visible: updateController.available"), 1)
+        self.assertIn("attention: updateController.available", drawer_home)
+
+    def test_drawer_menu_icons_are_crisp_and_language_icon_is_distinct(self) -> None:
+        qml_dir = ROOT / "ui" / "qml"
+        menu_item = (qml_dir / "DrawerMenuItem.qml").read_text(encoding="utf-8")
+        vector_icon = (qml_dir / "VectorIcon.qml").read_text(encoding="utf-8")
+        self.assertIn("width: 24", menu_item)
+        self.assertIn("height: 24", menu_item)
+        self.assertIn("strokeWidth: 2", menu_item)
+        self.assertNotIn("strokeWidth: 2.05", menu_item)
+        self.assertNotIn("strokeWidth: 2.6", menu_item)
+        self.assertIn("color: theme.accentStrong", menu_item)
+        self.assertIn('color: "transparent"', menu_item)
+        self.assertIn('if (iconName === "appearance") return "M12 3 C7 3', vector_icon)
+        self.assertIn('if (iconName === "language") return "M12 3 A9 9', vector_icon)
+        self.assertNotEqual(
+            vector_icon.split('if (iconName === "translate") return "', 1)[1].split('"', 1)[0],
+            vector_icon.split('if (iconName === "language") return "', 1)[1].split('"', 1)[0],
+        )
+
+    def test_collapsed_sidebar_icons_use_centered_content_containers(self) -> None:
+        workspace = (ROOT / "ui" / "qml" / "Workspace.qml").read_text(encoding="utf-8")
+        self.assertIn("contentItem: Item {\n                            Row {\n                                anchors.centerIn: parent", workspace)
+        self.assertIn("contentItem: Item {\n                        Row {\n                            anchors.centerIn: parent", workspace)
+
+    def test_operation_icons_use_vector_paths_instead_of_text_glyphs(self) -> None:
+        qml_dir = ROOT / "ui" / "qml"
+        auth = (qml_dir / "AuthPage.qml").read_text(encoding="utf-8")
+        date_picker = (qml_dir / "DatePickerField.qml").read_text(encoding="utf-8")
+        pill_button = (qml_dir / "PillButton.qml").read_text(encoding="utf-8")
+        vector_icon = (qml_dir / "VectorIcon.qml").read_text(encoding="utf-8")
+        self.assertNotIn('text: "▼"', date_picker)
+        self.assertNotIn('text: "<"', date_picker)
+        self.assertNotIn('text: ">"', date_picker)
+        self.assertIn('iconName: "calendar"', date_picker)
+        self.assertIn('iconName: "chevron-left"', date_picker)
+        self.assertIn('iconName: "chevron-right"', date_picker)
+        self.assertIn('property string iconName: ""', pill_button)
+        self.assertIn('name: control.iconName', pill_button)
+        self.assertIn('name: "language"', auth)
+        self.assertIn('if (iconName === "calendar")', vector_icon)
+        self.assertIn('if (iconName === "chevron-left")', vector_icon)
 
     def test_drawer_language_switch_uses_themed_choice_row(self) -> None:
         workspace = (ROOT / "ui" / "qml" / "Workspace.qml").read_text(encoding="utf-8")
@@ -1314,9 +1575,9 @@ class QtOnlyTests(unittest.TestCase):
         self.assertIn("palette.text: theme.text", main)
         self.assertIn("palette.placeholderText: theme.disabledText", main)
         self.assertIn('workspaceOverlay: dark ? "#d90b1220" : "#b8f8fafc"', theme)
-        self.assertIn('{ value: "auto_night", label: "theme_auto_night" }', workspace)
+        self.assertIn('{ value: "adaptive", label: "theme_adaptive" }', workspace)
         self.assertIn("preferencesController.localTimezoneName", workspace)
-        self.assertIn("preferencesController.setAvatarStatus(status)", workspace)
+        self.assertIn("preferencesController.setAvatarStatusId(modelData.id)", workspace)
         self.assertIn("MultiEffect {", avatar)
         self.assertIn("maskEnabled: true", avatar)
         self.assertIn("logoutButton.hovered ? theme.error : theme.accent", workspace)
@@ -1330,7 +1591,7 @@ class QtOnlyTests(unittest.TestCase):
         preview = (qml_dir / "AppearancePreview.qml").read_text(encoding="utf-8")
         motion = (qml_dir / "Motion.qml").read_text(encoding="utf-8")
         controller = (ROOT / "omnilit_qt" / "preferences_controller.py").read_text(encoding="utf-8")
-        for preset in ("scholar_light", "manuscript_sepia", "library_dark", "journal_blue", "arxiv_minimal", "nature_green"):
+        for preset in ("scholar_light", "manuscript_sepia", "journal_blue", "arxiv_minimal", "nature_green", "citation_purple", "nordic_slate", "focus_amber"):
             self.assertIn(preset, theme)
         self.assertIn("AppearancePreview {", workspace)
         self.assertIn("preferencesController.themePresets", workspace)
@@ -1484,6 +1745,24 @@ class PreferencesControllerTests(unittest.TestCase):
         self.assertTrue(PreferencesController._is_night_time(23 * 60, "22:00", "07:00"))
         self.assertFalse(PreferencesController._is_night_time(12 * 60, "22:00", "07:00"))
 
+    def test_theme_style_is_independent_and_legacy_settings_are_migrated(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            paths, store, auth, preferences = self._controllers(Path(temp))
+            preferences.setThemeMode("dark")
+            preferences.setThemePreset("manuscript_sepia")
+            self.assertEqual(preferences.themeMode, "dark")
+            self.assertEqual(preferences.themePreset, "manuscript_sepia")
+            self.assertEqual(len(preferences.themePresets), 8)
+            self.assertEqual(len([item for item in preferences.backgroundPresets if item["value"] != "image"]), 8)
+
+            store.set_setting("appearance/mode", "auto_night")
+            store.set_setting("appearance/theme", "library_dark")
+            migrated = PreferencesController(paths, store, auth)
+            self.assertEqual(migrated.themeMode, "adaptive")
+            self.assertEqual(migrated.themePreset, "journal_blue")
+            self.assertEqual(store.setting("appearance/mode"), "adaptive")
+            self.assertEqual(store.setting("appearance/theme"), "journal_blue")
+
     def test_academic_appearance_preferences_persist_and_reset(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             paths, store, _auth, preferences = self._controllers(Path(temp))
@@ -1524,7 +1803,7 @@ class PreferencesControllerTests(unittest.TestCase):
             self.assertEqual(restored.themeMode, "light")
             self.assertEqual(restored.themePreset, "scholar_light")
             self.assertEqual(restored.accentName, "blue")
-            self.assertEqual(restored.backgroundMode, "solid")
+            self.assertEqual(restored.backgroundMode, "default")
             self.assertFalse(restored.highContrast)
             self.assertFalse(restored.reduceMotion)
 
@@ -1552,7 +1831,7 @@ class PreferencesControllerTests(unittest.TestCase):
 
             auth.logout()
             self.assertTrue(auth.login("bob", "secret12"))
-            self.assertEqual(preferences.avatarStatus, "")
+            self.assertEqual(preferences.avatarStatusId, "online")
             preferences.setAvatarStatus("☕")
             self.assertEqual(preferences.avatarStatus, "☕")
 
@@ -1560,7 +1839,32 @@ class PreferencesControllerTests(unittest.TestCase):
             self.assertTrue(auth.login("alice", "secret12"))
             self.assertEqual(preferences.avatarStatus, "📚")
             preferences.setAvatarStatus("")
-            self.assertEqual(preferences.avatarStatus, "")
+            self.assertEqual(preferences.avatarStatusId, "online")
+
+    def test_custom_avatar_status_crud_and_legacy_default_migration(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            _paths, store, auth, preferences = self._controllers(Path(temp))
+            store.register("alice", "secret12")
+            store.register("bob", "secret12")
+
+            store.set_setting("ui_avatar_status:alice", "Online")
+            auth.locale.setLanguage("ru")
+            self.assertTrue(auth.login("alice", "secret12"))
+            self.assertEqual(preferences.avatarStatusId, "online")
+            self.assertEqual(preferences.avatarStatusColor, "#10b981")
+
+            self.assertTrue(preferences.addCustomAvatarStatus("Deep work"))
+            custom_id = preferences.avatarStatusId
+            self.assertTrue(custom_id.startswith("custom_"))
+            self.assertTrue(preferences.renameCustomAvatarStatus(custom_id, "Reviewing"))
+            self.assertEqual(preferences.avatarStatusLabel, "Reviewing")
+            self.assertTrue(preferences.deleteCustomAvatarStatus(custom_id))
+            self.assertEqual(preferences.avatarStatusId, "online")
+
+            auth.logout()
+            self.assertTrue(auth.login("bob", "secret12"))
+            self.assertEqual(preferences.avatarStatusId, "online")
+            self.assertNotIn(custom_id, {item["id"] for item in preferences.avatarStatusOptions})
 
 
 if __name__ == "__main__":

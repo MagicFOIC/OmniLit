@@ -73,9 +73,9 @@ def validate_manifest_trust(manifest: "UpdateManifest") -> None:
         raise ValueError("Update manifest is not trusted; refusing to download the release.")
 
 
-def localized(language: str, zh: str, en: str) -> str:
+def localized(language: str, zh: str, en: str, ru: str = "") -> str:
     """按任务语言选择文本。参数：语言和中英文。返回值：当前语言文本。"""
-    return en if language == "en" else zh
+    return (ru or en) if language == "ru" else en if language == "en" else zh
 
 
 @dataclass(frozen=True)
@@ -236,11 +236,11 @@ def check_for_update(url: str, current_version: str, current_sha256: str = "", l
     local_sha256 = current_sha256.strip().lower()
     sha256_changed = bool(same_version and SHA256_PATTERN.fullmatch(local_sha256) and manifest.sha256 != local_sha256)
     if is_newer:
-        status = localized(language, f"发现可用版本：{manifest.version}。", f"Version {manifest.version} is available.")
+        status = localized(language, f"发现可用版本：{manifest.version}。", f"Version {manifest.version} is available.", f"Доступна версия {manifest.version}.")
     elif sha256_changed:
-        status = localized(language, f"检测到服务器发布文件已更新：{manifest.version}（SHA256 已变化）。", f"The server release file changed for {manifest.version} (SHA256 changed).")
+        status = localized(language, f"检测到服务器发布文件已更新：{manifest.version}（SHA256 已变化）。", f"The server release file changed for {manifest.version} (SHA256 changed).", f"Файл версии {manifest.version} на сервере изменился (изменён SHA256).")
     else:
-        status = localized(language, "已是最新版本。", "You already have the latest version.")
+        status = localized(language, "已是最新版本。", "You already have the latest version.", "Установлена последняя версия.")
     return UpdateCheckResult(manifest=manifest, is_newer=is_newer, sha256_changed=sha256_changed, status=status)
 
 
@@ -285,7 +285,7 @@ def download_update(
 
     def raise_if_stopped() -> None:
         if stop_callback and stop_callback():
-            raise RuntimeError(localized(language, "更新下载已取消。", "Update download cancelled."))
+            raise RuntimeError(localized(language, "更新下载已取消。", "Update download cancelled.", "Загрузка обновления отменена."))
 
     try:
         raise_if_stopped()
@@ -293,7 +293,7 @@ def download_update(
             total = int(response.headers.get("Content-Length") or 0)
             downloaded = 0
             if progress_callback:
-                progress_callback(downloaded, total, localized(language, f"准备下载 {manifest.version}", f"Preparing download {manifest.version}"))
+                progress_callback(downloaded, total, localized(language, f"准备下载 {manifest.version}", f"Preparing download {manifest.version}", f"Подготовка загрузки {manifest.version}"))
             with temporary_path.open("wb") as handle:
                 while True:
                     raise_if_stopped()
@@ -303,7 +303,7 @@ def download_update(
                     handle.write(chunk)
                     downloaded += len(chunk)
                     if progress_callback:
-                        progress_callback(downloaded, total, localized(language, f"正在下载 {manifest.version}", f"Downloading {manifest.version}"))
+                        progress_callback(downloaded, total, localized(language, f"正在下载 {manifest.version}", f"Downloading {manifest.version}", f"Загрузка {manifest.version}"))
 
         raise_if_stopped()
         if not verify_sha256(temporary_path, expected_sha256):
@@ -313,7 +313,7 @@ def download_update(
         temporary_path.unlink(missing_ok=True)
         raise
     if progress_callback:
-        progress_callback(final_path.stat().st_size, final_path.stat().st_size, localized(language, "下载完成", "Download complete"))
+        progress_callback(final_path.stat().st_size, final_path.stat().st_size, localized(language, "下载完成", "Download complete", "Загрузка завершена"))
     return final_path
 
 
@@ -480,7 +480,7 @@ exit /b 0
         creationflags=creationflags,
         startupinfo=startupinfo,
     )
-    return localized(language, "正在关闭当前程序并应用更新...", "Closing the current app and applying the update...")
+    return localized(language, "正在关闭当前程序并应用更新...", "Closing the current app and applying the update...", "Закрытие приложения и установка обновления...")
 
 
 def _open_parent_folder(path: Path) -> None:

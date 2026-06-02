@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -12,19 +13,23 @@ from PySide6.QtWidgets import QFileDialog
 from .appearance import (
     ACCENT_COLORS,
     ACCENT_PRESETS,
+    BACKGROUND_MODE_ALIASES,
     BACKGROUND_MODES,
+    BACKGROUND_PRESETS,
     DENSITY_VALUES,
     FONT_SIZE_VALUES,
     PDF_BACKGROUND_VALUES,
     RADIUS_VALUES,
+    THEME_MODE_ALIASES,
     THEME_MODES,
-    THEME_PRESET_MODES,
+    THEME_PRESET_ALIASES,
     THEME_PRESET_NAMES,
     THEME_PRESETS,
     TRANSLATION_LINE_HEIGHT_VALUES,
     normalize_hex_color,
 )
 from .auth_controller import AuthController
+from .i18n import tr
 from .paths import AppPaths
 from .services import AccountStore
 
@@ -48,8 +53,21 @@ SIDEBAR_EXPANDED_SETTING = "ui_sidebar_expanded"
 WORKSPACE_BACKGROUND_SETTING = "ui_workspace_background"
 AVATAR_SETTING_PREFIX = "ui_avatar:"
 AVATAR_STATUS_SETTING_PREFIX = "ui_avatar_status:"
+AVATAR_STATUS_ID_SETTING_PREFIX = "ui_avatar_status_id:"
+AVATAR_CUSTOM_STATUSES_SETTING_PREFIX = "ui_avatar_custom_statuses:"
 ACCENT_NAMES = set(ACCENT_COLORS) | {"custom"}
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
+DEFAULT_AVATAR_STATUSES = (
+    {"id": "online", "label": "status_online", "color": "#10b981"},
+    {"id": "focused", "label": "status_focused", "color": "#3b82f6"},
+    {"id": "writing", "label": "status_writing", "color": "#8b5cf6"},
+    {"id": "away", "label": "status_away", "color": "#f59e0b"},
+    {"id": "busy", "label": "status_busy", "color": "#ef4444"},
+    {"id": "meeting", "label": "status_meeting", "color": "#06b6d4"},
+    {"id": "break", "label": "status_break", "color": "#f97316"},
+    {"id": "offline", "label": "status_offline", "color": "#94a3b8"},
+)
+CUSTOM_STATUS_COLORS = ("#0ea5e9", "#8b5cf6", "#f97316", "#ec4899", "#14b8a6", "#64748b")
 
 
 class PreferencesController(QObject):
@@ -62,8 +80,8 @@ class PreferencesController(QObject):
         self.paths = paths
         self.store = store
         self.auth = auth
-        self._theme_mode = self._saved_choice(THEME_MODE_SETTING, "light", THEME_MODES, "ui_theme_mode")
-        self._theme_preset = self._saved_choice(THEME_PRESET_SETTING, "scholar_light", THEME_PRESET_NAMES)
+        self._theme_mode = self._saved_alias_choice(THEME_MODE_SETTING, "light", THEME_MODES, THEME_MODE_ALIASES, "ui_theme_mode")
+        self._theme_preset = self._saved_alias_choice(THEME_PRESET_SETTING, "scholar_light", THEME_PRESET_NAMES, THEME_PRESET_ALIASES)
         self._accent_name = self._saved_choice(ACCENT_NAME_SETTING, "blue", ACCENT_NAMES, "ui_accent_name")
         self._custom_accent_color = normalize_hex_color(self.store.setting(CUSTOM_ACCENT_SETTING), "#2563eb")
         self._font_size = self._saved_choice(FONT_SIZE_SETTING, "standard", set(FONT_SIZE_VALUES))
@@ -71,8 +89,8 @@ class PreferencesController(QObject):
         self._radius = self._saved_choice(RADIUS_SETTING, "modern", set(RADIUS_VALUES))
         self._pdf_background = self._saved_choice(PDF_BACKGROUND_SETTING, "sepia", set(PDF_BACKGROUND_VALUES))
         self._translation_line_height = self._saved_choice(TRANSLATION_LINE_HEIGHT_SETTING, "standard", set(TRANSLATION_LINE_HEIGHT_VALUES))
-        default_background_mode = "image" if self.store.setting(WORKSPACE_BACKGROUND_SETTING) else "solid"
-        self._background_mode = self._saved_choice(BACKGROUND_MODE_SETTING, default_background_mode, BACKGROUND_MODES)
+        default_background_mode = "image" if self.store.setting(WORKSPACE_BACKGROUND_SETTING) else "default"
+        self._background_mode = self._saved_alias_choice(BACKGROUND_MODE_SETTING, default_background_mode, BACKGROUND_MODES, BACKGROUND_MODE_ALIASES)
         self._background_opacity = self._saved_float(BACKGROUND_OPACITY_SETTING, 0.42, 0.0, 1.0)
         self._background_blur = self._saved_int(BACKGROUND_BLUR_SETTING, 0, 0, 32)
         self._high_contrast = self.store.setting(HIGH_CONTRAST_SETTING) == "1"
@@ -81,6 +99,7 @@ class PreferencesController(QObject):
         self._auto_night_end = self._saved_time(AUTO_NIGHT_END_SETTING, "07:00")
         self._sidebar_expanded = self.store.setting(SIDEBAR_EXPANDED_SETTING) == "1"
         self.auth.changed.connect(self.changed)
+        self.auth.locale.languageChanged.connect(self.changed)
         app = QGuiApplication.instance()
         hints = app.styleHints() if app is not None and hasattr(app, "styleHints") else None
         if hints is not None and hasattr(hints, "colorSchemeChanged"):
@@ -95,6 +114,17 @@ class PreferencesController(QObject):
         if not value and legacy_key:
             value = self.store.setting(legacy_key)
         return value if value in allowed else default
+
+    def _saved_alias_choice(self, key: str, default: str, allowed: set[str], aliases: dict[str, str], legacy_key: str = "") -> str:
+        value = self.store.setting(key)
+        if not value and legacy_key:
+            value = self.store.setting(legacy_key)
+        normalized = aliases.get(value, value)
+        if normalized in allowed:
+            if normalized != value:
+                self.store.set_setting(key, normalized)
+            return normalized
+        return default
 
     def _saved_float(self, key: str, default: float, minimum: float, maximum: float) -> float:
         try:
@@ -134,6 +164,87 @@ class PreferencesController(QObject):
 
     def _avatar_status_key(self) -> str:
         return AVATAR_STATUS_SETTING_PREFIX + self.auth.username
+
+    def _avatar_status_id_key(self) -> str:
+        return AVATAR_STATUS_ID_SETTING_PREFIX + self.auth.username
+
+    def _avatar_custom_statuses_key(self) -> str:
+        return AVATAR_CUSTOM_STATUSES_SETTING_PREFIX + self.auth.username
+
+    def _custom_statuses(self) -> list[dict[str, str]]:
+        if not self.auth.username:
+            return []
+        try:
+            items = json.loads(self.store.setting(self._avatar_custom_statuses_key(), "[]"))
+        except (TypeError, ValueError):
+            return []
+        return [
+            {"id": str(item["id"]), "label": str(item["label"]), "color": str(item["color"])}
+            for item in items
+            if isinstance(item, dict) and item.get("id") and item.get("label") and item.get("color")
+        ]
+
+    def _save_custom_statuses(self, items: list[dict[str, str]]) -> None:
+        self.store.set_setting(self._avatar_custom_statuses_key(), json.dumps(items, ensure_ascii=False))
+
+    def _status_options(self) -> list[dict[str, object]]:
+        defaults = [
+            {"id": item["id"], "label": self.auth.locale.textf(item["label"]), "color": item["color"], "custom": False}
+            for item in DEFAULT_AVATAR_STATUSES
+        ]
+        customs = [dict(item, custom=True) for item in self._custom_statuses()]
+        return defaults + customs
+
+    @staticmethod
+    def _default_status_id_for_value(value: str) -> str:
+        normalized = str(value or "").strip().casefold()
+        for item in DEFAULT_AVATAR_STATUSES:
+            if normalized == item["id"]:
+                return item["id"]
+            if any(normalized == tr(language, item["label"]).casefold() for language in ("zh", "en", "ru")):
+                return item["id"]
+        return ""
+
+    def _status_id(self) -> str:
+        if not self.auth.username:
+            return ""
+        options = self._status_options()
+        saved = self.store.setting(self._avatar_status_id_key())
+        if any(item["id"] == saved for item in options):
+            return saved
+        legacy = self.store.setting(self._avatar_status_key()).strip()
+        if legacy:
+            default_id = self._default_status_id_for_value(legacy)
+            if default_id:
+                self.store.set_setting(self._avatar_status_id_key(), default_id)
+                return default_id
+            for item in options:
+                if legacy == item["label"] or legacy == item["id"]:
+                    self.store.set_setting(self._avatar_status_id_key(), str(item["id"]))
+                    return str(item["id"])
+            return self._create_custom_status(legacy)
+        self.store.set_setting(self._avatar_status_id_key(), "online")
+        return "online"
+
+    def _status_option(self, status_id: str) -> dict[str, object]:
+        return next((item for item in self._status_options() if item["id"] == status_id), self._status_options()[0])
+
+    def _create_custom_status(self, label: str) -> str:
+        value = str(label or "").strip()
+        if not value:
+            return "online"
+        for item in self._status_options():
+            if item["label"] == value:
+                return str(item["id"])
+        items = self._custom_statuses()
+        status_id = "custom_" + hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
+        if not any(item["id"] == status_id for item in items):
+            color = CUSTOM_STATUS_COLORS[len(items) % len(CUSTOM_STATUS_COLORS)]
+            items.append({"id": status_id, "label": value, "color": color})
+            self._save_custom_statuses(items)
+        self.store.set_setting(self._avatar_status_id_key(), status_id)
+        self.store.set_setting(self._avatar_status_key(), value)
+        return status_id
 
     @staticmethod
     def _is_night_hour(hour: int) -> bool:
@@ -184,6 +295,10 @@ class PreferencesController(QObject):
         return [dict(item) for item in THEME_PRESETS]
 
     @Property("QVariantList", constant=True)
+    def backgroundPresets(self) -> list[dict[str, str]]:
+        return [dict(item) for item in BACKGROUND_PRESETS]
+
+    @Property("QVariantList", constant=True)
     def accentPresets(self) -> list[dict[str, str]]:
         return [dict(item) for item in ACCENT_PRESETS]
 
@@ -193,7 +308,7 @@ class PreferencesController(QObject):
 
     @Property(str, notify=changed)
     def effectiveThemeMode(self) -> str:
-        if self._theme_mode == "auto_night":
+        if self._theme_mode == "adaptive":
             local_time = datetime.now().astimezone()
             now_minutes = local_time.hour * 60 + local_time.minute
             return "dark" if self._is_night_time(now_minutes, self._auto_night_start, self._auto_night_end) else "light"
@@ -210,9 +325,7 @@ class PreferencesController(QObject):
 
     @Property(str, notify=changed)
     def effectiveThemePreset(self) -> str:
-        if self.effectiveThemeMode == "dark":
-            return "library_dark"
-        return "scholar_light" if self._theme_preset == "library_dark" else self._theme_preset
+        return self._theme_preset
 
     @Property(str, notify=changed)
     def accentName(self) -> str:
@@ -312,7 +425,23 @@ class PreferencesController(QObject):
 
     @Property(str, notify=changed)
     def avatarStatus(self) -> str:
-        return self.store.setting(self._avatar_status_key()) if self.auth.username else ""
+        return self.avatarStatusLabel
+
+    @Property(str, notify=changed)
+    def avatarStatusId(self) -> str:
+        return self._status_id()
+
+    @Property(str, notify=changed)
+    def avatarStatusLabel(self) -> str:
+        return str(self._status_option(self._status_id())["label"]) if self.auth.username else ""
+
+    @Property(str, notify=changed)
+    def avatarStatusColor(self) -> str:
+        return str(self._status_option(self._status_id())["color"]) if self.auth.username else "#94a3b8"
+
+    @Property("QVariantList", notify=changed)
+    def avatarStatusOptions(self) -> list[dict[str, object]]:
+        return self._status_options()
 
     @Property(str, notify=changed)
     def localTimezoneName(self) -> str:
@@ -321,21 +450,11 @@ class PreferencesController(QObject):
 
     @Slot(str)
     def setThemeMode(self, mode: str) -> None:
-        self._set_choice("_theme_mode", THEME_MODE_SETTING, mode, "light", THEME_MODES)
+        self._set_choice("_theme_mode", THEME_MODE_SETTING, THEME_MODE_ALIASES.get(mode, mode), "light", THEME_MODES)
 
     @Slot(str)
     def setThemePreset(self, preset: str) -> None:
-        value = preset if preset in THEME_PRESET_NAMES else "scholar_light"
-        changed = value != self._theme_preset
-        self._theme_preset = value
-        self.store.set_setting(THEME_PRESET_SETTING, value)
-        preferred_mode = THEME_PRESET_MODES[value]
-        if preferred_mode != self._theme_mode:
-            self._theme_mode = preferred_mode
-            self.store.set_setting(THEME_MODE_SETTING, preferred_mode)
-            changed = True
-        if changed:
-            self.changed.emit()
+        self._set_choice("_theme_preset", THEME_PRESET_SETTING, THEME_PRESET_ALIASES.get(preset, preset), "scholar_light", THEME_PRESET_NAMES)
 
     @Slot(str)
     def setAccentName(self, name: str) -> None:
@@ -374,7 +493,7 @@ class PreferencesController(QObject):
 
     @Slot(str)
     def setBackgroundMode(self, mode: str) -> None:
-        self._set_choice("_background_mode", BACKGROUND_MODE_SETTING, mode, "solid", BACKGROUND_MODES)
+        self._set_choice("_background_mode", BACKGROUND_MODE_SETTING, BACKGROUND_MODE_ALIASES.get(mode, mode), "default", BACKGROUND_MODES)
 
     @Slot(float)
     def setBackgroundOpacity(self, opacity: float) -> None:
@@ -440,8 +559,8 @@ class PreferencesController(QObject):
     @Slot()
     def clearWorkspaceBackground(self) -> None:
         self.store.delete_setting(WORKSPACE_BACKGROUND_SETTING)
-        self._background_mode = "solid"
-        self.store.set_setting(BACKGROUND_MODE_SETTING, "solid")
+        self._background_mode = "default"
+        self.store.set_setting(BACKGROUND_MODE_SETTING, "default")
         self.changed.emit()
 
     @Slot()
@@ -474,7 +593,7 @@ class PreferencesController(QObject):
         self._custom_accent_color = "#2563eb"
         self._font_size, self._density, self._radius = "standard", "standard", "modern"
         self._pdf_background, self._translation_line_height = "sepia", "standard"
-        self._background_mode, self._background_opacity, self._background_blur = "solid", 0.42, 0
+        self._background_mode, self._background_opacity, self._background_blur = "default", 0.42, 0
         self._high_contrast, self._reduce_motion = False, False
         self._auto_night_start, self._auto_night_end = "22:00", "07:00"
         self.changed.emit()
@@ -504,8 +623,50 @@ class PreferencesController(QObject):
         if not self.auth.username:
             return
         value = status.strip()
-        if value:
-            self.store.set_setting(self._avatar_status_key(), value)
-        else:
-            self.store.delete_setting(self._avatar_status_key())
+        options = self._status_options()
+        default_id = self._default_status_id_for_value(value)
+        selected = next((item for item in options if item["id"] == default_id or value in {item["id"], item["label"]}), None)
+        status_id = str(selected["id"]) if selected else self._create_custom_status(value)
+        label = str(self._status_option(status_id)["label"])
+        self.store.set_setting(self._avatar_status_id_key(), status_id)
+        self.store.set_setting(self._avatar_status_key(), label)
         self.changed.emit()
+
+    @Slot(str)
+    def setAvatarStatusId(self, status_id: str) -> None:
+        self.setAvatarStatus(status_id)
+
+    @Slot(str, result=bool)
+    def addCustomAvatarStatus(self, label: str) -> bool:
+        if not self.auth.username or not label.strip():
+            return False
+        self._create_custom_status(label)
+        self.changed.emit()
+        return True
+
+    @Slot(str, str, result=bool)
+    def renameCustomAvatarStatus(self, status_id: str, label: str) -> bool:
+        value = label.strip()
+        items = self._custom_statuses()
+        item = next((item for item in items if item["id"] == status_id), None)
+        if item is None or not value:
+            return False
+        item["label"] = value
+        self._save_custom_statuses(items)
+        if self._status_id() == status_id:
+            self.store.set_setting(self._avatar_status_key(), value)
+        self.changed.emit()
+        return True
+
+    @Slot(str, result=bool)
+    def deleteCustomAvatarStatus(self, status_id: str) -> bool:
+        items = self._custom_statuses()
+        filtered = [item for item in items if item["id"] != status_id]
+        if len(filtered) == len(items):
+            return False
+        self._save_custom_statuses(filtered)
+        if self.store.setting(self._avatar_status_id_key()) == status_id:
+            self.store.set_setting(self._avatar_status_id_key(), "online")
+            self.store.set_setting(self._avatar_status_key(), self.auth.locale.textf("status_online"))
+        self.changed.emit()
+        return True

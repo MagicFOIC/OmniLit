@@ -30,8 +30,10 @@ class UpdateController(QObject):
         super().__init__()
         self.app, self.paths, self.store, self.locale = app, paths, store, locale
         self._status, self._history = locale.textf("not_started"), locale.textf("no_update_history")
+        self._history_items: list[dict[str, str]] = []
         self._latest_version = self._downloaded_path = ""
         self._available = self._checking = self._downloading = False
+        self._has_check_status = False
         self._progress, self._progress_text, self._manifest = 0.0, locale.textf("download_not_started"), None
         self._workers: dict[str, ManagedWorker] = {}
         self.checkFinished.connect(self._on_check_finished)
@@ -49,6 +51,11 @@ class UpdateController(QObject):
         """返回版本记录。参数：无。返回值：多行文本。"""
         return self._history
 
+    @Property("QVariantList", notify=changed)
+    def historyItems(self) -> list[dict[str, str]]:
+        """Return release notes as cards instead of one undifferentiated text block."""
+        return [dict(item) for item in self._history_items]
+
     @Property(str, notify=changed)
     def latestVersion(self) -> str:
         """返回远程版本。参数：无。返回值：版本文本。"""
@@ -63,6 +70,11 @@ class UpdateController(QObject):
     def checking(self) -> bool:
         """返回检查状态。参数：无。返回值：是否检查中。"""
         return self._checking
+
+    @Property(bool, notify=changed)
+    def hasCheckStatus(self) -> bool:
+        """Return whether the update drawer should show a live check result."""
+        return self._has_check_status
 
     @Property(bool, notify=changed)
     def downloading(self) -> bool:
@@ -92,16 +104,40 @@ class UpdateController(QObject):
     def _on_check_finished(self, result: object, ok: bool, message: str) -> None:
         """处理检查结果。参数：结果、成功标志和消息。返回值：无。"""
         self._checking = False
+        self._has_check_status = True
         if ok:
             self._manifest = getattr(result, "manifest", None)
             self._latest_version = str(getattr(self._manifest, "version", "") or "")
             self._available = bool(getattr(result, "update_available", getattr(result, "is_newer", False)) and self._manifest)
             self._history = str(self._manifest.formatted_notes(limit=8) if self._manifest else self.locale.textf("no_update_history"))
+            self._history_items = self._manifest_history_items(self._manifest)
         else:
             self._available = False
         self._status = message
         self.app.set_status(message)
         self.changed.emit()
+
+    def _manifest_history_items(self, manifest) -> list[dict[str, str]]:
+        if manifest is None:
+            return []
+        items: list[dict[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        current = {"version": str(getattr(manifest, "version", "") or ""), "date": "", "notes": str(getattr(manifest, "notes", "") or "")}
+        source_items = list(getattr(manifest, "history", ()))
+        if not any(str(item.get("version") or "").strip() == current["version"] and str(item.get("notes") or "").strip() == current["notes"] for item in source_items):
+            source_items.insert(0, current)
+        for item in source_items:
+            version = str(item.get("version") or "").strip()
+            date = str(item.get("date") or "").strip()
+            notes = str(item.get("notes") or "").strip()
+            key = (version, notes)
+            if not notes or key in seen:
+                continue
+            items.append({"version": version or "unknown", "date": date, "notes": notes})
+            seen.add(key)
+            if len(items) >= 8:
+                break
+        return items
 
     def _on_download_progress(self, downloaded: int, total: int, message: str) -> None:
         """处理下载进度。参数：已下载、总数和消息。返回值：无。"""
@@ -134,12 +170,12 @@ class UpdateController(QObject):
         language = self.locale.language
         try:
             core = import_resource_module(self.paths, "Update", "update_core")
-            label = "Update source" if language == "en" else "更新源"
+            label = "Update source" if language == "en" else "Источник обновления" if language == "ru" else "更新源"
             manifest_url = core.validate_remote_url(DEFAULT_UPDATE_MANIFEST_URL, label=label)
         except Exception as exc:
             self._on_check_finished(None, False, tr(language, "invalid_update_source", error=exc))
             return
-        self._checking, self._status = True, tr(language, "checking_update")
+        self._checking, self._has_check_status, self._status = True, True, tr(language, "checking_update")
         self.changed.emit()
 
         def worker() -> None:

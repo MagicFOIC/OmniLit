@@ -203,7 +203,7 @@ class DownloadController(QObject):
         keywords = raw.get("keywords") or []
         if isinstance(keywords, str):
             keywords = [item.strip() for item in keywords.replace("\n", ",").split(",") if item.strip()]
-        keyword_text = (", " if language == "en" else "、").join(str(item) for item in keywords[:3])
+        keyword_text = (", " if language in {"en", "ru"} else "、").join(str(item) for item in keywords[:3])
         if len(keywords) > 3:
             keyword_text += tr(language, "keyword_count_suffix", count=len(keywords))
         self._active_task_text = tr(language, "downloading_keywords", keywords=keyword_text or tr(language, "unknown_keywords"))

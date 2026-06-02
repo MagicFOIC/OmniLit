@@ -122,9 +122,9 @@ class CrawlConfig:
         return DEFAULT_SOURCES if self.sources is None else self.sources
 
 
-def localized(config: CrawlConfig, zh: str, en: str) -> str:
+def localized(config: CrawlConfig, zh: str, en: str, ru: str = "") -> str:
     """按任务启动时的语言选择日志。参数：下载配置、中英文。返回值：当前语言文本。"""
-    return en if config.language == "en" else zh
+    return (ru or en) if config.language == "ru" else en if config.language == "en" else zh
 
 
 @dataclass
@@ -368,6 +368,29 @@ def path_for_pdf(doi_or_url: str, out_dir: Path) -> Path:
     return out_dir / safe_filename(doi_or_url)
 
 
+def safe_keyword_folder_name(keyword: str) -> str:
+    """Return a readable, collision-resistant folder name for one keyword."""
+    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", keyword.strip()).strip(" .")
+    cleaned = re.sub(r"\s+", " ", cleaned) or "keyword"
+    if cleaned.casefold() in {
+        "con",
+        "prn",
+        "aux",
+        "nul",
+        *(f"com{number}" for number in range(1, 10)),
+        *(f"lpt{number}" for number in range(1, 10)),
+    }:
+        cleaned += "_"
+    digest = hashlib.sha256(keyword.encode("utf-8")).hexdigest()[:10]
+    cleaned = cleaned[:80].rstrip(" .") or "keyword"
+    return f"{cleaned}_{digest}"
+
+
+def keyword_pdf_dir(keyword: str, out_dir: Path) -> Path:
+    """Return the keyword-specific PDF output directory."""
+    return out_dir / safe_keyword_folder_name(keyword)
+
+
 def display_path(path: Path, base_dir: Path) -> str:
     """功能：生成相对于数据目录的展示路径。参数：path、base_dir。返回值：str。"""
     try:
@@ -525,16 +548,20 @@ def load_existing_index(meta_path: Path, min_pdf_bytes: int, out_dir: Path) -> E
             key = record_key(record)
             if key:
                 keys.add(key)
+                fallback_out_dirs = [out_dir]
+                keyword = record.get("keyword")
+                if keyword:
+                    fallback_out_dirs.insert(0, keyword_pdf_dir(str(keyword), out_dir))
                 fallback_pdf_paths = []
                 doi = normalize_doi(record.get("doi") or record.get("normalized_doi"))
                 if doi:
-                    fallback_pdf_paths.append(path_for_pdf(doi, out_dir))
+                    fallback_pdf_paths.extend(path_for_pdf(doi, folder) for folder in fallback_out_dirs)
                 source_record_id = record.get("source_record_id")
                 if source_record_id:
-                    fallback_pdf_paths.append(path_for_pdf(source_record_id, out_dir))
+                    fallback_pdf_paths.extend(path_for_pdf(source_record_id, folder) for folder in fallback_out_dirs)
                 openalex_id = record.get("openalex_id") or record.get("id")
                 if openalex_id:
-                    fallback_pdf_paths.append(path_for_pdf(openalex_id, out_dir))
+                    fallback_pdf_paths.extend(path_for_pdf(openalex_id, folder) for folder in fallback_out_dirs)
 
                 fallback_pdf_paths = resolve_record_pdf_paths(record, meta_path) + fallback_pdf_paths
 
@@ -950,8 +977,18 @@ def validate_existing_pdf(path: Path, min_pdf_bytes: int) -> bool:
         if not path.exists() or path.stat().st_size < min_pdf_bytes:
             return False
         with path.open("rb") as fin:
-            return fin.read(4) == b"%PDF"
-    except OSError:
+            if fin.read(4) != b"%PDF":
+                return False
+            fin.seek(max(0, path.stat().st_size - 4096))
+            if b"%%EOF" not in fin.read():
+                return False
+        try:
+            import fitz
+        except ImportError:
+            return True
+        with fitz.open(path) as document:
+            return bool(document.is_pdf and document.page_count > 0)
+    except (OSError, RuntimeError, ValueError):
         return False
 
 
@@ -960,12 +997,15 @@ def download_pdf(
     pdf_url: str,
     doi_or_url: str,
     config: CrawlConfig,
+    out_dir: Path | None = None,
 ) -> DownloadResult:
     """功能：下载并校验单个 PDF 候选链接。参数：session、pdf_url、doi_or_url、config。返回值：DownloadResult。"""
     if stop_requested(config):
         return DownloadResult(None, "stopped", pdf_url)
 
-    path = path_for_pdf(doi_or_url, config.out_dir)
+    target_dir = out_dir or config.out_dir
+    target_dir.mkdir(parents=True, exist_ok=True)
+    path = path_for_pdf(doi_or_url, target_dir)
     if validate_existing_pdf(path, config.min_pdf_bytes):
         return DownloadResult(
             path=str(path),
@@ -1027,6 +1067,7 @@ def download_first_available_pdf(
     unpaywall: dict[str, Any] | None,
     doi_or_url: str,
     config: CrawlConfig,
+    out_dir: Path | None = None,
 ) -> tuple[DownloadResult, list[str]]:
     """功能：按顺序尝试候选链接直到成功下载 PDF。参数：session、item、unpaywall、doi_or_url、config。返回值：tuple[DownloadResult, list[str]]。"""
     candidates = iter_pdf_candidates(item, unpaywall)
@@ -1035,7 +1076,7 @@ def download_first_available_pdf(
     for pdf_url in candidates:
         if stop_requested(config):
             return DownloadResult(None, "stopped"), candidates
-        result = download_pdf(session, pdf_url, doi_or_url, config)
+        result = download_pdf(session, pdf_url, doi_or_url, config, out_dir)
         if result.path:
             return result, candidates
         last_result = result
@@ -1161,7 +1202,7 @@ def crawl_keyword(
             keyword,
             completed_pages,
         )
-    emit_progress(config, stats, localized(config, f"准备关键词：{keyword}", f"Preparing keyword: {keyword}"))
+    emit_progress(config, stats, localized(config, f"准备关键词：{keyword}", f"Preparing keyword: {keyword}", f"Подготовка ключевого слова: {keyword}"))
 
     for page in range(config.max_pages_per_keyword):
         if should_stop(stats, config):
@@ -1169,12 +1210,12 @@ def crawl_keyword(
 
         page_no = completed_pages + page + 1
         logging.info("Searching: %s | %s | page %s", source, keyword, page_no)
-        emit_progress(config, stats, localized(config, f"正在检索 {keyword} 第 {page_no} 页", f"Searching {keyword} page {page_no}"))
+        emit_progress(config, stats, localized(config, f"正在检索 {keyword} 第 {page_no} 页", f"Searching {keyword} page {page_no}", f"Поиск {keyword}, страница {page_no}"))
         data = search_literature_source(session, source, keyword, config, cursor=cursor)
         results = data.get("results", [])
         stats.fetched_items += len(results)
         cursor = data.get("meta", {}).get("next_cursor")
-        emit_progress(config, stats, localized(config, f"已从 {keyword} 第 {page_no} 页获取 {len(results)} 条记录", f"Fetched {len(results)} records from {keyword} page {page_no}"))
+        emit_progress(config, stats, localized(config, f"已从 {keyword} 第 {page_no} 页获取 {len(results)} 条记录", f"Fetched {len(results)} records from {keyword} page {page_no}", f"Получено записей: {len(results)}; {keyword}, страница {page_no}"))
 
         if (
             config.fast_forward_existing_pages
@@ -1182,7 +1223,7 @@ def crawl_keyword(
         ):
             stats.skipped_duplicates += len(results)
             logging.info("Fast-forwarding already indexed page: %s | page %s", keyword, page_no)
-            emit_progress(config, stats, localized(config, f"已跳过已有索引的第 {page_no} 页", f"Fast-forwarded already indexed page {page_no}"))
+            emit_progress(config, stats, localized(config, f"已跳过已有索引的第 {page_no} 页", f"Fast-forwarded already indexed page {page_no}", f"Пропущена индексированная страница {page_no}"))
             save_keyword_state(
                 source,
                 keyword,
@@ -1256,12 +1297,13 @@ def crawl_keyword(
                             unpaywall,
                             doi_or_url,
                             config,
+                            keyword_pdf_dir(keyword, config.out_dir),
                         )
                         if download.path:
                             stats.downloaded_pdfs += 1
                             existing_index.downloaded_keys.add(key)
                             existing_index.retry_pdf_keys.discard(key)
-                            emit_progress(config, stats, localized(config, f"已下载 PDF：{item.get('title') or item.get('display_name')}", f"Downloaded PDF: {item.get('title') or item.get('display_name')}"))
+                            emit_progress(config, stats, localized(config, f"已下载 PDF：{item.get('title') or item.get('display_name')}", f"Downloaded PDF: {item.get('title') or item.get('display_name')}", f"Загружен PDF: {item.get('title') or item.get('display_name')}"))
                         elif pdf_candidates:
                             stats.failed_pdfs += 1
                             existing_index.retry_pdf_keys.add(key)
@@ -1278,7 +1320,7 @@ def crawl_keyword(
                     record = build_record(keyword, item, unpaywall, download, pdf_candidates, config.meta_path)
                     append_jsonl_record(fout, record)
                     stats.added_records += 1
-                    emit_progress(config, stats, localized(config, f"已保存元数据：{record.get('title') or key}", f"Saved metadata: {record.get('title') or key}"))
+                    emit_progress(config, stats, localized(config, f"已保存元数据：{record.get('title') or key}", f"Saved metadata: {record.get('title') or key}", f"Сохранены метаданные: {record.get('title') or key}"))
             except requests.RequestException as exc:
                 stats.request_failures += 1
                 logging.warning("Skipping record after request failure: %s | %s", key, exc)
@@ -1351,7 +1393,7 @@ def run_once(config: CrawlConfig) -> CrawlStats:
     )
     if config.resume:
         logging.info("Loaded %s crawl state entries from %s", len(crawl_state), config.state_path)
-    emit_progress(config, stats, localized(config, "已加载现有元数据和断点状态", "Loaded existing metadata and resume state"))
+    emit_progress(config, stats, localized(config, "已加载现有元数据和断点状态", "Loaded existing metadata and resume state", "Загружены метаданные и состояние продолжения"))
 
     session = build_session(config.email)
     try:
@@ -1369,7 +1411,7 @@ def run_once(config: CrawlConfig) -> CrawlStats:
         session.close()
 
     log_summary(stats)
-    emit_progress(config, stats, localized(config, "本轮抓取完成", "Crawl round finished"))
+    emit_progress(config, stats, localized(config, "本轮抓取完成", "Crawl round finished", "Цикл сбора завершён"))
     return stats
 
 
