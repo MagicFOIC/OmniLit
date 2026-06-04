@@ -52,9 +52,9 @@ Item {
                         PillButton { text: i18n.text("open"); onClicked: downloadController.openDirectory(outputDir.text) }
                     }
                     Text { text: i18n.text("from_date"); color: theme.textMuted }
-                    DatePickerField { id: fromDate; text: downloadController.defaultFromDate; onTextChanged: root.scheduleSave() }
+                    DatePickerField { id: fromDate; text: downloadController.defaultFromDate; maxDateText: toDate.text; onTextChanged: root.scheduleSave() }
                     Text { text: i18n.text("to_date"); color: theme.textMuted }
-                    DatePickerField { id: toDate; text: downloadController.defaultToDate; onTextChanged: root.scheduleSave() }
+                    DatePickerField { id: toDate; text: downloadController.defaultToDate; minDateText: fromDate.text; onTextChanged: root.scheduleSave() }
                     Text { text: i18n.text("sort"); color: theme.textMuted }
                     ComboBox {
                         id: sortMode; Layout.fillWidth: true
@@ -65,21 +65,66 @@ Item {
                     }
                     Text { text: i18n.text("max_records"); color: theme.textMuted }
                     TextField { id: maxRecords; Layout.fillWidth: true; placeholderText: i18n.text("optional"); onTextChanged: root.scheduleSave() }
-                    Text { text: "Topic pack"; color: theme.textMuted }
+                    Text { text: "主题相关性筛选"; color: theme.textMuted }
                     ComboBox {
                         id: topicPack
                         Layout.fillWidth: true
                         model: ["自动根据关键词生成", "Li-S batteries 预设", "自定义"]
                         currentIndex: 0
+                        hoverEnabled: true
+                        ToolTip.delay: 350
+                        ToolTip.timeout: 9000
+                        ToolTip.visible: hovered
+                        ToolTip.text: "主题包是一组关键词和评分规则。默认会根据你输入的关键词自动生成，例如输入 lithium-sulfur batteries 和 polysulfides 时，会优先保留锂硫电池相关论文。"
                         onCurrentIndexChanged: root.scheduleSave()
                     }
-                    Text { text: "OA journal pack"; color: theme.textMuted }
+                    Text { text: "推荐开放获取期刊"; color: theme.textMuted }
                     ComboBox {
                         id: journalPack
                         Layout.fillWidth: true
-                        model: ["自动根据关键词生成", "Li-S batteries 预设", "自定义"]
+                        model: ["自动推荐", "Li-S batteries 期刊预设", "自定义"]
                         currentIndex: 0
+                        hoverEnabled: true
+                        ToolTip.delay: 350
+                        ToolTip.timeout: 9000
+                        ToolTip.visible: hovered
+                        ToolTip.text: "开放获取期刊包用于给推荐期刊中的论文加权排序。默认不会只保留这些期刊，除非你开启‘只保留推荐开放获取期刊’。"
                         onCurrentIndexChanged: root.scheduleSave()
+                    }
+                }
+                Rectangle {
+                    Layout.fillWidth: true
+                    implicitHeight: smartFilterHelp.implicitHeight + 18
+                    radius: 12
+                    color: theme.accentSofter
+                    border.color: theme.border
+                    ColumnLayout {
+                        id: smartFilterHelp
+                        anchors.fill: parent
+                        anchors.margins: 9
+                        spacing: 3
+                        Text { text: "智能筛选说明"; color: theme.text; font.weight: Font.DemiBold }
+                        Text {
+                            Layout.fillWidth: true
+                            text: "默认情况下，OmniLit 会根据你的关键词自动生成主题筛选规则，并优先推荐合法开放获取来源。你通常不需要修改这些高级选项。"
+                            color: theme.textMuted
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: theme.baseFontSize - 2
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            text: "主题相关性筛选：OmniLit 会根据你输入的关键词自动判断论文是否相关，用于减少无关结果。"
+                            color: theme.textMuted
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: theme.baseFontSize - 2
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            text: "推荐开放获取期刊：用于优先显示来自开放获取期刊的论文，不会绕过付费墙。"
+                            color: theme.textMuted
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: theme.baseFontSize - 2
+                        }
                     }
                 }
                 Text { text: i18n.text("keywords"); color: theme.textMuted }
@@ -108,8 +153,23 @@ Item {
                     ModernCheckBox { id: downloadPdfs; text: i18n.text("download_pdf"); checked: true; onToggled: root.scheduleSave() }
                     ModernCheckBox { id: resume; text: i18n.text("resume"); checked: true; onToggled: root.scheduleSave() }
                     ModernCheckBox { id: oaOnly; text: i18n.text("oa_only"); onToggled: root.scheduleSave() }
-                    ModernCheckBox { id: journalWhitelistOnly; text: "OA journal whitelist only"; onToggled: root.scheduleSave() }
+                    ModernCheckBox {
+                        id: journalWhitelistOnly
+                        text: "只保留推荐开放获取期刊"
+                        ToolTip.delay: 350
+                        ToolTip.timeout: 9000
+                        ToolTip.visible: hovered
+                        ToolTip.text: "关闭时，推荐期刊只用于排序加权；开启后，OmniLit 只保留匹配推荐 OA 期刊包的论文。"
+                        onToggled: root.scheduleSave()
+                    }
                     Item { Layout.fillWidth: true }
+                }
+                Text {
+                    Layout.fillWidth: true
+                    text: "只保留推荐开放获取期刊：开启后会更严格，可能漏掉其他合法开放获取论文。"
+                    color: theme.textMuted
+                    wrapMode: Text.WordWrap
+                    font.pixelSize: theme.baseFontSize - 2
                 }
                 Item {
                     id: advancedPanel
@@ -133,12 +193,30 @@ Item {
                             TextField { id: minPdfBytes; Layout.fillWidth: true; text: "1024"; onTextChanged: root.scheduleSave() }
                             Text { text: i18n.text("match_ratio"); color: theme.textMuted }
                             TextField { id: matchRatio; Layout.fillWidth: true; text: "0.75"; onTextChanged: root.scheduleSave() }
-                            Text { text: "Min topic score"; color: theme.textMuted }
-                            TextField { id: minTopicScore; Layout.fillWidth: true; text: "6"; onTextChanged: root.scheduleSave() }
+                            Text { text: "相关性过滤强度（6，中等）"; color: theme.textMuted }
+                            TextField {
+                                id: minTopicScore
+                                Layout.fillWidth: true
+                                text: "6"
+                                placeholderText: "6，中等"
+                                hoverEnabled: true
+                                ToolTip.delay: 350
+                                ToolTip.timeout: 9000
+                                ToolTip.visible: hovered
+                                ToolTip.text: "每篇论文会根据标题、摘要和关键词得到一个主题相关分数。只有达到该分数的论文才会保留。推荐默认值为 6。"
+                                onTextChanged: root.scheduleSave()
+                            }
                             Text { text: i18n.text("loop_sleep"); color: theme.textMuted }
                             TextField { id: loopSleep; Layout.fillWidth: true; text: "3600"; onTextChanged: root.scheduleSave() }
                             Text { text: i18n.text("runtime_hours"); color: theme.textMuted }
                             TextField { id: runtimeHours; Layout.fillWidth: true; placeholderText: i18n.text("optional"); onTextChanged: root.scheduleSave() }
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            text: "相关性过滤强度：分数越高，结果越精准，但可能漏掉一些相关论文。"
+                            color: theme.textMuted
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: theme.baseFontSize - 2
                         }
                         GridLayout {
                             Layout.fillWidth: true
