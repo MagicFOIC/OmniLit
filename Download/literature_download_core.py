@@ -19,6 +19,13 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+try:
+    from .journal_registry import is_whitelisted_journal
+    from .topic_packs import score_topic_relevance
+except ImportError:  # pragma: no cover - supports direct script execution.
+    from journal_registry import is_whitelisted_journal
+    from topic_packs import score_topic_relevance
+
 DEFAULT_EMAIL = ""
 COPYRIGHT_NOTICE = "Copyright (c) 2026 magicfoic. All rights reserved."
 LITERATURE_DOWNLOAD_DIR = Path(__file__).resolve().parent
@@ -102,6 +109,11 @@ class CrawlConfig:
     write_retry_records: bool = False
     strict_keyword_match: bool = True
     min_keyword_match_ratio: float = 0.75
+    topic_pack: str | None = "li_sulfur"
+    journal_pack: str | None = "li_sulfur"
+    selected_journals: list[str] | None = None
+    min_topic_score: int = 6
+    journal_whitelist_only: bool = False
     loop: bool = False
     loop_sleep: float = 3600.0
     max_runtime_hours: float | None = None
@@ -222,6 +234,11 @@ def state_key(keyword: str, config: CrawlConfig, source: str = SOURCE_OPENALEX) 
         "per_page": config.per_page,
         "strict_keyword_match": config.strict_keyword_match,
         "min_keyword_match_ratio": config.min_keyword_match_ratio,
+        "topic_pack": config.topic_pack,
+        "journal_pack": config.journal_pack,
+        "selected_journals": config.selected_journals,
+        "min_topic_score": config.min_topic_score,
+        "journal_whitelist_only": config.journal_whitelist_only,
     }
     # Preserve historical OpenAlex state keys while isolating new source cursors.
     if source != SOURCE_OPENALEX:
@@ -899,6 +916,21 @@ def record_matches_keyword(keyword: str, item: dict[str, Any], config: CrawlConf
     return matched
 
 
+def record_passes_relevance_filters(item: dict[str, Any], config: CrawlConfig) -> tuple[bool, int, str | None]:
+    """Apply domain-specific Li-S relevance filters after keyword matching."""
+    if config.journal_whitelist_only and config.journal_pack:
+        if not is_whitelisted_journal(item, selected_journals=config.selected_journals):
+            return False, 0, "journal_not_whitelisted"
+
+    if not config.strict_keyword_match or not config.topic_pack or config.min_topic_score <= 0:
+        return True, 0, None
+
+    score = score_topic_relevance(item, topic_pack=config.topic_pack)
+    if score < config.min_topic_score:
+        return False, score, "low_topic_score"
+    return True, score, None
+
+
 def extract_authors(item: dict[str, Any], limit: int = 12) -> list[str]:
     """功能：提取文献作者列表。参数：item、limit。返回值：list[str]。"""
     authors: list[str] = []
@@ -1263,6 +1295,18 @@ def crawl_keyword(
                         ",".join(missing),
                     )
                     continue
+            passes_relevance, topic_score, relevance_reason = record_passes_relevance_filters(item, config)
+            if not passes_relevance:
+                stats.skipped_irrelevant += 1
+                logging.info(
+                    "Skipping domain-irrelevant record: %s | keyword=%s | reason=%s | topic_score=%s | threshold=%s",
+                    item.get("title") or item.get("display_name") or key,
+                    keyword,
+                    relevance_reason,
+                    topic_score,
+                    config.min_topic_score,
+                )
+                continue
             is_existing_record = key in existing_index.keys
             has_downloaded_pdf = key in existing_index.downloaded_keys
             if is_existing_record and (has_downloaded_pdf or not config.retry_missing_pdfs):
@@ -1492,6 +1536,8 @@ def validate_config(config: CrawlConfig) -> None:
         raise ValueError("--pages must be at least 1.")
     if not 1 <= config.per_page <= 200:
         raise ValueError("--per-page must be between 1 and 200.")
+    if config.min_topic_score < 0:
+        raise ValueError("--min-topic-score must be zero or greater.")
     if config.max_records is not None and config.max_records < 1:
         raise ValueError("--max-records must be at least 1.")
     if config.request_delay < 0 or config.page_delay < 0 or config.loop_sleep < 0:
