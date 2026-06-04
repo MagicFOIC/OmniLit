@@ -45,6 +45,8 @@ class DownloadUiConfigTests(unittest.TestCase):
             )
 
             self.assertIsNone(config.selected_journals)
+            self.assertEqual(config.topic_pack, "auto")
+            self.assertEqual(config.journal_pack, "auto")
 
     def test_qml_config_contains_new_fields(self) -> None:
         qml = (ROOT / "ui" / "qml" / "DownloadPage.qml").read_text(encoding="utf-8")
@@ -58,7 +60,10 @@ class DownloadUiConfigTests(unittest.TestCase):
         ):
             self.assertIn(field, qml)
 
-        self.assertIn('model: ["li_sulfur"]', qml)
+        self.assertIn('property var packValues: ["auto", "li_sulfur", "custom"]', qml)
+        self.assertIn('"自动根据关键词生成"', qml)
+        self.assertIn('"Li-S batteries 预设"', qml)
+        self.assertIn('"自定义"', qml)
         self.assertIn('text: "6"', qml)
 
 

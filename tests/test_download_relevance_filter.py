@@ -84,6 +84,7 @@ class DownloadRelevanceFilterTests(unittest.TestCase):
 
     def test_journal_whitelist_only_rejects_non_whitelisted_journal(self) -> None:
         config = core.CrawlConfig(
+            journal_pack="li_sulfur",
             journal_whitelist_only=True,
             strict_keyword_match=False,
             request_delay=0,

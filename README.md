@@ -208,3 +208,13 @@ Copyright (c) 2026 magicfoic. All rights reserved.
 - Chinese -> English can be selected in the translation page or with `--target-lang en`; its default output suffix is `_Full_Translation`.
 - Glossaries keep the existing `source,target` schema. In Chinese -> English mode, OmniLit applies the same entries in reverse as `target => source`, so user glossaries do not need duplicate reverse CSV files.
 - Existing writable built-in glossary files receive newly added default terms by appending missing rows only. User custom files and user-added rows are not overwritten.
+
+## Literature Download / 文献下载
+
+OmniLit literature download now supports OpenAlex, Europe PMC, arXiv, Crossref, and DOAJ. The default keywords include `lithium-sulfur batteries` and `polysulfides`, but topic filtering is no longer hard-wired to Li-S: the default `topic_pack=auto` builds a topic pack from the user's own keywords. If the keywords are lithium-sulfur / Li-S / polysulfide related, OmniLit merges the existing `li_sulfur` preset expansion terms. For unrelated research directions, it does not inject Li-S terms.
+
+The downloader supports `journal_pack=auto`, which recommends OA journals from Open Access search results and high-topic-score records for ranking bonuses. The existing `li_sulfur` topic pack and OA journal pack are still available as manual presets, and `custom` remains available for user-provided terms or selected journals. Auto journal packs do not remove records unless `journal_whitelist_only=true`.
+
+The downloader also supports minimum topic score filtering, whitelist-only OA journal filtering, and a legal Open Access PDF resolver. PDF resolution prioritizes OpenAlex `primary_location.pdf_url`, OpenAlex `open_access.oa_url`, Unpaywall OA PDF URLs, and DOAJ fulltext PDF links. It checks PDF candidates before download when possible and skips HTML pages, images, XML, login/subscription pages, and known shadow-library domains.
+
+OmniLit only downloads legal Open Access PDFs. It does not bypass paywalls and does not use Sci-Hub, LibGen, Z-Library, Anna's Archive, or other shadow libraries.

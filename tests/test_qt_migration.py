@@ -15,9 +15,12 @@ from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 
-from PySide6.QtCore import QCoreApplication, QUrl
-from PySide6.QtGui import QImage
-from PySide6.QtQml import QQmlComponent, QQmlEngine
+try:
+    from PySide6.QtCore import QCoreApplication, QUrl
+    from PySide6.QtGui import QImage
+    from PySide6.QtQml import QQmlComponent, QQmlEngine
+except ModuleNotFoundError as exc:  # pragma: no cover - depends on local Qt runtime.
+    raise unittest.SkipTest("PySide6 is not installed in this environment") from exc
 
 from omnilit_qt.controllers import (
     AppController,

@@ -59,11 +59,22 @@ def get_topic_pack(pack_name: str = "li_sulfur") -> list[str]:
         raise ValueError(f"Unknown topic pack: {pack_name}") from exc
 
 
-def score_topic_relevance(record: dict[str, Any], topic_pack: str = "li_sulfur") -> int:
-    """Score Li-S battery relevance from title, abstract, formulas, and OA journal fit."""
+def score_topic_relevance(record: dict[str, Any], topic_pack: str | dict[str, Any] = "li_sulfur") -> int:
+    """Score record relevance for a preset or generated topic pack."""
+    if isinstance(topic_pack, dict):
+        if topic_pack.get("uses_li_sulfur_preset"):
+            return _score_li_sulfur(record)
+        return _score_generic_pack(record, topic_pack)
+
     if topic_pack != "li_sulfur":
         get_topic_pack(topic_pack)
         return 0
+
+    return _score_li_sulfur(record)
+
+
+def _score_li_sulfur(record: dict[str, Any]) -> int:
+    """Score Li-S battery relevance from title, abstract, formulas, and OA journal fit."""
 
     title = _normalized_text(_first_text(record.get("title") or record.get("display_name")))
     abstract = _normalized_text(
@@ -93,6 +104,35 @@ def score_topic_relevance(record: dict[str, Any], topic_pack: str = "li_sulfur")
     if is_whitelisted_journal(record):
         score += 1
     return score
+
+
+def _score_generic_pack(record: dict[str, Any], topic_pack: dict[str, Any]) -> int:
+    title = _normalized_text(_first_text(record.get("title") or record.get("display_name"))).casefold()
+    abstract = _normalized_text(
+        _first_text(
+            record.get("abstract")
+            or record.get("abstract_text")
+            or record.get("abstractText")
+            or record.get("description")
+            or _abstract_from_inverted_index(record.get("abstract_inverted_index"))
+        )
+    ).casefold()
+    full_text = f"{title} {abstract}".strip()
+    score = 0
+    for term in topic_pack.get("phrase_terms", []) or []:
+        normalized = _normalized_text(str(term)).casefold()
+        if not normalized:
+            continue
+        if normalized in title:
+            score = max(score, 6)
+        elif normalized in abstract:
+            score = max(score, 4)
+    optional_hits = 0
+    for term in topic_pack.get("optional_expanded_terms", []) or []:
+        normalized = _normalized_text(str(term)).casefold()
+        if normalized and normalized in full_text:
+            optional_hits += 1
+    return score + min(optional_hits * 2, 6)
 
 
 def _first_text(value: Any) -> str:

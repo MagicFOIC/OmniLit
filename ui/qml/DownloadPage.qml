@@ -5,6 +5,7 @@ import QtQuick.Layouts
 Item {
     id: root
     property var sortValues: ["", "relevance_score:desc", "cited_by_count:desc", "publication_date:desc"]
+    property var packValues: ["auto", "li_sulfur", "custom"]
     property var selectedSources: ["openalex"]
     property var selectedJournals: []
     property bool advancedVisible: false
@@ -68,7 +69,7 @@ Item {
                     ComboBox {
                         id: topicPack
                         Layout.fillWidth: true
-                        model: ["li_sulfur"]
+                        model: ["自动根据关键词生成", "Li-S batteries 预设", "自定义"]
                         currentIndex: 0
                         onCurrentIndexChanged: root.scheduleSave()
                     }
@@ -76,7 +77,7 @@ Item {
                     ComboBox {
                         id: journalPack
                         Layout.fillWidth: true
-                        model: ["li_sulfur"]
+                        model: ["自动根据关键词生成", "Li-S batteries 预设", "自定义"]
                         currentIndex: 0
                         onCurrentIndexChanged: root.scheduleSave()
                     }
@@ -179,7 +180,7 @@ Item {
                  pageDelay: pageDelay.text, minPdfBytes: minPdfBytes.text, downloadPdfs: downloadPdfs.checked,
                  retryMissingPdfs: retryMissing.checked, writeRetryRecords: writeRetry.checked,
                  strictKeywordMatch: strictMatch.checked, minKeywordMatchRatio: matchRatio.text,
-                 topicPack: topicPack.currentText, journalPack: journalPack.currentText,
+                 topicPack: root.packValues[topicPack.currentIndex], journalPack: root.packValues[journalPack.currentIndex],
                  selectedJournals: root.selectedJournals, minTopicScore: minTopicScore.text,
                  journalWhitelistOnly: journalWhitelistOnly.checked,
                  loop: loopJob.checked, loopSleep: loopSleep.text, maxRuntimeHours: runtimeHours.text,
@@ -188,6 +189,12 @@ Item {
     }
     function savedValue(settings, key, fallback) {
         return settings[key] !== undefined && settings[key] !== null ? settings[key] : fallback
+    }
+    function packIndex(value, fallback) {
+        let index = root.packValues.indexOf(value)
+        if(index >= 0) return index
+        let fallbackIndex = root.packValues.indexOf(fallback)
+        return fallbackIndex >= 0 ? fallbackIndex : 0
     }
     function scheduleSave() {
         if(!root.restoringSettings) saveSettingsTimer.restart()
@@ -212,8 +219,8 @@ Item {
         writeRetry.checked=savedValue(settings, "writeRetryRecords", false)
         strictMatch.checked=savedValue(settings, "strictKeywordMatch", true)
         matchRatio.text=savedValue(settings, "minKeywordMatchRatio", "0.75")
-        topicPack.currentIndex=0
-        journalPack.currentIndex=0
+        topicPack.currentIndex=packIndex(savedValue(settings, "topicPack", "auto"), "auto")
+        journalPack.currentIndex=packIndex(savedValue(settings, "journalPack", "auto"), "auto")
         root.selectedJournals=savedValue(settings, "selectedJournals", [])
         minTopicScore.text=savedValue(settings, "minTopicScore", "6")
         journalWhitelistOnly.checked=savedValue(settings, "journalWhitelistOnly", false)

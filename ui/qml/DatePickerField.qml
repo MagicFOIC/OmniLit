@@ -24,7 +24,7 @@ RowLayout {
     Popup {
         id: popup
         width: 330
-        height: 355
+        height: 395
         modal: true
         focus: true
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
@@ -39,6 +39,24 @@ RowLayout {
         ColumnLayout {
             anchors.fill: parent
             anchors.margins: 12
+            RowLayout {
+                Layout.fillWidth: true
+                PillButton { iconName: "chevron-left"; onClicked: root.moveYear(-1) }
+                Text {
+                    text: localeController.language === "en" ? "Year" : "骞翠唤"
+                    color: theme.textMuted
+                }
+                SpinBox {
+                    id: yearPicker
+                    from: 1900
+                    to: 2100
+                    value: root.shownMonth.getFullYear()
+                    editable: true
+                    Layout.fillWidth: true
+                    onValueModified: root.setYear(value)
+                }
+                PillButton { iconName: "chevron-right"; onClicked: root.moveYear(1) }
+            }
             RowLayout {
                 Layout.fillWidth: true
                 PillButton { iconName: "chevron-left"; onClicked: root.moveMonth(-1) }
@@ -119,6 +137,17 @@ RowLayout {
 
     function moveMonth(offset) {
         shownMonth = new Date(shownMonth.getFullYear(), shownMonth.getMonth() + offset, 1)
+        rebuild()
+    }
+
+    function moveYear(offset) {
+        shownMonth = new Date(shownMonth.getFullYear() + offset, shownMonth.getMonth(), 1)
+        yearPicker.value = shownMonth.getFullYear()
+        rebuild()
+    }
+
+    function setYear(year) {
+        shownMonth = new Date(year, shownMonth.getMonth(), 1)
         rebuild()
     }
 

@@ -21,9 +21,11 @@ from urllib3.util.retry import Retry
 
 try:
     from .journal_registry import is_whitelisted_journal
+    from .pack_builder import journal_pack_match_score, resolve_journal_pack, resolve_topic_pack
     from .topic_packs import score_topic_relevance
 except ImportError:  # pragma: no cover - supports direct script execution.
     from journal_registry import is_whitelisted_journal
+    from pack_builder import journal_pack_match_score, resolve_journal_pack, resolve_topic_pack
     from topic_packs import score_topic_relevance
 
 DEFAULT_EMAIL = ""
@@ -124,8 +126,8 @@ class CrawlConfig:
     write_retry_records: bool = False
     strict_keyword_match: bool = True
     min_keyword_match_ratio: float = 0.75
-    topic_pack: str | None = "li_sulfur"
-    journal_pack: str | None = "li_sulfur"
+    topic_pack: str | None = "auto"
+    journal_pack: str | None = "auto"
     selected_journals: list[str] | None = None
     min_topic_score: int = 6
     journal_whitelist_only: bool = False
@@ -1255,19 +1257,56 @@ def record_matches_keyword(keyword: str, item: dict[str, Any], config: CrawlConf
     return matched
 
 
-def record_passes_relevance_filters(item: dict[str, Any], config: CrawlConfig) -> tuple[bool, int, str | None]:
+def record_passes_relevance_filters(
+    item: dict[str, Any],
+    config: CrawlConfig,
+    topic_pack: dict[str, Any] | None = None,
+    journal_pack: dict[str, Any] | None = None,
+) -> tuple[bool, int, str | None]:
     """Docstring."""
     if config.journal_whitelist_only and config.journal_pack:
-        if not is_whitelisted_journal(item, selected_journals=config.selected_journals):
+        if not record_matches_resolved_journal_pack(item, config, journal_pack):
             return False, 0, "journal_not_whitelisted"
 
     if not config.strict_keyword_match or not config.topic_pack or config.min_topic_score <= 0:
         return True, 0, None
 
-    score = score_topic_relevance(item, topic_pack=config.topic_pack)
+    resolved_topic_pack = topic_pack or resolve_topic_pack(config, config.effective_keywords)
+    score = score_topic_relevance(item, topic_pack=resolved_topic_pack)
     if score < config.min_topic_score:
         return False, score, "low_topic_score"
     return True, score, None
+
+
+def record_matches_resolved_journal_pack(
+    item: dict[str, Any],
+    config: CrawlConfig,
+    journal_pack: dict[str, Any] | None,
+) -> bool:
+    """Return whether a record matches the configured journal allow-list."""
+    if config.journal_pack == "li_sulfur":
+        return is_whitelisted_journal(item, selected_journals=config.selected_journals)
+    resolved = journal_pack or resolve_journal_pack(config, [item])
+    return journal_pack_match_score(item, resolved) > 0
+
+
+def sort_records_by_resolved_packs(
+    records: list[dict[str, Any]],
+    topic_pack: dict[str, Any],
+    journal_pack: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Sort search results by topic score and OA journal recommendation bonus."""
+    for item in records:
+        item["topic_score"] = score_topic_relevance(item, topic_pack=topic_pack)
+        item["journal_pack_score"] = journal_pack_match_score(item, journal_pack)
+    return sorted(
+        records,
+        key=lambda item: (
+            int(item.get("topic_score") or 0) + int(item.get("journal_pack_score") or 0),
+            int(item.get("cited_by_count") or 0),
+        ),
+        reverse=True,
+    )
 
 
 def extract_authors(item: dict[str, Any], limit: int = 12) -> list[str]:
@@ -1637,6 +1676,7 @@ def crawl_keyword(
     crawl_state: dict[str, CrawlStateEntry],
 ) -> None:
     """Docstring."""
+    topic_pack = resolve_topic_pack(config, config.effective_keywords)
     key = state_key(keyword, config, source)
     state_entry = crawl_state.get(key, CrawlStateEntry())
     if config.resume and state_entry.exhausted:
@@ -1666,6 +1706,8 @@ def crawl_keyword(
         results = data.get("results", [])
         stats.fetched_items += len(results)
         cursor = data.get("meta", {}).get("next_cursor")
+        journal_pack = resolve_journal_pack(config, results)
+        results = sort_records_by_resolved_packs(results, topic_pack, journal_pack)
         emit_progress(config, stats, localized(config, f"Fetched {len(results)} records from {keyword} page {page_no}", f"Fetched {len(results)} records from {keyword} page {page_no}", f"Fetched {len(results)} records from {keyword} page {page_no}"))
 
         if (
@@ -1714,7 +1756,12 @@ def crawl_keyword(
                         ",".join(missing),
                     )
                     continue
-            passes_relevance, topic_score, relevance_reason = record_passes_relevance_filters(item, config)
+            passes_relevance, topic_score, relevance_reason = record_passes_relevance_filters(
+                item,
+                config,
+                topic_pack=topic_pack,
+                journal_pack=journal_pack,
+            )
             if not passes_relevance:
                 stats.skipped_irrelevant += 1
                 logging.info(
