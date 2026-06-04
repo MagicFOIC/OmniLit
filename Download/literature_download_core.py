@@ -1921,8 +1921,67 @@ def run_once(config: CrawlConfig) -> CrawlStats:
         session.close()
 
     log_summary(stats)
-    emit_progress(config, stats, localized(config, "Crawl round finished", "Crawl round finished", "Crawl round finished"))
+    emit_progress(config, stats, format_round_finished_message(config, stats))
     return stats
+
+
+def format_round_finished_message(config: CrawlConfig, stats: CrawlStats) -> str:
+    if config.language == "en":
+        lines = [
+            "Crawl round finished.",
+            (
+                f"Fetched {stats.fetched_items} records; "
+                f"saved {stats.added_records} new metadata records; "
+                f"downloaded {stats.downloaded_pdfs} PDFs."
+            ),
+            (
+                f"Skipped {stats.skipped_duplicates} duplicates, "
+                f"{stats.skipped_irrelevant} irrelevant records, "
+                f"{stats.skipped_without_key} records without DOI/arXiv key."
+            ),
+        ]
+
+        if stats.failed_pdfs:
+            lines.append(f"{stats.failed_pdfs} PDF downloads failed. You can retry missing PDFs later.")
+
+        if stats.request_failures:
+            lines.append(f"{stats.request_failures} source requests failed. Some sources may be temporarily unavailable.")
+
+        if config.loop:
+            minutes = config.loop_sleep / 60
+            lines.append(f"Loop mode is enabled. The next round will start in about {minutes:.0f} minutes.")
+        else:
+            lines.append("The task has ended. You can open the output folder or adjust settings and start again.")
+
+        return "\n".join(lines)
+
+    lines = [
+        "本轮抓取完成。",
+        (
+            f"本轮共检索到 {stats.fetched_items} 条记录；"
+            f"新增保存 {stats.added_records} 条元数据；"
+            f"成功下载 {stats.downloaded_pdfs} 篇 PDF。"
+        ),
+        (
+            f"跳过重复 {stats.skipped_duplicates} 条，"
+            f"跳过不相关 {stats.skipped_irrelevant} 条，"
+            f"缺少 DOI/arXiv 标识 {stats.skipped_without_key} 条。"
+        ),
+    ]
+
+    if stats.failed_pdfs:
+        lines.append(f"有 {stats.failed_pdfs} 篇 PDF 下载失败，可稍后开启“重试缺失 PDF”再次尝试。")
+
+    if stats.request_failures:
+        lines.append(f"有 {stats.request_failures} 次来源请求失败，可能是网络或数据源临时不可用。")
+
+    if config.loop:
+        minutes = config.loop_sleep / 60
+        lines.append(f"循环抓取已开启，下一轮将在约 {minutes:.0f} 分钟后开始；如不想继续等待，可以点击“停止”。")
+    else:
+        lines.append("任务已结束。你可以打开输出目录查看 PDF，或调整关键词/筛选条件后重新开始。")
+
+    return "\n".join(lines)
 
 
 def deadline_from_config(config: CrawlConfig) -> datetime | None:

@@ -64,6 +64,7 @@ class DownloadController(QObject):
         self._running = False
         self._active_task_text = ""
         self._status = locale.textf("not_started")
+        self._last_round_summary = ""
         self._stats = self._empty_stats()
         self._logs: list[str] = []
         self._stop = threading.Event()
@@ -76,6 +77,25 @@ class DownloadController(QObject):
         """生成空统计值。参数：无。返回值：统计字典。"""
         return {key: 0 for key in ("existing_records", "fetched_items", "added_records", "skipped_duplicates", "skipped_without_key", "skipped_irrelevant", "open_access_records", "downloaded_pdfs", "failed_pdfs", "retried_existing_records", "request_failures")}
 
+    @staticmethod
+    def _is_round_summary_message(message: str) -> bool:
+        """判断进度消息是否是本轮抓取总结。"""
+        text = (message or "").strip()
+        if not text:
+            return False
+
+        return any(
+            marker in text
+            for marker in (
+                "本轮抓取完成",
+                "Crawl round finished",
+                "Crawl round completed",
+                "Раунд сканирования завершён",
+                "Раунд обхода завершён",
+            )
+        )
+
+
     def _append(self, text: str) -> None:
         """追加日志并限制长度。参数：文本。返回值：无。"""
         if text.strip():
@@ -84,18 +104,46 @@ class DownloadController(QObject):
 
     def _on_progress(self, stats: object, message: str) -> None:
         """接收下载进度。参数：统计对象和消息。返回值：无。"""
-        self._stats = {key: int(getattr(stats, key, 0) or 0) for key in self._empty_stats()}
+        message = str(message or "")
+
+        self._stats = {
+            key: int(getattr(stats, key, 0) or 0)
+            for key in self._empty_stats()
+        }
+
         self._status = message
         self._append(message)
+
+        if self._is_round_summary_message(message):
+            self._last_round_summary = message
+
         self.app.set_status(message)
         self.changed.emit()
 
     def _on_finished(self, ok: bool, message: str) -> None:
         """完成下载状态流转。参数：成功标志和消息。返回值：无。"""
+        message = str(message or "")
+
         self._running = False
-        self._status = message
-        self._append(message)
-        self.app.set_status(message)
+
+        final_status = (
+            self._last_round_summary
+            if ok and self._last_round_summary
+            else message
+        )
+
+        self._status = final_status
+
+        # 如果已经有详细总结，就不要再把“下载任务完成。”追加到日志尾部，
+        # 避免用户最后看到的仍然是泛化完成文案。
+        if not (ok and self._last_round_summary):
+            self._append(message)
+
+        self.app.set_status(final_status)
+
+        # 避免下一次任务复用旧总结。
+        self._last_round_summary = ""
+
         self.changed.emit()
 
     @Property(bool, notify=changed)
@@ -204,6 +252,7 @@ class DownloadController(QObject):
                 self.finished.emit(not cancelled, message)
 
         self._stop.clear()
+        self._last_round_summary = ""
         self._logs, self._stats, self._running = [], self._empty_stats(), True
         keywords = raw.get("keywords") or []
         if isinstance(keywords, str):
