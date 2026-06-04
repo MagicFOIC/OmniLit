@@ -54,14 +54,20 @@ DEFAULT_KEYWORDS = [
 OPENALEX_URL = "https://api.openalex.org/works"
 EUROPE_PMC_URL = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
 ARXIV_URL = "https://export.arxiv.org/api/query"
+CROSSREF_URL = "https://api.crossref.org/v1/works"
+DOAJ_URL = "https://doaj.org/api/v4/search/articles"
 UNPAYWALL_URL = "https://api.unpaywall.org/v2"
 SOURCE_OPENALEX = "openalex"
 SOURCE_EUROPE_PMC = "europe_pmc"
 SOURCE_ARXIV = "arxiv"
+SOURCE_CROSSREF = "crossref"
+SOURCE_DOAJ = "doaj"
 SOURCE_LABELS = {
     SOURCE_OPENALEX: "OpenAlex",
     SOURCE_EUROPE_PMC: "Europe PMC",
     SOURCE_ARXIV: "arXiv",
+    SOURCE_CROSSREF: "Crossref",
+    SOURCE_DOAJ: "DOAJ",
 }
 DEFAULT_SOURCES = [SOURCE_OPENALEX]
 OPENALEX_SELECT = (
@@ -783,6 +789,310 @@ def search_arxiv(
     return {"results": normalized, "meta": {"next_cursor": next_cursor}}
 
 
+def first_value(value: Any) -> Any:
+    """Return the first value from list-like API fields."""
+    if isinstance(value, list):
+        return value[0] if value else None
+    return value
+
+
+def date_from_parts(value: Any) -> tuple[str | None, int | None]:
+    """Normalize Crossref-style date-parts into YYYY-MM-DD and year."""
+    if not isinstance(value, dict):
+        return None, None
+    date_time = value.get("date-time")
+    if isinstance(date_time, str) and len(date_time) >= 10:
+        year = int(date_time[:4]) if date_time[:4].isdigit() else None
+        return date_time[:10], year
+
+    parts = first_value(value.get("date-parts"))
+    if not isinstance(parts, list) or not parts:
+        return None, None
+    try:
+        year = int(parts[0])
+        month = int(parts[1]) if len(parts) > 1 else 1
+        day = int(parts[2]) if len(parts) > 2 else 1
+    except (TypeError, ValueError):
+        return None, None
+    return f"{year:04d}-{month:02d}-{day:02d}", year
+
+
+def publication_date_from_crossref(item: dict[str, Any]) -> tuple[str | None, int | None]:
+    """Pick the most useful publication date from Crossref metadata."""
+    for key in ("published-print", "published-online", "published", "issued", "created"):
+        publication_date, publication_year = date_from_parts(item.get(key))
+        if publication_date:
+            return publication_date, publication_year
+    return None, None
+
+
+def record_in_config_date_range(publication_date: str | None, publication_year: Any, config: CrawlConfig) -> bool:
+    """Filter normalized records by configured publication date when possible."""
+    if publication_date:
+        return config.from_date <= publication_date[:10] <= config.to_date
+    if publication_year:
+        try:
+            year = int(publication_year)
+        except (TypeError, ValueError):
+            return True
+        return int(config.from_date[:4]) <= year <= int(config.to_date[:4])
+    return True
+
+
+def open_license_from_urls(urls: list[str]) -> bool:
+    """Conservatively infer OA from license URLs only."""
+    indicators = ("creativecommons.org", "openaccess", "open-access", "publicdomain", "cc0")
+    return any(any(indicator in url.casefold() for indicator in indicators) for url in urls)
+
+
+def normalize_issn_list(values: Any) -> list[str]:
+    """Normalize ISSN-like API fields while preserving order."""
+    raw_values = values if isinstance(values, list) else [values]
+    normalized: list[str] = []
+    for value in raw_values:
+        if not value:
+            continue
+        text = str(value).strip().upper()
+        if re.fullmatch(r"\d{8}|\d{7}X", text):
+            text = f"{text[:4]}-{text[4:]}"
+        if text and text not in normalized:
+            normalized.append(text)
+    return normalized
+
+
+def normalize_crossref_item(item: dict[str, Any]) -> dict[str, Any]:
+    """Normalize one Crossref work into OpenAlex-like metadata."""
+    doi = item.get("DOI")
+    source_record_id = normalize_doi(doi) or item.get("URL") or item.get("member")
+    publication_date, publication_year = publication_date_from_crossref(item)
+    container_titles = item.get("container-title") or []
+    journal_title = first_value(container_titles)
+    issns = normalize_issn_list(item.get("ISSN") or item.get("issn-type"))
+    licenses = item.get("license") or []
+    license_urls = unique_urls([license_item.get("URL") for license_item in licenses if isinstance(license_item, dict)])
+    links = item.get("link") or []
+    pdf_urls = unique_urls([
+        link.get("URL")
+        for link in links
+        if isinstance(link, dict)
+        and "pdf" in str(link.get("content-type") or "").casefold()
+        and link.get("URL")
+    ])
+    landing_url = item.get("URL")
+    oa_url = (pdf_urls or license_urls or [landing_url or None])[0]
+
+    return {
+        "id": f"crossref:{source_record_id}",
+        "source_record_id": f"{SOURCE_CROSSREF}:{source_record_id}",
+        "literature_source": SOURCE_CROSSREF,
+        "doi": doi,
+        "title": clean_markup_text(first_value(item.get("title"))),
+        "publication_date": publication_date,
+        "publication_year": publication_year,
+        "cited_by_count": item.get("is-referenced-by-count"),
+        "authorships": [
+            {"author": {"display_name": clean_markup_text(" ".join(filter(None, [author.get("given"), author.get("family")])) or author.get("name"))}}
+            for author in item.get("author") or []
+            if isinstance(author, dict) and (author.get("given") or author.get("family") or author.get("name"))
+        ],
+        "abstract": clean_markup_text(item.get("abstract")),
+        "primary_location": {
+            "pdf_url": pdf_urls[0] if pdf_urls else None,
+            "landing_page_url": landing_url,
+            "source": {
+                "display_name": journal_title,
+                "issn": issns,
+                "issn_l": item.get("ISSN-L") or (issns[0] if issns else None),
+                "publisher": item.get("publisher"),
+            },
+        },
+        "open_access": {
+            "is_oa": open_license_from_urls(license_urls),
+            "oa_url": oa_url,
+            "license_urls": license_urls,
+        },
+        "license": licenses,
+        "publisher": item.get("publisher"),
+        "container-title": container_titles,
+        "issns": issns,
+    }
+
+
+def search_crossref(
+    session: requests.Session,
+    keyword: str,
+    config: CrawlConfig,
+    cursor: str = "*",
+) -> dict[str, Any]:
+    """Request and normalize one Crossref result page."""
+    filters = [
+        "type:journal-article",
+        f"from-pub-date:{config.from_date}",
+        f"until-pub-date:{config.to_date}",
+    ]
+    if config.oa_only:
+        filters.append("has-license:true")
+
+    params = {
+        "query.bibliographic": keyword,
+        "filter": ",".join(filters),
+        "rows": min(config.per_page, 1000),
+        "cursor": cursor or "*",
+    }
+    if config.email:
+        params["mailto"] = config.email
+    if config.sort == "publication_date:desc":
+        params["sort"] = "published"
+        params["order"] = "desc"
+
+    response = session.get(CROSSREF_URL, params=params, timeout=(15, 45))
+    response.raise_for_status()
+    message = response.json().get("message") or {}
+    normalized = [
+        normalize_crossref_item(item)
+        for item in message.get("items") or []
+        if isinstance(item, dict)
+    ]
+    next_cursor = message.get("next-cursor") if normalized else None
+    if next_cursor == cursor:
+        next_cursor = None
+    return {"results": normalized, "meta": {"next_cursor": next_cursor}}
+
+
+def doaj_identifier_values(identifiers: list[dict[str, Any]], wanted_types: set[str]) -> list[str]:
+    """Extract ordered identifier values from DOAJ bibjson."""
+    values: list[str] = []
+    for identifier in identifiers:
+        if not isinstance(identifier, dict):
+            continue
+        identifier_type = str(identifier.get("type") or "").casefold()
+        identifier_value = identifier.get("id")
+        if identifier_type in wanted_types and identifier_value:
+            values.append(str(identifier_value))
+    return values
+
+
+def doaj_publication_date(bibjson: dict[str, Any]) -> tuple[str | None, int | None]:
+    """Normalize DOAJ year/month fields into publication date and year."""
+    year = bibjson.get("year")
+    try:
+        publication_year = int(year)
+    except (TypeError, ValueError):
+        return None, None
+    month = bibjson.get("month") or 1
+    try:
+        publication_month = int(month)
+    except (TypeError, ValueError):
+        publication_month = 1
+    return f"{publication_year:04d}-{publication_month:02d}-01", publication_year
+
+
+def normalize_doaj_item(item: dict[str, Any]) -> dict[str, Any]:
+    """Normalize one DOAJ article into OpenAlex-like metadata."""
+    bibjson = item.get("bibjson") or {}
+    identifiers = bibjson.get("identifier") or []
+    doi = first_value(doaj_identifier_values(identifiers, {"doi"}))
+    issns = normalize_issn_list(doaj_identifier_values(identifiers, {"issn", "pissn", "eissn"}))
+    journal = bibjson.get("journal") or {}
+    journal_issns = normalize_issn_list([journal.get("issn"), journal.get("eissn")])
+    all_issns = unique_urls([*issns, *journal_issns])
+    publication_date, publication_year = doaj_publication_date(bibjson)
+    links = bibjson.get("link") or []
+    fulltext_links = [
+        link.get("url")
+        for link in links
+        if isinstance(link, dict)
+        and str(link.get("type") or "").casefold() == "fulltext"
+        and link.get("url")
+    ]
+    pdf_urls = [
+        link.get("url")
+        for link in links
+        if isinstance(link, dict)
+        and str(link.get("type") or "").casefold() == "fulltext"
+        and (
+            "pdf" in str(link.get("content_type") or "").casefold()
+            or str(link.get("url") or "").casefold().endswith(".pdf")
+        )
+        and link.get("url")
+    ]
+    source_record_id = item.get("id") or normalize_doi(doi) or first_value(fulltext_links)
+    licenses = bibjson.get("license") or []
+    license_urls = unique_urls([license_item.get("url") for license_item in licenses if isinstance(license_item, dict)])
+    oa_url = (pdf_urls or fulltext_links or [None])[0]
+
+    return {
+        "id": f"doaj:{source_record_id}",
+        "source_record_id": f"{SOURCE_DOAJ}:{source_record_id}",
+        "literature_source": SOURCE_DOAJ,
+        "doi": doi,
+        "title": clean_markup_text(bibjson.get("title")),
+        "publication_date": publication_date,
+        "publication_year": publication_year,
+        "cited_by_count": None,
+        "authorships": [
+            {"author": {"display_name": clean_markup_text(author.get("name"))}}
+            for author in bibjson.get("author") or []
+            if isinstance(author, dict) and author.get("name")
+        ],
+        "abstract": clean_markup_text(bibjson.get("abstract")),
+        "primary_location": {
+            "pdf_url": pdf_urls[0] if pdf_urls else None,
+            "landing_page_url": oa_url,
+            "source": {
+                "display_name": journal.get("title"),
+                "issn": all_issns,
+                "issn_l": all_issns[0] if all_issns else None,
+                "publisher": journal.get("publisher"),
+            },
+        },
+        "open_access": {
+            "is_oa": True,
+            "oa_url": oa_url,
+            "license_urls": license_urls,
+        },
+        "license": licenses,
+        "publisher": journal.get("publisher"),
+        "journal": journal.get("title"),
+        "issns": all_issns,
+        "doaj_fulltext_links": unique_urls(fulltext_links),
+    }
+
+
+def search_doaj(
+    session: requests.Session,
+    keyword: str,
+    config: CrawlConfig,
+    cursor: str = "1",
+) -> dict[str, Any]:
+    """Request and normalize one DOAJ article result page."""
+    try:
+        page = max(1, int(cursor or "1"))
+    except ValueError:
+        page = 1
+    page_size = min(config.per_page, 100)
+    response = session.get(
+        f"{DOAJ_URL}/{quote(keyword)}",
+        params={"page": page, "pageSize": page_size},
+        timeout=(15, 45),
+    )
+    response.raise_for_status()
+    data = response.json()
+    normalized = [
+        normalized_item
+        for item in data.get("results") or []
+        if isinstance(item, dict)
+        for normalized_item in [normalize_doaj_item(item)]
+        if record_in_config_date_range(normalized_item.get("publication_date"), normalized_item.get("publication_year"), config)
+    ]
+    total = data.get("total")
+    try:
+        has_next = bool(total and page * page_size < int(total))
+    except (TypeError, ValueError):
+        has_next = bool(normalized)
+    return {"results": normalized, "meta": {"next_cursor": str(page + 1) if has_next else None}}
+
+
 def search_literature_source(
     session: requests.Session,
     source: str,
@@ -797,6 +1107,10 @@ def search_literature_source(
         return search_europe_pmc(session, keyword, config, cursor)
     if source == SOURCE_ARXIV:
         return search_arxiv(session, keyword, config, cursor)
+    if source == SOURCE_CROSSREF:
+        return search_crossref(session, keyword, config, cursor)
+    if source == SOURCE_DOAJ:
+        return search_doaj(session, keyword, config, cursor)
     raise ValueError(f"Unsupported literature source: {source}")
 
 
@@ -1224,7 +1538,7 @@ def crawl_keyword(
         logging.info("Skipping exhausted source and keyword: %s | %s", source, keyword)
         return
 
-    initial_cursor = "0" if source == SOURCE_ARXIV else "*"
+    initial_cursor = "0" if source == SOURCE_ARXIV else "1" if source == SOURCE_DOAJ else "*"
     cursor = state_entry.next_cursor if config.resume and state_entry.next_cursor else initial_cursor
     completed_pages = state_entry.completed_pages if config.resume else 0
     if cursor != initial_cursor:
