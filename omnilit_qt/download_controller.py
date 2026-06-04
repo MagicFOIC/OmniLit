@@ -40,6 +40,11 @@ DOWNLOAD_FORM_FIELDS = (
     "fastForwardExistingPages",
     "oaOnly",
     "sources",
+    "topicPack",
+    "journalPack",
+    "selectedJournals",
+    "minTopicScore",
+    "journalWhitelistOnly",
     "advancedVisible",
 )
 

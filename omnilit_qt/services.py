@@ -230,6 +230,13 @@ def build_download_config(paths: AppPaths, raw: dict[str, Any], stop_callback, p
         sources = [str(item).strip() for item in sources_raw if str(item).strip()]
     else:
         sources = [item.strip() for item in str(sources_raw).replace(";", "\n").splitlines() if item.strip()]
+    selected_journals_raw = raw.get("selectedJournals")
+    if selected_journals_raw is None:
+        selected_journals = None
+    elif isinstance(selected_journals_raw, list):
+        selected_journals = [str(item).strip() for item in selected_journals_raw if str(item).strip()] or None
+    else:
+        selected_journals = [item.strip() for item in str(selected_journals_raw).replace(";", "\n").splitlines() if item.strip()] or None
     return core, core.CrawlConfig(
         email=str(raw.get("email") or "").strip(),
         out_dir=output_root / "pdfs",
@@ -252,6 +259,11 @@ def build_download_config(paths: AppPaths, raw: dict[str, Any], stop_callback, p
         write_retry_records=as_bool(raw.get("writeRetryRecords")),
         strict_keyword_match=as_bool(raw.get("strictKeywordMatch"), True),
         min_keyword_match_ratio=as_float(raw.get("minKeywordMatchRatio"), 0.75),
+        topic_pack=str(raw.get("topicPack") or "li_sulfur").strip() or None,
+        journal_pack=str(raw.get("journalPack") or "li_sulfur").strip() or None,
+        selected_journals=selected_journals,
+        min_topic_score=as_int(raw.get("minTopicScore"), 6),
+        journal_whitelist_only=as_bool(raw.get("journalWhitelistOnly")),
         loop=as_bool(raw.get("loop")),
         loop_sleep=as_float(raw.get("loopSleep"), 3600),
         max_runtime_hours=optional_float(raw.get("maxRuntimeHours")),

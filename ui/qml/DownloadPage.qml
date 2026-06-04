@@ -6,6 +6,7 @@ Item {
     id: root
     property var sortValues: ["", "relevance_score:desc", "cited_by_count:desc", "publication_date:desc"]
     property var selectedSources: ["openalex"]
+    property var selectedJournals: []
     property bool advancedVisible: false
     property bool restoringSettings: true
     Motion { id: motion }
@@ -16,6 +17,7 @@ Item {
     Timer { id: saveSettingsTimer; interval: 350; onTriggered: downloadController.saveConfig(config()) }
     Component.onCompleted: { restoreSavedConfig(); restoringSettings = false }
     onSelectedSourcesChanged: scheduleSave()
+    onSelectedJournalsChanged: scheduleSave()
     onAdvancedVisibleChanged: scheduleSave()
 
     ColumnLayout {
@@ -62,6 +64,22 @@ Item {
                     }
                     Text { text: i18n.text("max_records"); color: theme.textMuted }
                     TextField { id: maxRecords; Layout.fillWidth: true; placeholderText: i18n.text("optional"); onTextChanged: root.scheduleSave() }
+                    Text { text: "Topic pack"; color: theme.textMuted }
+                    ComboBox {
+                        id: topicPack
+                        Layout.fillWidth: true
+                        model: ["li_sulfur"]
+                        currentIndex: 0
+                        onCurrentIndexChanged: root.scheduleSave()
+                    }
+                    Text { text: "OA journal pack"; color: theme.textMuted }
+                    ComboBox {
+                        id: journalPack
+                        Layout.fillWidth: true
+                        model: ["li_sulfur"]
+                        currentIndex: 0
+                        onCurrentIndexChanged: root.scheduleSave()
+                    }
                 }
                 Text { text: i18n.text("keywords"); color: theme.textMuted }
                 SoftTextArea { id: keywords; Layout.fillWidth: true; Layout.preferredHeight: 54; text: downloadController.defaultKeywords; wrapMode: TextArea.Wrap; onTextChanged: root.scheduleSave() }
@@ -89,6 +107,7 @@ Item {
                     ModernCheckBox { id: downloadPdfs; text: i18n.text("download_pdf"); checked: true; onToggled: root.scheduleSave() }
                     ModernCheckBox { id: resume; text: i18n.text("resume"); checked: true; onToggled: root.scheduleSave() }
                     ModernCheckBox { id: oaOnly; text: i18n.text("oa_only"); onToggled: root.scheduleSave() }
+                    ModernCheckBox { id: journalWhitelistOnly; text: "OA journal whitelist only"; onToggled: root.scheduleSave() }
                     Item { Layout.fillWidth: true }
                 }
                 Item {
@@ -113,6 +132,8 @@ Item {
                             TextField { id: minPdfBytes; Layout.fillWidth: true; text: "1024"; onTextChanged: root.scheduleSave() }
                             Text { text: i18n.text("match_ratio"); color: theme.textMuted }
                             TextField { id: matchRatio; Layout.fillWidth: true; text: "0.75"; onTextChanged: root.scheduleSave() }
+                            Text { text: "Min topic score"; color: theme.textMuted }
+                            TextField { id: minTopicScore; Layout.fillWidth: true; text: "6"; onTextChanged: root.scheduleSave() }
                             Text { text: i18n.text("loop_sleep"); color: theme.textMuted }
                             TextField { id: loopSleep; Layout.fillWidth: true; text: "3600"; onTextChanged: root.scheduleSave() }
                             Text { text: i18n.text("runtime_hours"); color: theme.textMuted }
@@ -158,6 +179,9 @@ Item {
                  pageDelay: pageDelay.text, minPdfBytes: minPdfBytes.text, downloadPdfs: downloadPdfs.checked,
                  retryMissingPdfs: retryMissing.checked, writeRetryRecords: writeRetry.checked,
                  strictKeywordMatch: strictMatch.checked, minKeywordMatchRatio: matchRatio.text,
+                 topicPack: topicPack.currentText, journalPack: journalPack.currentText,
+                 selectedJournals: root.selectedJournals, minTopicScore: minTopicScore.text,
+                 journalWhitelistOnly: journalWhitelistOnly.checked,
                  loop: loopJob.checked, loopSleep: loopSleep.text, maxRuntimeHours: runtimeHours.text,
                  resume: resume.checked, fastForwardExistingPages: fastForward.checked, oaOnly: oaOnly.checked,
                  sources: root.selectedSources, advancedVisible: root.advancedVisible }
@@ -188,6 +212,11 @@ Item {
         writeRetry.checked=savedValue(settings, "writeRetryRecords", false)
         strictMatch.checked=savedValue(settings, "strictKeywordMatch", true)
         matchRatio.text=savedValue(settings, "minKeywordMatchRatio", "0.75")
+        topicPack.currentIndex=0
+        journalPack.currentIndex=0
+        root.selectedJournals=savedValue(settings, "selectedJournals", [])
+        minTopicScore.text=savedValue(settings, "minTopicScore", "6")
+        journalWhitelistOnly.checked=savedValue(settings, "journalWhitelistOnly", false)
         loopJob.checked=savedValue(settings, "loop", false)
         loopSleep.text=savedValue(settings, "loopSleep", "3600")
         runtimeHours.text=savedValue(settings, "maxRuntimeHours", "")
