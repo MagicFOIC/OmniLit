@@ -86,13 +86,22 @@ NON_PDF_EXTENSIONS = (
     ".html",
     ".htm",
 )
+SHADOW_LIBRARY_DOMAINS = (
+    "sci-hub",
+    "scihub",
+    "libgen",
+    "z-library",
+    "zlibrary",
+    "annas-archive",
+    "booksc",
+)
 PDF_CHUNK_SIZE = 1024 * 64
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 @dataclass
 class CrawlConfig:
-    """集中保存下载任务参数。"""
+    """Docstring."""
     email: str = DEFAULT_EMAIL
     out_dir: Path = DEFAULT_OUT_DIR
     meta_path: Path = DEFAULT_META_PATH
@@ -131,23 +140,23 @@ class CrawlConfig:
 
     @property
     def effective_keywords(self) -> list[str]:
-        """返回有效关键词。参数：无。返回值：关键词列表。"""
+        """Docstring."""
         return self.keywords or DEFAULT_KEYWORDS
 
     @property
     def effective_sources(self) -> list[str]:
-        """Return the selected literature sources in stable order."""
+        """Docstring."""
         return DEFAULT_SOURCES if self.sources is None else self.sources
 
 
 def localized(config: CrawlConfig, zh: str, en: str, ru: str = "") -> str:
-    """按任务启动时的语言选择日志。参数：下载配置、中英文。返回值：当前语言文本。"""
+    """Docstring."""
     return (ru or en) if config.language == "ru" else en if config.language == "en" else zh
 
 
 @dataclass
 class CrawlStats:
-    """累计下载任务统计值。"""
+    """Docstring."""
     existing_records: int = 0
     fetched_items: int = 0
     added_records: int = 0
@@ -163,7 +172,7 @@ class CrawlStats:
 
 @dataclass
 class ExistingIndex:
-    """保存已有元数据索引。"""
+    """Docstring."""
     keys: set[str]
     downloaded_keys: set[str]
     retry_pdf_keys: set[str]
@@ -171,7 +180,7 @@ class ExistingIndex:
 
 @dataclass
 class DownloadResult:
-    """描述单个 PDF 下载结果。"""
+    """Docstring."""
     path: str | None
     status: str
     source_url: str | None = None
@@ -180,15 +189,23 @@ class DownloadResult:
 
 
 @dataclass
+class PdfResolution:
+    """Docstring."""
+    url: str | None
+    candidates: list[str]
+    reason: str | None = None
+
+
+@dataclass
 class CrawlStateEntry:
-    """描述单个关键词的断点状态。"""
+    """Docstring."""
     next_cursor: str | None = None
     completed_pages: int = 0
     exhausted: bool = False
 
 
 def configure_logging(level: str) -> None:
-    """功能：配置命令行日志级别。参数：level。返回值：None。"""
+    """Docstring."""
     log_level = getattr(logging, level.upper(), logging.INFO)
     root_logger = logging.getLogger()
     root_logger.setLevel(log_level)
@@ -202,12 +219,12 @@ def configure_logging(level: str) -> None:
 
 
 def stop_requested(config: CrawlConfig) -> bool:
-    """功能：检查下载任务是否收到停止请求。参数：config。返回值：bool。"""
+    """Docstring."""
     return bool(config.stop_callback and config.stop_callback())
 
 
 def emit_progress(config: CrawlConfig, stats: Any, message: str) -> None:
-    """功能：向界面上报下载统计和进度消息。参数：config、stats、message。返回值：None。"""
+    """Docstring."""
     if not config.progress_callback:
         return
     try:
@@ -217,7 +234,7 @@ def emit_progress(config: CrawlConfig, stats: Any, message: str) -> None:
 
 
 def sleep_or_stop(seconds: float, config: CrawlConfig) -> bool:
-    """功能：等待指定秒数，并在停止请求到达时提前返回。参数：seconds、config。返回值：bool。"""
+    """Docstring."""
     if seconds <= 0:
         return stop_requested(config)
 
@@ -230,7 +247,7 @@ def sleep_or_stop(seconds: float, config: CrawlConfig) -> bool:
 
 
 def state_key(keyword: str, config: CrawlConfig, source: str = SOURCE_OPENALEX) -> str:
-    """功能：构造可稳定复用的抓取断点键。参数：keyword、config。返回值：str。"""
+    """Docstring."""
     parts = {
         "keyword": keyword,
         "from_date": config.from_date,
@@ -253,7 +270,7 @@ def state_key(keyword: str, config: CrawlConfig, source: str = SOURCE_OPENALEX) 
 
 
 def load_crawl_state(path: Path) -> dict[str, CrawlStateEntry]:
-    """功能：读取并解析抓取断点状态。参数：path。返回值：dict[str, CrawlStateEntry]。"""
+    """Docstring."""
     if not path.exists():
         return {}
 
@@ -296,7 +313,7 @@ def load_crawl_state(path: Path) -> dict[str, CrawlStateEntry]:
 
 
 def save_crawl_state(path: Path, state: dict[str, CrawlStateEntry]) -> None:
-    """功能：原子写入抓取断点状态。参数：path、state。返回值：None。"""
+    """Docstring."""
     path.parent.mkdir(parents=True, exist_ok=True)
     serializable = {
         key: {
@@ -315,7 +332,7 @@ def save_crawl_state(path: Path, state: dict[str, CrawlStateEntry]) -> None:
 
 
 def append_jsonl_record(fout: TextIO, record: dict[str, Any]) -> None:
-    """Append one complete JSONL record and make it durable before reporting success."""
+    """Docstring."""
     fout.write(json.dumps(record, ensure_ascii=False) + "\n")
     fout.flush()
     try:
@@ -326,7 +343,7 @@ def append_jsonl_record(fout: TextIO, record: dict[str, Any]) -> None:
 
 
 def build_session(email: str) -> requests.Session:
-    """功能：创建带联系邮箱和重试策略的 HTTP 会话。参数：email。返回值：requests.Session。"""
+    """Docstring."""
     retry = Retry(
         total=4,
         connect=4,
@@ -354,7 +371,7 @@ def build_session(email: str) -> requests.Session:
 
 
 def normalize_doi(doi: str | None) -> str | None:
-    """功能：规范化 DOI 文本。参数：doi。返回值：str | None。"""
+    """Docstring."""
     if not doi:
         return None
     doi = doi.strip()
@@ -364,7 +381,7 @@ def normalize_doi(doi: str | None) -> str | None:
 
 
 def record_key(record: dict[str, Any]) -> str | None:
-    """功能：生成文献记录的去重键。参数：record。返回值：str | None。"""
+    """Docstring."""
     doi = normalize_doi(record.get("doi"))
     if doi:
         return f"doi:{doi}"
@@ -382,17 +399,17 @@ def record_key(record: dict[str, Any]) -> str | None:
 
 
 def safe_filename(text: str) -> str:
-    """功能：生成适合文件系统使用的名称。参数：text。返回值：str。"""
+    """Docstring."""
     return hashlib.md5(text.encode("utf-8")).hexdigest() + ".pdf"
 
 
 def path_for_pdf(doi_or_url: str, out_dir: Path) -> Path:
-    """功能：根据 DOI 或地址生成 PDF 保存路径。参数：doi_or_url、out_dir。返回值：Path。"""
+    """Docstring."""
     return out_dir / safe_filename(doi_or_url)
 
 
 def safe_keyword_folder_name(keyword: str) -> str:
-    """Return a readable, collision-resistant folder name for one keyword."""
+    """Docstring."""
     cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", keyword.strip()).strip(" .")
     cleaned = re.sub(r"\s+", " ", cleaned) or "keyword"
     if cleaned.casefold() in {
@@ -410,12 +427,12 @@ def safe_keyword_folder_name(keyword: str) -> str:
 
 
 def keyword_pdf_dir(keyword: str, out_dir: Path) -> Path:
-    """Return the keyword-specific PDF output directory."""
+    """Docstring."""
     return out_dir / safe_keyword_folder_name(keyword)
 
 
 def display_path(path: Path, base_dir: Path) -> str:
-    """功能：生成相对于数据目录的展示路径。参数：path、base_dir。返回值：str。"""
+    """Docstring."""
     try:
         return os.path.relpath(path.resolve(), base_dir.resolve())
     except ValueError:
@@ -423,12 +440,12 @@ def display_path(path: Path, base_dir: Path) -> str:
 
 
 def strip_query(url: str) -> str:
-    """功能：移除地址中的查询参数。参数：url。返回值：str。"""
+    """Docstring."""
     return url.split("?", 1)[0].split("#", 1)[0]
 
 
 def looks_like_pdf_url(url: str | None) -> bool:
-    """功能：判断地址是否像 PDF 下载链接。参数：url。返回值：bool。"""
+    """Docstring."""
     if not url:
         return False
 
@@ -446,8 +463,16 @@ def looks_like_pdf_url(url: str | None) -> bool:
     )
 
 
+def is_shadow_library_url(url: str | None) -> bool:
+    """Docstring."""
+    if not url:
+        return False
+    host = urlparse(url).netloc.casefold()
+    return any(domain in host for domain in SHADOW_LIBRARY_DOMAINS)
+
+
 def candidate_urls_from_landing_url(url: str | None) -> list[str]:
-    """功能：从落地页地址派生候选 PDF 链接。参数：url。返回值：list[str]。"""
+    """Docstring."""
     if not url:
         return []
 
@@ -475,7 +500,7 @@ def candidate_urls_from_landing_url(url: str | None) -> list[str]:
 
 
 def unique_urls(urls: list[str | None]) -> list[str]:
-    """功能：按原始顺序去重地址列表。参数：urls。返回值：list[str]。"""
+    """Docstring."""
     seen: set[str] = set()
     result: list[str] = []
     for url in urls:
@@ -490,7 +515,7 @@ def unique_urls(urls: list[str | None]) -> list[str]:
 
 
 def resolve_record_pdf_paths(record: dict[str, Any], meta_path: Path) -> list[Path]:
-    """功能：解析历史记录中的 PDF 本地路径。参数：record、meta_path。返回值：list[Path]。"""
+    """Docstring."""
     local_pdf_path = record.get("local_pdf_path")
     if not local_pdf_path:
         return []
@@ -533,7 +558,7 @@ RETRYABLE_DOWNLOAD_STATUSES = {
 
 
 def record_needs_pdf_retry(record: dict[str, Any]) -> bool:
-    """功能：判断历史记录是否需要重试 PDF 下载。参数：record。返回值：bool。"""
+    """Docstring."""
     if record.get("local_pdf_path"):
         return False
 
@@ -551,7 +576,7 @@ def record_needs_pdf_retry(record: dict[str, Any]) -> bool:
 
 
 def load_existing_index(meta_path: Path, min_pdf_bytes: int, out_dir: Path) -> ExistingIndex:
-    """功能：载入历史元数据并建立去重索引。参数：meta_path、min_pdf_bytes、out_dir。返回值：ExistingIndex。"""
+    """Docstring."""
     keys: set[str] = set()
     downloaded_keys: set[str] = set()
     retry_pdf_keys: set[str] = set()
@@ -603,7 +628,7 @@ def search_openalex(
     config: CrawlConfig,
     cursor: str = "*",
 ) -> dict[str, Any]:
-    """功能：请求 OpenAlex 单页搜索结果。参数：session、keyword、config、cursor。返回值：dict[str, Any]。"""
+    """Docstring."""
     filters = [
         "type:article",
         f"from_publication_date:{config.from_date}",
@@ -634,7 +659,7 @@ def search_openalex(
 
 
 def clean_markup_text(value: Any) -> str:
-    """Convert API text fields containing lightweight markup to plain text."""
+    """Docstring."""
     return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", str(value or "")))).strip()
 
 
@@ -644,7 +669,7 @@ def search_europe_pmc(
     config: CrawlConfig,
     cursor: str = "*",
 ) -> dict[str, Any]:
-    """Request and normalize one Europe PMC result page."""
+    """Docstring."""
     query = f"({keyword}) AND FIRST_PDATE:[{config.from_date} TO {config.to_date}]"
     if config.oa_only:
         query = f"OPEN_ACCESS:Y AND {query}"
@@ -716,7 +741,7 @@ def search_europe_pmc(
 
 
 def arxiv_query(keyword: str) -> str:
-    """Build an arXiv query from the significant keyword terms."""
+    """Docstring."""
     terms = keyword_terms(keyword)
     return " AND ".join(f"all:{term}" for term in terms) or f'all:"{keyword}"'
 
@@ -727,7 +752,7 @@ def search_arxiv(
     config: CrawlConfig,
     cursor: str = "0",
 ) -> dict[str, Any]:
-    """Request and normalize one arXiv Atom result page."""
+    """Docstring."""
     start = int(cursor or 0)
     response = session.get(
         ARXIV_URL,
@@ -790,14 +815,14 @@ def search_arxiv(
 
 
 def first_value(value: Any) -> Any:
-    """Return the first value from list-like API fields."""
+    """Docstring."""
     if isinstance(value, list):
         return value[0] if value else None
     return value
 
 
 def date_from_parts(value: Any) -> tuple[str | None, int | None]:
-    """Normalize Crossref-style date-parts into YYYY-MM-DD and year."""
+    """Docstring."""
     if not isinstance(value, dict):
         return None, None
     date_time = value.get("date-time")
@@ -818,7 +843,7 @@ def date_from_parts(value: Any) -> tuple[str | None, int | None]:
 
 
 def publication_date_from_crossref(item: dict[str, Any]) -> tuple[str | None, int | None]:
-    """Pick the most useful publication date from Crossref metadata."""
+    """Docstring."""
     for key in ("published-print", "published-online", "published", "issued", "created"):
         publication_date, publication_year = date_from_parts(item.get(key))
         if publication_date:
@@ -827,7 +852,7 @@ def publication_date_from_crossref(item: dict[str, Any]) -> tuple[str | None, in
 
 
 def record_in_config_date_range(publication_date: str | None, publication_year: Any, config: CrawlConfig) -> bool:
-    """Filter normalized records by configured publication date when possible."""
+    """Docstring."""
     if publication_date:
         return config.from_date <= publication_date[:10] <= config.to_date
     if publication_year:
@@ -840,13 +865,13 @@ def record_in_config_date_range(publication_date: str | None, publication_year: 
 
 
 def open_license_from_urls(urls: list[str]) -> bool:
-    """Conservatively infer OA from license URLs only."""
+    """Docstring."""
     indicators = ("creativecommons.org", "openaccess", "open-access", "publicdomain", "cc0")
     return any(any(indicator in url.casefold() for indicator in indicators) for url in urls)
 
 
 def normalize_issn_list(values: Any) -> list[str]:
-    """Normalize ISSN-like API fields while preserving order."""
+    """Docstring."""
     raw_values = values if isinstance(values, list) else [values]
     normalized: list[str] = []
     for value in raw_values:
@@ -861,7 +886,7 @@ def normalize_issn_list(values: Any) -> list[str]:
 
 
 def normalize_crossref_item(item: dict[str, Any]) -> dict[str, Any]:
-    """Normalize one Crossref work into OpenAlex-like metadata."""
+    """Docstring."""
     doi = item.get("DOI")
     source_record_id = normalize_doi(doi) or item.get("URL") or item.get("member")
     publication_date, publication_year = publication_date_from_crossref(item)
@@ -924,7 +949,7 @@ def search_crossref(
     config: CrawlConfig,
     cursor: str = "*",
 ) -> dict[str, Any]:
-    """Request and normalize one Crossref result page."""
+    """Docstring."""
     filters = [
         "type:journal-article",
         f"from-pub-date:{config.from_date}",
@@ -960,7 +985,7 @@ def search_crossref(
 
 
 def doaj_identifier_values(identifiers: list[dict[str, Any]], wanted_types: set[str]) -> list[str]:
-    """Extract ordered identifier values from DOAJ bibjson."""
+    """Docstring."""
     values: list[str] = []
     for identifier in identifiers:
         if not isinstance(identifier, dict):
@@ -973,7 +998,7 @@ def doaj_identifier_values(identifiers: list[dict[str, Any]], wanted_types: set[
 
 
 def doaj_publication_date(bibjson: dict[str, Any]) -> tuple[str | None, int | None]:
-    """Normalize DOAJ year/month fields into publication date and year."""
+    """Docstring."""
     year = bibjson.get("year")
     try:
         publication_year = int(year)
@@ -988,7 +1013,7 @@ def doaj_publication_date(bibjson: dict[str, Any]) -> tuple[str | None, int | No
 
 
 def normalize_doaj_item(item: dict[str, Any]) -> dict[str, Any]:
-    """Normalize one DOAJ article into OpenAlex-like metadata."""
+    """Docstring."""
     bibjson = item.get("bibjson") or {}
     identifiers = bibjson.get("identifier") or []
     doi = first_value(doaj_identifier_values(identifiers, {"doi"}))
@@ -1065,7 +1090,7 @@ def search_doaj(
     config: CrawlConfig,
     cursor: str = "1",
 ) -> dict[str, Any]:
-    """Request and normalize one DOAJ article result page."""
+    """Docstring."""
     try:
         page = max(1, int(cursor or "1"))
     except ValueError:
@@ -1100,7 +1125,7 @@ def search_literature_source(
     config: CrawlConfig,
     cursor: str,
 ) -> dict[str, Any]:
-    """Dispatch a normalized search request to the selected literature source."""
+    """Docstring."""
     if source == SOURCE_OPENALEX:
         return search_openalex(session, keyword, config, cursor)
     if source == SOURCE_EUROPE_PMC:
@@ -1115,12 +1140,12 @@ def search_literature_source(
 
 
 def source_maps() -> list[dict[str, str]]:
-    """Return stable source labels for the Qt selector."""
+    """Docstring."""
     return [{"key": key, "label": label} for key, label in SOURCE_LABELS.items()]
 
 
 def reconstruct_abstract(inv_index: dict[str, list[int]] | None) -> str:
-    """功能：从 OpenAlex 倒排索引还原摘要。参数：inv_index。返回值：str。"""
+    """Docstring."""
     if not inv_index:
         return ""
 
@@ -1134,7 +1159,7 @@ def reconstruct_abstract(inv_index: dict[str, list[int]] | None) -> str:
 
 
 def normalize_search_term(term: str) -> str:
-    """功能：规范化关键词匹配文本。参数：term。返回值：str。"""
+    """Docstring."""
     term = term.casefold()
     aliases = {
         "li": "lithium",
@@ -1151,12 +1176,12 @@ def normalize_search_term(term: str) -> str:
 
 
 def search_terms(text: str) -> list[str]:
-    """功能：拆分可用于匹配的检索词。参数：text。返回值：list[str]。"""
+    """Docstring."""
     return [normalize_search_term(term) for term in re.findall(r"[a-z0-9]+", text.casefold())]
 
 
 def keyword_terms(keyword: str) -> list[str]:
-    """功能：拆分用户关键词。参数：keyword。返回值：list[str]。"""
+    """Docstring."""
     stopwords = {
         "a",
         "an",
@@ -1188,7 +1213,7 @@ def keyword_terms(keyword: str) -> list[str]:
 
 
 def work_search_text(item: dict[str, Any]) -> str:
-    """功能：拼接文献标题和摘要用于关键词匹配。参数：item。返回值：str。"""
+    """Docstring."""
     fields = [
         item.get("title"),
         item.get("display_name"),
@@ -1203,7 +1228,7 @@ def keyword_match_details(
     item: dict[str, Any],
     min_match_ratio: float,
 ) -> tuple[bool, float, list[str]]:
-    """功能：计算关键词匹配详情。参数：keyword、item、min_match_ratio。返回值：tuple[bool, float, list[str]]。"""
+    """Docstring."""
     terms = keyword_terms(keyword)
     if not terms:
         return keyword.casefold() in work_search_text(item).casefold(), 0.0, []
@@ -1223,7 +1248,7 @@ def keyword_match_details(
 
 
 def record_matches_keyword(keyword: str, item: dict[str, Any], config: CrawlConfig) -> bool:
-    """功能：判断文献是否满足关键词匹配阈值。参数：keyword、item、config。返回值：bool。"""
+    """Docstring."""
     if not config.strict_keyword_match:
         return True
     matched, _ratio, _missing = keyword_match_details(keyword, item, config.min_keyword_match_ratio)
@@ -1231,7 +1256,7 @@ def record_matches_keyword(keyword: str, item: dict[str, Any], config: CrawlConf
 
 
 def record_passes_relevance_filters(item: dict[str, Any], config: CrawlConfig) -> tuple[bool, int, str | None]:
-    """Apply domain-specific Li-S relevance filters after keyword matching."""
+    """Docstring."""
     if config.journal_whitelist_only and config.journal_pack:
         if not is_whitelisted_journal(item, selected_journals=config.selected_journals):
             return False, 0, "journal_not_whitelisted"
@@ -1246,7 +1271,7 @@ def record_passes_relevance_filters(item: dict[str, Any], config: CrawlConfig) -
 
 
 def extract_authors(item: dict[str, Any], limit: int = 12) -> list[str]:
-    """功能：提取文献作者列表。参数：item、limit。返回值：list[str]。"""
+    """Docstring."""
     authors: list[str] = []
     for authorship in item.get("authorships") or []:
         author_name = (authorship.get("author") or {}).get("display_name")
@@ -1262,7 +1287,7 @@ def query_unpaywall(
     doi: str | None,
     email: str,
 ) -> dict[str, Any] | None:
-    """功能：查询 Unpaywall 开放获取信息。参数：session、doi、email。返回值：dict[str, Any] | None。"""
+    """Docstring."""
     doi = normalize_doi(doi)
     if not doi:
         return None
@@ -1300,25 +1325,92 @@ def iter_pdf_candidates(
     item: dict[str, Any],
     unpaywall: dict[str, Any] | None,
 ) -> list[str]:
-    """功能：汇总文献和 Unpaywall 提供的 PDF 候选链接。参数：item、unpaywall。返回值：list[str]。"""
+    """Docstring."""
     open_access = item.get("open_access") or {}
     primary_location = item.get("primary_location") or {}
+    is_oa_record = bool(open_access.get("is_oa") or (unpaywall or {}).get("is_oa"))
     urls = [
-        *(unpaywall or {}).get("pdf_urls", []),
-        (unpaywall or {}).get("pdf_url"),
         primary_location.get("pdf_url"),
         open_access.get("oa_url"),
+        (unpaywall or {}).get("pdf_url"),
+        *(unpaywall or {}).get("pdf_urls", []),
+        *item.get("doaj_fulltext_links", []),
     ]
-    for landing_url in (unpaywall or {}).get("landing_urls", []):
-        urls.extend(candidate_urls_from_landing_url(landing_url))
-    urls.extend(candidate_urls_from_landing_url(open_access.get("oa_url")))
-    urls.extend(candidate_urls_from_landing_url(primary_location.get("landing_page_url")))
+    if is_oa_record:
+        for landing_url in (unpaywall or {}).get("landing_urls", []):
+            urls.extend(candidate_urls_from_landing_url(landing_url))
+        urls.extend(candidate_urls_from_landing_url(open_access.get("oa_url")))
+        urls.extend(candidate_urls_from_landing_url(primary_location.get("landing_page_url")))
 
-    return [url for url in unique_urls(urls) if looks_like_pdf_url(url)]
+    return [
+        url
+        for url in unique_urls(urls)
+        if looks_like_pdf_url(url) and not is_shadow_library_url(url)
+    ]
+
+
+def verify_pdf_url_with_head(
+    session: requests.Session,
+    url: str,
+    config: CrawlConfig,
+) -> tuple[bool, str | None]:
+    """Docstring."""
+    del config
+    if is_shadow_library_url(url):
+        return False, "shadow_library"
+    if not looks_like_pdf_url(url):
+        return False, "not_pdf"
+
+    head = getattr(session, "head", None)
+    if not callable(head):
+        return True, None
+
+    try:
+        response = head(url, timeout=(10, 30), allow_redirects=True)
+    except requests.RequestException:
+        return False, "request_failed"
+
+    status_code = getattr(response, "status_code", None)
+    if status_code in {401, 402, 403}:
+        return False, "paywalled"
+    if status_code in {405, 429}:
+        return True, None
+    if status_code and (status_code < 200 or status_code >= 400):
+        return False, "request_failed"
+
+    headers = getattr(response, "headers", {}) or {}
+    content_type = str(headers.get("content-type") or headers.get("Content-Type") or "").casefold()
+    if "application/pdf" in content_type or content_type.startswith("application/octet-stream"):
+        return True, None
+    if any(token in content_type for token in ("text/html", "image/", "application/xml", "text/xml")):
+        return False, "not_pdf"
+    return True, None
+
+
+def resolve_open_access_pdf(
+    record: dict[str, Any],
+    session: requests.Session,
+    config: CrawlConfig,
+) -> PdfResolution:
+    """Docstring."""
+    unpaywall = record.get("unpaywall")
+    candidates = iter_pdf_candidates(record, unpaywall if isinstance(unpaywall, dict) else None)
+    if not candidates:
+        return PdfResolution(None, [], "no_oa_pdf" if config.oa_only else "no_candidate")
+
+    last_reason: str | None = None
+    for url in candidates:
+        ok, reason = verify_pdf_url_with_head(session, url, config)
+        if ok:
+            return PdfResolution(url, candidates, None)
+        last_reason = reason
+        logging.debug("Rejected OA PDF candidate before download: %s | %s", reason, url)
+
+    return PdfResolution(None, candidates, last_reason or "not_pdf")
 
 
 def validate_existing_pdf(path: Path, min_pdf_bytes: int) -> bool:
-    """功能：检查已有 PDF 是否完整可用。参数：path、min_pdf_bytes。返回值：bool。"""
+    """Docstring."""
     try:
         if not path.exists() or path.stat().st_size < min_pdf_bytes:
             return False
@@ -1345,9 +1437,11 @@ def download_pdf(
     config: CrawlConfig,
     out_dir: Path | None = None,
 ) -> DownloadResult:
-    """功能：下载并校验单个 PDF 候选链接。参数：session、pdf_url、doi_or_url、config。返回值：DownloadResult。"""
+    """Docstring."""
     if stop_requested(config):
         return DownloadResult(None, "stopped", pdf_url)
+    if is_shadow_library_url(pdf_url):
+        return DownloadResult(None, "failed", pdf_url, "shadow_library")
 
     target_dir = out_dir or config.out_dir
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -1415,13 +1509,24 @@ def download_first_available_pdf(
     config: CrawlConfig,
     out_dir: Path | None = None,
 ) -> tuple[DownloadResult, list[str]]:
-    """功能：按顺序尝试候选链接直到成功下载 PDF。参数：session、item、unpaywall、doi_or_url、config。返回值：tuple[DownloadResult, list[str]]。"""
-    candidates = iter_pdf_candidates(item, unpaywall)
-    last_result = DownloadResult(None, "no_candidate")
+    """Docstring."""
+    record = dict(item)
+    if unpaywall:
+        record["unpaywall"] = unpaywall
+    resolution = resolve_open_access_pdf(record, session, config)
+    candidates = resolution.candidates
+    if not resolution.url:
+        return DownloadResult(None, "failed", reason=resolution.reason), candidates
 
-    for pdf_url in candidates:
+    start_index = candidates.index(resolution.url)
+    last_result = DownloadResult(None, "failed", reason=resolution.reason)
+    for pdf_url in candidates[start_index:]:
         if stop_requested(config):
             return DownloadResult(None, "stopped"), candidates
+        ok, reason = verify_pdf_url_with_head(session, pdf_url, config)
+        if not ok:
+            last_result = DownloadResult(None, "failed", pdf_url, reason)
+            continue
         result = download_pdf(session, pdf_url, doi_or_url, config, out_dir)
         if result.path:
             return result, candidates
@@ -1432,7 +1537,7 @@ def download_first_available_pdf(
 
 
 def is_open_access(item: dict[str, Any], unpaywall: dict[str, Any] | None) -> bool:
-    """功能：判断文献是否满足开放获取条件。参数：item、unpaywall。返回值：bool。"""
+    """Docstring."""
     return bool(
         (unpaywall and unpaywall.get("is_oa"))
         or (item.get("open_access") or {}).get("is_oa")
@@ -1447,7 +1552,7 @@ def build_record(
     pdf_candidates: list[str],
     meta_path: Path,
 ) -> dict[str, Any]:
-    """功能：组装可持久化的文献元数据记录。参数：keyword、item、unpaywall、download、pdf_candidates、meta_path。返回值：dict[str, Any]。"""
+    """Docstring."""
     doi = normalize_doi(item.get("doi"))
     local_pdf_path = None
     if download.path:
@@ -1477,7 +1582,7 @@ def build_record(
 
 
 def should_stop(stats: CrawlStats, config: CrawlConfig) -> bool:
-    """功能：判断抓取任务是否达到停止条件。参数：stats、config。返回值：bool。"""
+    """Docstring."""
     return (
         stop_requested(config)
         or (config.max_records is not None and stats.added_records >= config.max_records)
@@ -1493,7 +1598,7 @@ def save_keyword_state(
     completed_pages: int,
     exhausted: bool,
 ) -> None:
-    """功能：保存单个关键词的断点状态。参数：keyword、config、crawl_state、next_cursor、completed_pages、exhausted。返回值：None。"""
+    """Docstring."""
     crawl_state[state_key(keyword, config, source)] = CrawlStateEntry(
         next_cursor=next_cursor,
         completed_pages=completed_pages,
@@ -1508,7 +1613,7 @@ def all_results_already_seen(
     existing_index: ExistingIndex,
     retry_missing_pdfs: bool,
 ) -> bool:
-    """功能：判断当前页结果是否全部处理过。参数：results、existing_index、retry_missing_pdfs。返回值：bool。"""
+    """Docstring."""
     if not results:
         return False
 
@@ -1531,7 +1636,7 @@ def crawl_keyword(
     stats: CrawlStats,
     crawl_state: dict[str, CrawlStateEntry],
 ) -> None:
-    """功能：抓取单个关键词并持续保存元数据和断点。参数：session、keyword、existing_index、fout、config、stats、crawl_state。返回值：None。"""
+    """Docstring."""
     key = state_key(keyword, config, source)
     state_entry = crawl_state.get(key, CrawlStateEntry())
     if config.resume and state_entry.exhausted:
@@ -1548,7 +1653,7 @@ def crawl_keyword(
             keyword,
             completed_pages,
         )
-    emit_progress(config, stats, localized(config, f"准备关键词：{keyword}", f"Preparing keyword: {keyword}", f"Подготовка ключевого слова: {keyword}"))
+    emit_progress(config, stats, localized(config, f"Preparing keyword: {keyword}", f"Preparing keyword: {keyword}", f"Preparing keyword: {keyword}"))
 
     for page in range(config.max_pages_per_keyword):
         if should_stop(stats, config):
@@ -1556,12 +1661,12 @@ def crawl_keyword(
 
         page_no = completed_pages + page + 1
         logging.info("Searching: %s | %s | page %s", source, keyword, page_no)
-        emit_progress(config, stats, localized(config, f"正在检索 {keyword} 第 {page_no} 页", f"Searching {keyword} page {page_no}", f"Поиск {keyword}, страница {page_no}"))
+        emit_progress(config, stats, localized(config, f"Searching {keyword} page {page_no}", f"Searching {keyword} page {page_no}", f"Searching {keyword} page {page_no}"))
         data = search_literature_source(session, source, keyword, config, cursor=cursor)
         results = data.get("results", [])
         stats.fetched_items += len(results)
         cursor = data.get("meta", {}).get("next_cursor")
-        emit_progress(config, stats, localized(config, f"已从 {keyword} 第 {page_no} 页获取 {len(results)} 条记录", f"Fetched {len(results)} records from {keyword} page {page_no}", f"Получено записей: {len(results)}; {keyword}, страница {page_no}"))
+        emit_progress(config, stats, localized(config, f"Fetched {len(results)} records from {keyword} page {page_no}", f"Fetched {len(results)} records from {keyword} page {page_no}", f"Fetched {len(results)} records from {keyword} page {page_no}"))
 
         if (
             config.fast_forward_existing_pages
@@ -1569,7 +1674,7 @@ def crawl_keyword(
         ):
             stats.skipped_duplicates += len(results)
             logging.info("Fast-forwarding already indexed page: %s | page %s", keyword, page_no)
-            emit_progress(config, stats, localized(config, f"已跳过已有索引的第 {page_no} 页", f"Fast-forwarded already indexed page {page_no}", f"Пропущена индексированная страница {page_no}"))
+            emit_progress(config, stats, localized(config, f"Fast-forwarded already indexed page {page_no}", f"Fast-forwarded already indexed page {page_no}", f"Fast-forwarded already indexed page {page_no}"))
             save_keyword_state(
                 source,
                 keyword,
@@ -1661,7 +1766,7 @@ def crawl_keyword(
                             stats.downloaded_pdfs += 1
                             existing_index.downloaded_keys.add(key)
                             existing_index.retry_pdf_keys.discard(key)
-                            emit_progress(config, stats, localized(config, f"已下载 PDF：{item.get('title') or item.get('display_name')}", f"Downloaded PDF: {item.get('title') or item.get('display_name')}", f"Загружен PDF: {item.get('title') or item.get('display_name')}"))
+                            emit_progress(config, stats, localized(config, f"Downloaded PDF: {item.get('title') or item.get('display_name')}", f"Downloaded PDF: {item.get('title') or item.get('display_name')}", f"Downloaded PDF: {item.get('title') or item.get('display_name')}"))
                         elif pdf_candidates:
                             stats.failed_pdfs += 1
                             existing_index.retry_pdf_keys.add(key)
@@ -1678,7 +1783,7 @@ def crawl_keyword(
                     record = build_record(keyword, item, unpaywall, download, pdf_candidates, config.meta_path)
                     append_jsonl_record(fout, record)
                     stats.added_records += 1
-                    emit_progress(config, stats, localized(config, f"已保存元数据：{record.get('title') or key}", f"Saved metadata: {record.get('title') or key}", f"Сохранены метаданные: {record.get('title') or key}"))
+                    emit_progress(config, stats, localized(config, f"Saved metadata: {record.get('title') or key}", f"Saved metadata: {record.get('title') or key}", f"Saved metadata: {record.get('title') or key}"))
             except requests.RequestException as exc:
                 stats.request_failures += 1
                 logging.warning("Skipping record after request failure: %s | %s", key, exc)
@@ -1699,7 +1804,7 @@ def crawl_keyword(
 
 
 def load_keywords(keywords_arg: str | None, keywords_file: Path | None) -> list[str] | None:
-    """功能：从命令行或文件载入关键词列表。参数：keywords_arg、keywords_file。返回值：list[str] | None。"""
+    """Docstring."""
     if keywords_file:
         with keywords_file.open("r", encoding="utf-8") as fin:
             keywords = []
@@ -1716,7 +1821,7 @@ def load_keywords(keywords_arg: str | None, keywords_file: Path | None) -> list[
 
 
 def log_summary(stats: CrawlStats) -> None:
-    """功能：输出下载任务汇总统计。参数：stats。返回值：None。"""
+    """Docstring."""
     logging.info(
         "Done. existing=%s fetched=%s added=%s duplicates=%s oa=%s pdfs=%s "
         "pdf_failures=%s retried=%s request_failures=%s no_key=%s irrelevant=%s",
@@ -1735,7 +1840,7 @@ def log_summary(stats: CrawlStats) -> None:
 
 
 def run_once(config: CrawlConfig) -> CrawlStats:
-    """功能：执行一轮完整下载任务。参数：config。返回值：CrawlStats。"""
+    """Docstring."""
     config.out_dir.mkdir(parents=True, exist_ok=True)
     config.meta_path.parent.mkdir(parents=True, exist_ok=True)
     config.state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1751,7 +1856,7 @@ def run_once(config: CrawlConfig) -> CrawlStats:
     )
     if config.resume:
         logging.info("Loaded %s crawl state entries from %s", len(crawl_state), config.state_path)
-    emit_progress(config, stats, localized(config, "已加载现有元数据和断点状态", "Loaded existing metadata and resume state", "Загружены метаданные и состояние продолжения"))
+    emit_progress(config, stats, localized(config, "Loaded existing metadata and resume state", "Loaded existing metadata and resume state", "Loaded existing metadata and resume state"))
 
     session = build_session(config.email)
     try:
@@ -1769,19 +1874,19 @@ def run_once(config: CrawlConfig) -> CrawlStats:
         session.close()
 
     log_summary(stats)
-    emit_progress(config, stats, localized(config, "本轮抓取完成", "Crawl round finished", "Цикл сбора завершён"))
+    emit_progress(config, stats, localized(config, "Crawl round finished", "Crawl round finished", "Crawl round finished"))
     return stats
 
 
 def deadline_from_config(config: CrawlConfig) -> datetime | None:
-    """功能：根据配置计算任务截止时间。参数：config。返回值：datetime | None。"""
+    """Docstring."""
     if config.max_runtime_hours is None:
         return None
     return datetime.now() + timedelta(hours=config.max_runtime_hours)
 
 
 def sleep_until_next_loop(seconds: float, deadline: datetime | None, config: CrawlConfig) -> bool:
-    """功能：等待下一轮任务并响应截止时间和停止请求。参数：seconds、deadline、config。返回值：bool。"""
+    """Docstring."""
     if deadline and datetime.now() >= deadline:
         return False
 
@@ -1798,7 +1903,7 @@ def sleep_until_next_loop(seconds: float, deadline: datetime | None, config: Cra
 
 
 def main(config: CrawlConfig) -> None:
-    """功能：执行命令行入口流程。参数：config。返回值：None。"""
+    """Docstring."""
     configure_logging(config.log_level)
     validate_config(config)
     config.out_dir.mkdir(parents=True, exist_ok=True)
@@ -1822,7 +1927,7 @@ def main(config: CrawlConfig) -> None:
 
 
 def validate_config(config: CrawlConfig) -> None:
-    """功能：校验下载任务配置边界。参数：config。返回值：None。"""
+    """Docstring."""
     config.email = config.email.strip()
     if not config.email:
         raise ValueError("--email is required. Please enter your own contact email.")
