@@ -1,0 +1,16 @@
+{
+  "cancellation_requested": true,
+  "detail": "下载已停止。",
+  "metadata": {
+    "keywords": [
+      "lithium-sulfur batteries",
+      "polysulfides",
+      "lithium-sulfur batteries",
+      "lithium-sulfur batterieslithium-sulfur batteries"
+    ]
+  },
+  "name": "LiteratureDownload",
+  "started_at": "2026-06-04T09:54:02+00:00",
+  "status": "cancelled",
+  "updated_at": "2026-06-04T09:56:45+00:00"
+}

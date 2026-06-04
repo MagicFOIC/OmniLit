@@ -35,6 +35,7 @@ TRANSLATION_FORM_FIELDS = (
     "model",
     "baseUrl",
     "profileIndex",
+    "targetLang",
     "glossaryPaths",
     "batchSize",
     "maxBatchChars",
@@ -391,10 +392,13 @@ class TranslationController(QObject):
         if not translation_dir.is_dir():
             raise ValueError(tr(language, "translation_dir_missing"))
         layout_only = as_bool(raw.get("layoutOnly"))
+        target_lang = str(raw.get("targetLang") or "zh").strip().lower()
+        target_lang = "en" if target_lang == "en" else "zh"
+        suffix = "_Full_Translation" if target_lang == "en" else "_全文翻译"
         api_key = str(raw.get("apiKey") or "").strip() or self._user_key or self._default_key
         if not layout_only and not api_key:
             raise ValueError(tr(language, "api_key_required"))
-        args = argparse.Namespace(input=str(translation_dir), output=str(translation_dir), suffix="_全文翻译", translator="copy" if layout_only else "deepseek", target_lang="zh", api_key=api_key or None, base_url=str(raw.get("baseUrl") or "https://api.deepseek.com").strip(), model=str(raw.get("model") or "deepseek-v4-flash").strip(), temperature=0.15, max_retries=4, disable_json_mode=False, glossary=self._glossary_paths(raw.get("glossaryPaths")), batch_size=as_int(raw.get("batchSize"), 3), max_batch_chars=as_int(raw.get("maxBatchChars"), 3500), render_scale=2.0, whiteout_padding_x=1.4, whiteout_padding_y=0.9, font=None, bold_font=None, translate_references=as_bool(raw.get("translateReferences")), translate_header_footer=as_bool(raw.get("translateHeaderFooter")), summary_page=as_bool(raw.get("summaryPage"), True), max_pages=int(raw["maxPages"]) if str(raw.get("maxPages") or "").strip() else None, no_cache=not as_bool(raw.get("useCache"), True), progress_callback=None, language=language)
+        args = argparse.Namespace(input=str(translation_dir), output=str(translation_dir), suffix=suffix, translator="copy" if layout_only else "deepseek", target_lang=target_lang, api_key=api_key or None, base_url=str(raw.get("baseUrl") or "https://api.deepseek.com").strip(), model=str(raw.get("model") or "deepseek-v4-flash").strip(), temperature=0.15, max_retries=4, disable_json_mode=False, glossary=self._glossary_paths(raw.get("glossaryPaths")), batch_size=as_int(raw.get("batchSize"), 3), max_batch_chars=as_int(raw.get("maxBatchChars"), 3500), render_scale=2.0, whiteout_padding_x=1.4, whiteout_padding_y=0.9, font=None, bold_font=None, translate_references=as_bool(raw.get("translateReferences")), translate_header_footer=as_bool(raw.get("translateHeaderFooter")), summary_page=as_bool(raw.get("summaryPage"), True), max_pages=int(raw["maxPages"]) if str(raw.get("maxPages") or "").strip() else None, no_cache=not as_bool(raw.get("useCache"), True), progress_callback=None, language=language)
         pdfs = core.find_pdf_files(translation_dir)
         if not pdfs:
             raise ValueError(tr(language, "pdf_missing"))
@@ -426,7 +430,7 @@ class TranslationController(QObject):
                 core.tqdm = None
                 args.progress_callback = progress
                 args.preview_callback = lambda text: self.preview.emit(str(text))
-                glossary_text = core.load_glossary(args.glossary)
+                glossary_text = core.load_glossary(args.glossary, target_lang=args.target_lang)
                 translator = core.make_translator(args, glossary_text)
                 writer = LogWriter(lambda text: self.log.emit(text))
                 with contextlib.redirect_stdout(writer), contextlib.redirect_stderr(writer):

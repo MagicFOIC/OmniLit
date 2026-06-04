@@ -200,3 +200,11 @@ https://originchaos.top/omnilit/update_manifest.json
 macOS 打包说明见 [README_macOS.md](README_macOS.md)。
 
 Copyright (c) 2026 magicfoic. All rights reserved.
+
+
+## Bidirectional Literature Translation
+
+- Default direction remains English -> Chinese and keeps the existing `_????` output suffix.
+- Chinese -> English can be selected in the translation page or with `--target-lang en`; its default output suffix is `_Full_Translation`.
+- Glossaries keep the existing `source,target` schema. In Chinese -> English mode, OmniLit applies the same entries in reverse as `target => source`, so user glossaries do not need duplicate reverse CSV files.
+- Existing writable built-in glossary files receive newly added default terms by appending missing rows only. User custom files and user-added rows are not overwritten.

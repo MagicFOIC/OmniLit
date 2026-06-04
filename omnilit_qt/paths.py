@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import csv
 import shutil
 import sys
 from dataclasses import dataclass
@@ -70,6 +71,40 @@ def _legacy_roots(app_root: Path, data_root: Path) -> tuple[Path, ...]:
     return tuple(unique)
 
 
+def _csv_glossary_rows(path: Path) -> list[tuple[str, str]]:
+    rows: list[tuple[str, str]] = []
+    if not path.exists():
+        return rows
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        for row in csv.reader(handle):
+            if len(row) < 2:
+                continue
+            source, target = row[0].strip(), row[1].strip()
+            if not source or not target or source.lower() == "source":
+                continue
+            rows.append((source, target))
+    return rows
+
+
+def _sync_glossary_defaults(resource_glossary: Path, writable_glossary: Path) -> None:
+    if not resource_glossary.exists():
+        return
+    writable_glossary.mkdir(parents=True, exist_ok=True)
+    for source_file in resource_glossary.glob("*.csv"):
+        target_file = writable_glossary / source_file.name
+        if not target_file.exists():
+            shutil.copy2(source_file, target_file)
+            continue
+        existing = set(_csv_glossary_rows(target_file))
+        missing = [row for row in _csv_glossary_rows(source_file) if row not in existing]
+        if not missing:
+            continue
+        with target_file.open("a", encoding="utf-8-sig", newline="") as handle:
+            writer = csv.writer(handle)
+            for source, target in missing:
+                writer.writerow([source, target])
+
+
 @dataclass(frozen=True)
 class AppPaths:
     """集中管理只读资源、可写数据和旧版迁移来源。"""
@@ -115,6 +150,7 @@ class AppPaths:
         resource_glossary = self.resource("Translate", "glossary")
         if resource_glossary != self.glossary_dir and resource_glossary.exists():
             shutil.copytree(resource_glossary, self.glossary_dir, dirs_exist_ok=True, copy_function=_copy_missing)
+            _sync_glossary_defaults(resource_glossary, self.glossary_dir)
 
     def migrate_legacy_data(self) -> list[str]:
         """从旧目录补齐缺失数据。参数：无。返回值：已复制的相对路径列表。"""

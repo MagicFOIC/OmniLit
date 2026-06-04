@@ -215,6 +215,9 @@ TEXTS: dict[str, tuple[str, str]] = {
     "translate_desc": ("面向学术文献的解析、翻译、版式重建、缓存与实时预览。", "Translate academic literature with parsing, layout reconstruction, caching, and live preview."),
     "input_dir": ("输入目录", "Input directory"),
     "translation_dir": ("文献翻译目录", "Literature translation folder"),
+    "translation_direction": ("翻译方向", "Translation direction"),
+    "translate_en_to_zh": ("英文 -> 中文", "English -> Chinese"),
+    "translate_zh_to_en": ("中文 -> 英文", "Chinese -> English"),
     "choose_translation_dir": ("选择文献翻译目录", "Choose literature translation folder"),
     "pending_literature": ("待翻译文献", "Pending literature"),
     "empty_translation_dir": ("当前目录空，请添加文献", "This folder is empty. Please add literature."),
@@ -392,6 +395,9 @@ RU_TEXTS: dict[str, str] = {
     "pdf_missing": "В папке ввода нет PDF-файлов.",
 }
 RU_TEXTS.update({
+    "translation_direction": "Direction",
+    "translate_en_to_zh": "English -> Chinese",
+    "translate_zh_to_en": "Chinese -> English",
     "accent_citation_purple": "Цитатный фиолетовый", "accent_doi_teal": "Бирюзовый DOI",
     "accent_ink_navy": "Чернильно-синий", "accent_nature_green": "Природный зелёный",
     "accent_review_magenta": "Малиновый рецензента", "accent_scholar_blue": "Академический синий",

@@ -164,6 +164,18 @@ Item {
                             }
                         }
                     }
+                    Text { text: i18n.text("translation_direction"); color: theme.textMuted }
+                    ComboBox {
+                        id: direction
+                        Layout.fillWidth: true
+                        textRole: "label"
+                        valueRole: "value"
+                        model: [
+                            { value: "zh", label: i18n.text("translate_en_to_zh") },
+                            { value: "en", label: i18n.text("translate_zh_to_en") }
+                        ]
+                        onActivated: root.scheduleSave()
+                    }
                     Text { text: i18n.text("model_profile"); color: theme.textMuted }
                     ComboBox {
                         id: profile; Layout.fillWidth: true; model: translationController.modelProfiles; textRole: "label"
@@ -351,6 +363,7 @@ Item {
         translationDir.text=settings.translationDir || settings.inputDir || translationController.defaultInputDir
         translationController.refreshPendingDocuments(translationDir.text)
         profile.currentIndex=savedValue(settings, "profileIndex", profile.currentIndex)
+        direction.currentIndex=targetLangIndex(savedValue(settings, "targetLang", "zh"))
         profile.applyProfile()
         modelId.text=savedValue(settings, "model", modelId.text)
         baseUrl.text=savedValue(settings, "baseUrl", baseUrl.text)
@@ -377,9 +390,12 @@ Item {
             flick.contentY=wasAtBottom ? newMaxY : Math.min(oldY, newMaxY)
         })
     }
+    function targetLangIndex(value) {
+        return value === "en" ? 1 : 0
+    }
     function config() {
         return { translationDir:translationDir.text, model:modelId.text, baseUrl:baseUrl.text, apiKey:apiKey.text,
-                 profileIndex:profile.currentIndex, glossaryPaths:selectedGlossaries, batchSize:batchSize.value, maxBatchChars:batchChars.value, maxPages:maxPages.text,
+                 profileIndex:profile.currentIndex, targetLang:direction.currentValue || "zh", glossaryPaths:selectedGlossaries, batchSize:batchSize.value, maxBatchChars:batchChars.value, maxPages:maxPages.text,
                  layoutOnly:layoutOnly.checked, useCache:useCache.checked, summaryPage:summary.checked,
                  translateReferences:references.checked, translateHeaderFooter:headerFooter.checked }
     }

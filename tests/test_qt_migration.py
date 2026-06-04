@@ -516,6 +516,7 @@ class FormPersistenceTests(unittest.TestCase):
                     "outputDir": "translated",
                     "model": "deepseek-test",
                     "profileIndex": 2,
+                    "targetLang": "en",
                     "glossaryPaths": ["glossary.csv"],
                     "apiKey": "sk-must-not-be-saved",
                 }
@@ -529,6 +530,7 @@ class FormPersistenceTests(unittest.TestCase):
             self.assertNotIn("outputDir", restored)
             self.assertEqual(restored["model"], "deepseek-test")
             self.assertEqual(restored["profileIndex"], 2)
+            self.assertEqual(restored["targetLang"], "en")
             self.assertNotIn("apiKey", restored)
             self.assertNotIn("sk-must-not-be-saved", stored_json)
 
@@ -563,6 +565,11 @@ class TranslationDeploymentKeyTests(unittest.TestCase):
                 self.assertEqual(args.api_key, "sk-deploy")
                 self.assertEqual(args.input, str(input_dir))
                 self.assertEqual(args.output, str(input_dir))
+                self.assertEqual(args.target_lang, "zh")
+                self.assertEqual(args.suffix, "_全文翻译")
+                _core, args, _pdfs = controller._build_config({"inputDir": str(input_dir), "targetLang": "en"}, "zh")
+                self.assertEqual(args.target_lang, "en")
+                self.assertEqual(args.suffix, "_Full_Translation")
                 controller._user_key = "sk-user"
                 _core, args, _pdfs = controller._build_config({"inputDir": str(input_dir)}, "zh")
                 self.assertEqual(args.api_key, "sk-user")
@@ -904,6 +911,34 @@ class TranslationCoreTests(unittest.TestCase):
         self.assertGreaterEqual(len(previews), 2)
         self.assertEqual(previews[-1], translations)
         self.assertIn("Preview source paragraph.", core.translation_preview_text([segment], translations))
+
+    def test_glossary_loads_reverse_entries_for_english_target(self) -> None:
+        core = import_resource_module(AppPaths(ROOT, ROOT, ()), "Translate", "literature_translate_core")
+        with tempfile.TemporaryDirectory() as temp:
+            glossary = Path(temp) / "terms.csv"
+            glossary.write_text("source,target\nlarge language model,大语言模型\nAgent,智能体\n", encoding="utf-8")
+
+            zh = core.load_glossary(glossary, target_lang="zh")
+            en = core.load_glossary(glossary, target_lang="en")
+
+        self.assertIn("large language model => 大语言模型", zh)
+        self.assertIn("大语言模型 => large language model", en)
+        self.assertIn("智能体 => Agent", en)
+
+    def test_english_target_quality_guard_does_not_reject_english_output(self) -> None:
+        core = import_resource_module(AppPaths(ROOT, ROOT, ()), "Translate", "literature_translate_core")
+        segment = core.Segment("s1", 0, "body", "本文提出一种新的分析框架，用于评估模型性能。", [], True)
+
+        self.assertFalse(core.translation_needs_retry(segment, "This paper proposes a new analytical framework for evaluating model performance.", "en"))
+        self.assertTrue(core.translation_needs_retry(segment, "本文提出一种新的分析框架，用于评估模型性能。", "en"))
+
+    def test_cli_target_lang_sets_english_prompts_and_suffix(self) -> None:
+        core = import_resource_module(AppPaths(ROOT, ROOT, ()), "Translate", "literature_translate_core")
+        args = core.parse_args(["--target-lang", "en", "--translator", "copy"])
+
+        self.assertEqual(args.target_lang, "en")
+        self.assertEqual(args.suffix, "_Full_Translation")
+        self.assertIn("academic English", core.SYSTEM_PROMPTS[args.target_lang])
 
     def test_layout_only_translation_accepts_uppercase_pdf_suffix(self) -> None:
         core = import_resource_module(AppPaths(ROOT, ROOT, ()), "Translate", "literature_translate_core")

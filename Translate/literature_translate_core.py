@@ -21,7 +21,16 @@ except ImportError:  # pragma: no cover - tqdm is optional at runtime
     tqdm = None
 
 
-PROMPT_VERSION = "academic-pdf-zh-v12-readable-fragment-guard"
+PROMPT_VERSION = "academic-pdf-bidir-v13-readable-fragment-guard"
+
+TARGET_LANG_DEFAULT = "zh"
+TARGET_LANG_CHOICES = {"zh", "en"}
+
+
+def normalize_target_lang(value: object) -> str:
+    """Return the supported target language label used by prompts and cache keys."""
+    text = str(value or TARGET_LANG_DEFAULT).strip().lower()
+    return text if text in TARGET_LANG_CHOICES else TARGET_LANG_DEFAULT
 
 SEGMENT_RULES = (
     "Important segment rules:\n"
@@ -57,6 +66,59 @@ segments:
 
 只返回 JSON 对象。"""
 
+
+
+SEGMENT_RULES_EN = (
+    "Important segment rules:\n"
+    "- Translate each segment independently into polished academic English.\n"
+    "- Do not continue a segment with text from the next segment, next column, next page, or document context.\n"
+    "- If a segment ends mid-sentence, translate only the visible fragment and keep it as an incomplete fragment. Do not use context to complete the sentence, and do not end the translation with sentence-final punctuation if the source fragment is unfinished.\n"
+    "- Preserve equations, variables, citation numbers, figure/table labels, URLs, DOI text, chemical formulas, protected acronyms, database names, software names, and product/model names.\n"
+    "- Translate Chinese paper section headings into common English paper headings, for example: \u6458\u8981 -> Abstract, \u5f15\u8a00 -> Introduction, \u65b9\u6cd5 -> Methods, \u7ed3\u679c -> Results, \u8ba8\u8bba -> Discussion, \u7ed3\u8bba -> Conclusions.\n"
+    "- Do not rewrite existing English proper names, abbreviations, model names, database names, or software names."
+)
+
+SYSTEM_PROMPT_EN = """You are a rigorous Chinese-to-English academic translation specialist.
+Translate Chinese academic papers into natural, concise English suitable for scientific writing.
+Requirements:
+1. Translate only the provided segments. Do not add facts, explanations, or references.
+2. Preserve formulas, variables, units, numbers, DOI/URL text, citation numbers, figure/table labels, model names, database names, software names, chemical formulas, and established English acronyms.
+3. Keep terminology stable and prefer the supplied glossary.
+4. Translate Chinese section headings into standard paper headings such as Abstract, Introduction, Methods, Results, Discussion, and Conclusions.
+5. Keep existing English proper names, abbreviations, model names, software names, database names, and organization names unchanged.
+6. Output fluent academic English. Avoid literal word-for-word Chinese syntax.
+7. Return only a valid JSON object whose keys exactly match the input ids and whose values are the English translations."""
+
+USER_PROMPT_TEMPLATE_EN = """Document context for terminology consistency only; do not translate this context directly:
+{context}
+
+Glossary entries that must be preferred:
+{glossary}
+
+Translate each item in segments by its text field. Keep every id independent and do not merge segments.
+If ends_mid_sentence is true, the source is a visible page/column fragment; the translation must also remain incomplete and must not be completed from context.
+segments:
+{segments_json}
+
+Return only a JSON object."""
+
+SUMMARY_PROMPT_TEMPLATE_EN = """Generate an English document summary page from the paper content below.
+
+Requirements:
+1. Use only the provided content. Do not invent missing information.
+2. Write in concise, scientific English.
+3. If a point is not explicit in the material, state that it is not specified rather than guessing.
+4. Prefer covering: research question, method/framework, data sources and evaluation, main results/findings, application value, and limitations or cautions.
+5. Keep the output suitable for one final PDF page, about 450-750 English words.
+6. Return only a valid JSON object with the fixed key "summary".
+
+Paper content:
+{material}
+"""
+
+SYSTEM_PROMPTS = {"zh": SYSTEM_PROMPT, "en": SYSTEM_PROMPT_EN}
+USER_PROMPT_TEMPLATES = {"zh": USER_PROMPT_TEMPLATE, "en": USER_PROMPT_TEMPLATE_EN}
+SEGMENT_RULES_BY_TARGET = {"zh": SEGMENT_RULES, "en": SEGMENT_RULES_EN}
 
 BUILTIN_GLOSSARY_TEXT = """LLM => LLM
 LLMs => LLMs
@@ -221,6 +283,27 @@ def localized_log(language: str, message: str) -> str:
         ("追加文献概况页", "Appending document summary page"),
         ("已保存 ", "Saved "),
     )
+    russian_replacements = (
+        ("准备处理 ", "Подготовка "),
+        ("读取 PDF 并提取文本段", "Чтение PDF и извлечение фрагментов"),
+        ("已提取", "Извлечено "),
+        (" 段，需要翻译", " фрагментов; требуется перевод: "),
+        ("构建上下文，准备翻译 ", "Подготовка контекста для перевода: "),
+        ("待翻译", "Ожидают перевода: "),
+        (" 段，分为 ", " фрагментов в "),
+        (" 个批次", " пакетах"),
+        ("全部段落命中缓存，无需调用模型", "Все фрагменты загружены из кэша; обращение к модели не требуется"),
+        ("正在翻译批次 ", "Перевод пакета "),
+        ("已完成翻译批次", "Завершён пакет перевода "),
+        ("生成文献核心要点概况", "Создание краткого обзора документа"),
+        ("文献核心要点概况已生成", "Краткий обзор документа готов"),
+        ("加载字体并生成输出 PDF", "Загрузка шрифтов и создание PDF"),
+        ("准备渲染 ", "Подготовка отрисовки "),
+        ("已渲染页面", "Отрисована страница "),
+        ("追加文献概况页", "Добавление страницы итогов"),
+        ("已保存", "Сохранено "),
+    )
+    replacements = russian_replacements if language == "ru" else english_replacements
     text = message
     for source, target in replacements:
         text = text.replace(source, target)
@@ -241,19 +324,57 @@ def glossary_description_for(path: Path | str) -> str:
     return str(meta.get("description") or "自定义术语表")
 
 
+
+def _read_csv_glossary_rows(path: Path) -> list[tuple[str, str]]:
+    rows: list[tuple[str, str]] = []
+    if not path.exists():
+        return rows
+    with path.open("r", encoding="utf-8-sig", newline="") as file:
+        for row in csv.reader(file):
+            if len(row) < 2:
+                continue
+            source, target = row[0].strip(), row[1].strip()
+            if not source or not target or source.lower() in {"source", "english", "en", "term"}:
+                continue
+            rows.append((source, target))
+    return rows
+
+
+def _default_glossary_rows(filename: str) -> list[tuple[str, str]]:
+    resource_path = Path(__file__).resolve().parent / "glossary" / filename
+    rows = _read_csv_glossary_rows(resource_path)
+    if rows:
+        return rows
+    spec = DEFAULT_GLOSSARY_PACK.get(filename, {})
+    return [(str(source), str(target)) for source, target in (spec.get("terms") or [])]
+
+
+def _append_missing_glossary_rows(path: Path, default_rows: Iterable[tuple[str, str]]) -> None:
+    existing = {(source, target) for source, target in _read_csv_glossary_rows(path)}
+    missing = [(source, target) for source, target in default_rows if (source, target) not in existing]
+    if not missing:
+        return
+    with path.open("a", encoding="utf-8-sig", newline="") as file:
+        writer = csv.writer(file)
+        for source, target in missing:
+            writer.writerow([source, target])
+
+
 def ensure_default_glossaries(glossary_dir: Path, overwrite: bool = False) -> list[Path]:
     """功能：将缺失的内置术语表补齐到可写目录。参数：glossary_dir、overwrite。返回值：list[Path]。"""
     glossary_dir.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
     for filename, spec in DEFAULT_GLOSSARY_PACK.items():
         target = glossary_dir / filename
+        default_rows = _default_glossary_rows(filename)
         if target.exists() and not overwrite:
+            _append_missing_glossary_rows(target, default_rows)
             written.append(target)
             continue
         with target.open("w", encoding="utf-8-sig", newline="") as file:
             writer = csv.writer(file)
             writer.writerow(["source", "target"])
-            for source, target_text in (spec.get("terms") or []):
+            for source, target_text in default_rows or (spec.get("terms") or []):
                 writer.writerow([source, target_text])
         written.append(target)
     readme = glossary_dir / "README_术语表使用说明.txt"
@@ -341,12 +462,13 @@ PROTECTED_SHORT_TOKENS = {
 }
 
 
-def merge_builtin_glossary(glossary_text: str | None) -> str:
+def merge_builtin_glossary(glossary_text: str | None, target_lang: str = "zh") -> str:
     """功能：合并内置术语表与用户术语表文本。参数：glossary_text。返回值：str。"""
     user_text = (glossary_text or "").strip()
+    builtin_text = reverse_glossary_text(BUILTIN_GLOSSARY_TEXT) if normalize_target_lang(target_lang) == "en" else BUILTIN_GLOSSARY_TEXT
     if not user_text or user_text == "无":
-        return BUILTIN_GLOSSARY_TEXT
-    return f"{BUILTIN_GLOSSARY_TEXT}\n{user_text}"
+        return builtin_text
+    return f"{builtin_text}\n{user_text}"
 
 
 SUMMARY_PROMPT_TEMPLATE = """请基于下面提供的论文内容，生成一页中文“文献核心要点概况”。
@@ -527,8 +649,8 @@ class OpenAITranslator(BaseTranslator):
             raise RuntimeError("openai is not installed. Install dependencies from environment.yml.") from exc
 
         self.model = model
-        self.target_lang = target_lang
-        self.glossary_text = merge_builtin_glossary(glossary_text)
+        self.target_lang = normalize_target_lang(target_lang)
+        self.glossary_text = merge_builtin_glossary(glossary_text, self.target_lang)
         self.temperature = temperature
         self.max_retries = max_retries
         self.json_mode = json_mode
@@ -564,8 +686,9 @@ class OpenAITranslator(BaseTranslator):
             }
             for segment in segments
         ]
-        user_prompt = USER_PROMPT_TEMPLATE.format(
-            context=f"{SEGMENT_RULES}\n\n{context or 'None'}",
+        segment_rules = SEGMENT_RULES_BY_TARGET[self.target_lang]
+        user_prompt = USER_PROMPT_TEMPLATES[self.target_lang].format(
+            context=f"{segment_rules}\n\n{context or 'None'}",
             glossary=self.glossary_text,
             segments_json=json.dumps(payload, ensure_ascii=False, indent=2),
         )
@@ -589,8 +712,8 @@ class OpenAITranslator(BaseTranslator):
                     "ends_mid_sentence": not sentence_ended(segment.text),
                     "text": segment.text,
                 }]
-                single_prompt = USER_PROMPT_TEMPLATE.format(
-                    context=f"{SEGMENT_RULES}\n\n{context or 'None'}",
+                single_prompt = USER_PROMPT_TEMPLATES[self.target_lang].format(
+                    context=f"{segment_rules}\n\n{context or 'None'}",
                     glossary=self.glossary_text,
                     segments_json=json.dumps(single_payload, ensure_ascii=False, indent=2),
                 )
@@ -599,7 +722,8 @@ class OpenAITranslator(BaseTranslator):
 
     def summarize_document(self, material: str) -> str:
         """功能：生成文档摘要。参数：material。返回值：str。"""
-        prompt = SUMMARY_PROMPT_TEMPLATE.format(material=material)
+        template = SUMMARY_PROMPT_TEMPLATE_EN if self.target_lang == "en" else SUMMARY_PROMPT_TEMPLATE
+        prompt = template.format(material=material)
         content = self._chat(prompt)
         parsed = parse_json_object(content, expected_ids=["summary"])
         return str(parsed.get("summary", "")).strip()
@@ -612,7 +736,7 @@ class OpenAITranslator(BaseTranslator):
                 kwargs = {
                     "model": self.model,
                     "messages": [
-                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "system", "content": SYSTEM_PROMPTS[self.target_lang]},
                         {"role": "user", "content": user_prompt},
                     ],
                     "temperature": self.temperature,
@@ -1234,18 +1358,51 @@ def _load_single_glossary(path: Path) -> list[str]:
     return rows
 
 
-def load_glossary(path: Path | str | Iterable[Path | str] | None) -> str:
+def _glossary_pair(entry: str) -> tuple[str, str] | None:
+    if "=>" not in entry:
+        return None
+    source, target = entry.split("=>", 1)
+    source, target = source.strip(), target.strip()
+    if not source or not target:
+        return None
+    return source, target
+
+
+def _format_glossary_entry(entry: str, target_lang: str) -> str | None:
+    pair = _glossary_pair(entry)
+    if not pair:
+        return None
+    source, target = pair
+    if normalize_target_lang(target_lang) == "en":
+        source, target = target, source
+    return f"{source} => {target}"
+
+
+def reverse_glossary_text(glossary_text: str | None) -> str:
+    rows: list[str] = []
+    seen: set[str] = set()
+    for line in (glossary_text or "").splitlines():
+        formatted = _format_glossary_entry(line, "en")
+        if formatted and formatted not in seen:
+            rows.append(formatted)
+            seen.add(formatted)
+    return "\n".join(rows)
+
+
+def load_glossary(path: Path | str | Iterable[Path | str] | None, target_lang: str = "zh") -> str:
     """功能：读取并合并多个术语表。参数：path。返回值：str。"""
     paths = normalize_glossary_paths(path)
     if not paths:
         return "无"
     rows: list[str] = []
     seen: set[str] = set()
+    normalized_target = normalize_target_lang(target_lang)
     for glossary_path in paths:
         for item in _load_single_glossary(glossary_path):
-            if item not in seen:
-                rows.append(item)
-                seen.add(item)
+            formatted = _format_glossary_entry(item, normalized_target)
+            if formatted and formatted not in seen:
+                rows.append(formatted)
+                seen.add(formatted)
     return "\n".join(rows) if rows else "无"
 
 
@@ -1310,25 +1467,31 @@ def guarded_translation(
     segment: Segment,
     text: str,
     context: str,
+    target_lang: str = "zh",
 ) -> tuple[str, bool]:
     """功能：执行单片段翻译并处理异常译文。参数：translator、segment、text、context。返回值：tuple[str, bool]。"""
-    cleaned = apply_term_guard(segment.text, normalize_translated_text(text)).strip()
+    normalized_target = normalize_target_lang(target_lang)
+    cleaned = normalize_output_text(segment.text, text, normalized_target).strip()
     if translator.provider == "copy":
         return cleaned, True
-    needs_retry = is_suspicious_translation(segment, cleaned) or is_probably_untranslated(segment, cleaned)
+    needs_retry = translation_needs_retry(segment, cleaned, normalized_target)
     if not needs_retry:
         return cleaned, True
 
-    reason = "untranslated English" if is_probably_untranslated(segment, cleaned) else "suspiciously long translation"
+    reason = "untranslated Chinese" if normalized_target == "en" else "untranslated English" if is_probably_untranslated(segment, cleaned) else "suspiciously long translation"
     if translator.provider != "copy":
         print(f"{segment.sid}: {reason}; retrying this segment alone.")
         try:
             retry = translator.translate_many([segment], context="").get(segment.sid, segment.text).strip()
-            retry = apply_term_guard(segment.text, normalize_translated_text(retry))
-            if not is_suspicious_translation(segment, retry) and not is_probably_untranslated(segment, retry):
+            retry = normalize_output_text(segment.text, retry, normalized_target)
+            if not translation_needs_retry(segment, retry, normalized_target):
                 return retry, True
         except Exception as exc:  # noqa: BLE001 - providers vary
             print(f"{segment.sid}: single-segment retry failed: {exc}")
+
+    if normalized_target == "en":
+        print(f"{segment.sid}: {reason} rejected; keeping original text and reporting as uncached.")
+        return segment.text, False
 
     # Keep the model output when it contains some Chinese after term repair; that
     # is usually better than falling all the way back to the English source.  Do
@@ -1399,6 +1562,7 @@ def translate_segments(
 ) -> dict[str, str]:
     """功能：批量翻译片段并复用缓存结果。参数：segments、translator、cache、context、target_lang、glossary_text、batch_size、max_batch_chars、progress_callback。返回值：dict[str, str]。"""
     translations: dict[str, str] = {}
+    normalized_target = normalize_target_lang(target_lang)
     for segment in segments:
         if not segment.translate:
             translations[segment.sid] = segment.text
@@ -1409,8 +1573,8 @@ def translate_segments(
         key = cache.key(translator.provider, translator.model, target_lang, unit.text, glossary_text)
         cached = cache.get(key)
         if cached is not None:
-            cached = apply_term_guard(unit.text, normalize_translated_text(cached)).strip()
-            if is_suspicious_translation(unit, cached) or is_probably_untranslated(unit, cached):
+            cached = normalize_output_text(unit.text, cached, normalized_target).strip()
+            if translation_needs_retry(unit, cached, normalized_target):
                 print(f"{unit.sid}: cached translation is suspicious or untranslated; translating again.")
                 pending.append((unit, members))
             else:
@@ -1439,7 +1603,7 @@ def translate_segments(
         for unit in batch:
             members = members_by_sid[unit.sid]
             text = result.get(unit.sid, unit.text).strip()
-            text, cacheable = guarded_translation(translator, unit, text, context)
+            text, cacheable = guarded_translation(translator, unit, text, context, normalized_target)
             translations[members[0].sid] = text
             for member in members[1:]:
                 translations[member.sid] = ""
@@ -1476,7 +1640,7 @@ def translation_preview_text(
         total_chars += len(piece) + 2
     return "\n\n".join(pieces)
 
-def collect_translation_quality_warnings(segments: list[Segment], translations: dict[str, str]) -> list[str]:
+def collect_translation_quality_warnings(segments: list[Segment], translations: dict[str, str], target_lang: str = "zh") -> list[str]:
     """功能：汇总翻译质量告警。参数：segments、translations。返回值：list[str]。"""
     warnings: list[str] = []
     for segment in segments:
@@ -1485,16 +1649,32 @@ def collect_translation_quality_warnings(segments: list[Segment], translations: 
         translated = translations.get(segment.sid, segment.text)
         if not translated:
             continue
-        if is_probably_untranslated(segment, translated):
+        if normalize_target_lang(target_lang) == "en":
+            untranslated = is_probably_untranslated_to_english(segment, translated)
+            message = "possible untranslated Chinese remains"
+        else:
+            untranslated = is_probably_untranslated(segment, translated)
+            message = "possible untranslated English remains"
+        if untranslated:
             preview = clean_line_text(segment.text)[:90]
-            warnings.append(f"{segment.sid}: possible untranslated English remains: {preview}")
+            warnings.append(f"{segment.sid}: {message}: {preview}")
     return warnings
 
 SUMMARY_MATERIAL_MAX_CHARS = 45000
 
 
-def fallback_document_summary(material: str) -> str:
+def fallback_document_summary(material: str, target_lang: str = "zh") -> str:
     """功能：在摘要模型不可用时生成兜底摘要。参数：material。返回值：str。"""
+    if normalize_target_lang(target_lang) == "en":
+        if not material.strip():
+            return "Document Summary\n\nThere is not enough document material to generate a reliable summary without speculation."
+        preview = normalize_translated_text(material)[:1400]
+        return (
+            "Document Summary\n\n"
+            "The summary model is unavailable or this is a layout-only run. To avoid unsupported claims, "
+            "the following excerpt preserves verifiable translated material from the document:\n\n"
+            f"{preview}"
+        )
     if not material.strip():
         return "文献核心要点概况\n\n用于生成总结的正文材料不足，无法在不杜撰的前提下形成可靠概况。"
     preview = normalize_translated_text(material)[:900]
@@ -1553,6 +1733,8 @@ def generate_document_summary(
     material = build_summary_material(segments, translations)
     if not material.strip():
         return "", "summary skipped: no usable document material"
+    if translator.provider == "copy":
+        return fallback_document_summary(material, target_lang), None
     cache_key = cache.key(translator.provider, translator.model, target_lang, "DOCUMENT_SUMMARY\n" + material, glossary_text)
     cached = cache.get(cache_key)
     if cached:
@@ -1565,7 +1747,7 @@ def generate_document_summary(
         cache.save()
         return summary, None
     except Exception as exc:  # noqa: BLE001 - provider errors vary
-        return fallback_document_summary(material), f"summary fallback: {exc}"
+        return fallback_document_summary(material, target_lang), f"summary fallback: {exc}"
 
 
 def discover_font(user_path: str | None, bold: bool = False) -> Path:
@@ -1686,6 +1868,41 @@ def normalize_translated_text(text: str) -> str:
     text = re.sub(r"(?<=\d)\s*([,，−–—-])\s*(?=\d)", r"\1", text)
     text = re.sub(r"\s+(\d{1,3}(?:[,，−–—-]\d{1,3})+)", r"\1", text)
     return text
+
+
+ZH_HEADING_TO_EN = {
+    "摘要": "Abstract",
+    "关键词": "Keywords",
+    "引言": "Introduction",
+    "绪论": "Introduction",
+    "方法": "Methods",
+    "材料与方法": "Materials and Methods",
+    "实验方法": "Experimental Methods",
+    "结果": "Results",
+    "讨论": "Discussion",
+    "结果与讨论": "Results and Discussion",
+    "结论": "Conclusions",
+    "结语": "Conclusions",
+    "参考文献": "References",
+    "致谢": "Acknowledgments",
+    "补充材料": "Supplementary Materials",
+}
+
+
+def normalize_english_translation_text(source_text: str, text: str) -> str:
+    normalized = normalize_translated_text(text)
+    source_key = re.sub(r"^[\d一二三四五六七八九十、.\s]+", "", clean_line_text(source_text)).strip("：:")
+    target_key = normalized.strip("：:")
+    for key, value in ZH_HEADING_TO_EN.items():
+        if source_key == key or target_key == key:
+            return value
+    return normalized
+
+
+def normalize_output_text(source_text: str, text: str, target_lang: str) -> str:
+    if normalize_target_lang(target_lang) == "en":
+        return normalize_english_translation_text(source_text, text)
+    return apply_term_guard(source_text, normalize_translated_text(text))
 
 
 def _contains_source_term(source_text: str, term: str) -> bool:
@@ -1824,6 +2041,29 @@ def is_probably_untranslated(segment: Segment, translation: str) -> bool:
         if overlap >= max(6, len(set(source_words)) * 0.35):
             return True
     return False
+
+
+def is_probably_untranslated_to_english(segment: Segment, translation: str) -> bool:
+    """Detect Chinese prose that came back essentially untranslated in en mode."""
+    if segment.kind in {"metadata", "reference", "equation"}:
+        return False
+    source_cjk = cjk_char_count(segment.text)
+    if source_cjk < 6:
+        return False
+    target = translation or ""
+    target_cjk = cjk_char_count(target)
+    target_words = ascii_words(target)
+    if target_cjk >= max(6, source_cjk * 0.55) and len(target_words) < 4:
+        return True
+    if normalized_alnum(segment.text) == normalized_alnum(target) and target_cjk >= 6:
+        return True
+    return False
+
+
+def translation_needs_retry(segment: Segment, translation: str, target_lang: str) -> bool:
+    if normalize_target_lang(target_lang) == "en":
+        return is_probably_untranslated_to_english(segment, translation)
+    return is_suspicious_translation(segment, translation) or is_probably_untranslated(segment, translation)
 
 
 BODY_FIRST_LINE_INDENT = "　　"
@@ -2862,7 +3102,7 @@ def wrap_summary_lines(text: str, meter: ReportLabTextMeter, width: float, font_
     paragraphs = [item.strip() for item in re.split(r"\n+", text.strip()) if item.strip()]
     lines: list[str] = []
     for paragraph in paragraphs:
-        if paragraph == "文献核心要点概况":
+        if paragraph in {"文献核心要点概况", "Document Summary"}:
             continue
         wrapped, overflow = wrap_text_for_widths(paragraph, [width] * max_lines, meter, font_size)
         lines.extend(wrapped)
@@ -2879,6 +3119,7 @@ def append_summary_page(
     summary_text: str,
     font_path: Path,
     bold_font_path: Path,
+    target_lang: str = "zh",
 ) -> str | None:
     """功能：在翻译 PDF 末尾追加摘要页。参数：output_pdf、summary_text、font_path、bold_font_path。返回值：str | None。"""
     if not summary_text.strip():
@@ -2929,10 +3170,12 @@ def append_summary_page(
     pdf_canvas.rect(0, 0, page_width, page_height, stroke=0, fill=1)
     pdf_canvas.setFillColorRGB(0.05, 0.08, 0.12)
     pdf_canvas.setFont(bold_font_name, title_size)
-    pdf_canvas.drawString(margin_x, page_height - top, "文献核心要点概况")
+    english_summary = normalize_target_lang(target_lang) == "en"
+    pdf_canvas.drawString(margin_x, page_height - top, "Document Summary" if english_summary else "文献核心要点概况")
     pdf_canvas.setFont(regular_font_name, subtitle_size)
     pdf_canvas.setFillColorRGB(0.35, 0.42, 0.50)
-    pdf_canvas.drawString(margin_x, page_height - top - 18, "本页由系统基于文献正文内容自动生成；引用与判断请以原文和正文译文为准。")
+    subtitle = "Generated from the translated document; verify claims against the source and translation." if english_summary else "本页由系统基于文献正文内容自动生成；引用与判断请以原文和正文译文为准。"
+    pdf_canvas.drawString(margin_x, page_height - top - 18, subtitle)
 
     y = page_height - top - 44
     pdf_canvas.setFont(regular_font_name, body_size)
@@ -3003,27 +3246,6 @@ def find_pdf_files(input_dir: Path) -> list[Path]:
         (path for path in input_dir.iterdir() if path.is_file() and path.suffix.lower() == ".pdf"),
         key=lambda path: path.name.lower(),
     )
-    russian_replacements = (
-        ("准备处理 ", "Подготовка "),
-        ("读取 PDF 并提取文本段", "Чтение PDF и извлечение фрагментов"),
-        ("已提取", "Извлечено "),
-        (" 段，需要翻译", " фрагментов; требуется перевод: "),
-        ("构建上下文，准备翻译 ", "Подготовка контекста для перевода: "),
-        ("待翻译", "Ожидают перевода: "),
-        (" 段，分为 ", " фрагментов в "),
-        (" 个批次", " пакетах"),
-        ("全部段落命中缓存，无需调用模型", "Все фрагменты загружены из кэша; обращение к модели не требуется"),
-        ("正在翻译批次 ", "Перевод пакета "),
-        ("已完成翻译批次", "Завершён пакет перевода "),
-        ("生成文献核心要点概况", "Создание краткого обзора документа"),
-        ("文献核心要点概况已生成", "Краткий обзор документа готов"),
-        ("加载字体并生成输出 PDF", "Загрузка шрифтов и создание PDF"),
-        ("准备渲染 ", "Подготовка отрисовки "),
-        ("已渲染页面", "Отрисована страница "),
-        ("追加文献概况页", "Добавление страницы итогов"),
-        ("已保存", "Сохранено "),
-    )
-    replacements = russian_replacements if language == "ru" else english_replacements
 
 
 def translate_pdf(input_pdf: Path, args: argparse.Namespace, translator: BaseTranslator, glossary_text: str) -> None:
@@ -3031,6 +3253,7 @@ def translate_pdf(input_pdf: Path, args: argparse.Namespace, translator: BaseTra
     progress_callback: ProgressCallback | None = getattr(args, "progress_callback", None)
     preview_callback: Callable[[str], None] | None = getattr(args, "preview_callback", None)
     language = str(getattr(args, "language", "zh") or "zh")
+    args.target_lang = normalize_target_lang(getattr(args, "target_lang", "zh"))
 
     def notify(stage: str, message: str, current: int | None = None, total: int | None = None) -> None:
         """功能：向调用方上报单文档翻译进度。参数：stage、message、current、total。返回值：None。"""
@@ -3110,7 +3333,7 @@ def translate_pdf(input_pdf: Path, args: argparse.Namespace, translator: BaseTra
     notify("render", "加载字体并生成输出 PDF", 0, 1)
     font_path = discover_font(args.font, bold=False)
     bold_font_path = discover_font(args.bold_font, bold=True)
-    warnings = [] if translator.provider == "copy" else collect_translation_quality_warnings(segments, translations)
+    warnings = [] if translator.provider == "copy" else collect_translation_quality_warnings(segments, translations, args.target_lang)
     for warning in warnings:
         print(warning)
     warnings.extend(render_translated_pdf(
@@ -3128,7 +3351,7 @@ def translate_pdf(input_pdf: Path, args: argparse.Namespace, translator: BaseTra
     ))
     if summary_text:
         notify("render", "追加文献概况页", 1, 1)
-        page_warning = append_summary_page(output_pdf, summary_text, font_path, bold_font_path)
+        page_warning = append_summary_page(output_pdf, summary_text, font_path, bold_font_path, args.target_lang)
         if page_warning:
             warnings.append(page_warning)
 
@@ -3161,9 +3384,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument("--input", default="pdf", help="Input folder containing PDF files.")
     parser.add_argument("--output", help="Parent folder for per-document translation output. Defaults to the input folder.")
-    parser.add_argument("--suffix", default="_全文翻译", help="Suffix appended to translated PDF filenames.")
+    parser.add_argument("--suffix", default=None, help="Suffix appended to translated PDF filenames.")
     parser.add_argument("--translator", choices=["deepseek", "copy"], default="deepseek", help="Use an OpenAI-compatible API for translation; copy is only for layout testing.")
-    parser.add_argument("--target-lang", default="zh", help="Target language/cache label.")
+    parser.add_argument("--target-lang", choices=sorted(TARGET_LANG_CHOICES), default=TARGET_LANG_DEFAULT, help="Target language/cache label.")
     parser.add_argument(
         "--api-key",
         default=os.getenv("DEEPSEEK_API_KEY")
@@ -3192,7 +3415,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--no-summary-page", dest="summary_page", action="store_false", help="Do not append the final document-summary page.")
     parser.set_defaults(summary_page=True)
     parser.add_argument("--no-cache", action="store_true")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    args.target_lang = normalize_target_lang(args.target_lang)
+    if args.suffix is None:
+        args.suffix = "_Full_Translation" if args.target_lang == "en" else "_全文翻译"
+    return args
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -3203,7 +3430,7 @@ def main(argv: list[str] | None = None) -> int:
     args.output = str(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     try:
-        glossary_text = load_glossary(args.glossary)
+        glossary_text = load_glossary(args.glossary, target_lang=args.target_lang)
         translator = make_translator(args, glossary_text)
     except (FileNotFoundError, RuntimeError, ValueError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
