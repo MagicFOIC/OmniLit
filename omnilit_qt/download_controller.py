@@ -1,4 +1,5 @@
 from __future__ import annotations
+from datetime import date
 
 import threading
 from pathlib import Path
@@ -236,10 +237,10 @@ class DownloadController(QObject):
         """返回默认开始日期。参数：无。返回值：ISO 日期。"""
         return str(import_resource_module(self.paths, "Download", "literature_download_core").DEFAULT_FROM_DATE)
 
-    @Property(str, constant=True)
+    @Property(str, notify=changed)
     def defaultToDate(self) -> str:
-        """返回默认结束日期。参数：无。返回值：ISO 日期。"""
-        return str(import_resource_module(self.paths, "Download", "literature_download_core").DEFAULT_TO_DATE)
+        """返回默认结束日期：当前本地日期。"""
+        return date.today().isoformat()
 
     @Slot(str, result=str)
     def chooseDirectory(self, initial_dir: str) -> str:

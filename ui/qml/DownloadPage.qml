@@ -11,6 +11,7 @@ Item {
     property var selectedJournals: []
     property bool advancedVisible: false
     property bool restoringSettings: true
+    property bool toDateAuto: true
     readonly property int logPaneMinimumHeight: metrics.compact ? (advancedVisible ? 78 : 105) : (advancedVisible ? 96 : 130)
     readonly property int statsPaneHeight: metrics.compact ? 64 : 72
     readonly property real downloadFormPaneHeight: Math.max(metrics.compact ? 320 : 380, form.implicitHeight + metrics.cardPadding * 2)
@@ -70,7 +71,18 @@ Item {
                     Text { text: i18n.text("from_date"); color: theme.textMuted }
                     DatePickerField { id: fromDate; text: downloadController.defaultFromDate; maxDateText: toDate.text; onTextChanged: root.scheduleSave() }
                     Text { text: i18n.text("to_date"); color: theme.textMuted }
-                    DatePickerField { id: toDate; text: downloadController.defaultToDate; minDateText: fromDate.text; onTextChanged: root.scheduleSave() }
+                    DatePickerField {
+                        id: toDate
+                        text: downloadController.defaultToDate
+                        minDateText: fromDate.text
+                        maxDateText: downloadController.defaultToDate
+
+                        onTextChanged: {
+                            if(!root.restoringSettings)
+                                root.toDateAuto = false
+                            root.scheduleSave()
+                        }
+                    }
                     Text { text: i18n.text("sort"); color: theme.textMuted }
                     ComboBox {
                         id: sortMode; Layout.fillWidth: true
@@ -206,7 +218,17 @@ Item {
                     PillButton { text: downloadController.running ? i18n.text("running") : i18n.text("start_download"); primary: true; busy: downloadController.running; onClicked: downloadController.start(config()) }
                     PillButton { text: i18n.text("stop"); enabled: downloadController.running; onClicked: downloadController.stop() }
                 }
-                StatusBanner { Layout.fillWidth: true; text: downloadController.statusText; busy: downloadController.running }
+                    StatusBanner {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: implicitHeight
+                        Layout.minimumHeight: implicitHeight
+                        Layout.maximumHeight: implicitHeight
+
+                        reserveSpace: true
+                        maximumLines: 2
+                        text: downloadController.statusText
+                        busy: downloadController.running
+                    }
                 }
             }
         }
@@ -246,7 +268,8 @@ Item {
 
     // 灏嗙晫闈㈠瓧娈甸泦涓槧灏勫埌涓嬭浇鏍稿績锛岄伩鍏嶉珮绾ч€夐」鍦ㄨ縼绉诲悗闈欓粯涓㈠け銆?
     function config() {
-        return { email: email.text, outputDir: outputDir.text, fromDate: fromDate.text, toDate: toDate.text,
+        return { email: email.text, outputDir: outputDir.text, fromDate: fromDate.text,
+                 toDate: normalizedToDate(toDate.text), toDateAuto: root.toDateAuto,
                  keywords: keywords.text, sort: root.sortValues[sortMode.currentIndex], maxPages: pages.value,
                  perPage: perPage.value, maxRecords: maxRecords.text, requestDelay: requestDelay.text,
                  pageDelay: pageDelay.text, minPdfBytes: minPdfBytes.text, downloadPdfs: downloadPdfs.checked,
@@ -261,6 +284,38 @@ Item {
     }
     function savedValue(settings, key, fallback) {
         return settings[key] !== undefined && settings[key] !== null ? settings[key] : fallback
+    }
+    function isIsoDate(value) {
+        return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ""))
+    }
+
+    function normalizedToDate(value) {
+        let today = downloadController.defaultToDate
+        let text = String(value || "").trim()
+
+        if(!isIsoDate(text))
+            return today
+
+        if(text > today)
+            return today
+
+        return text
+    }
+
+    function restoredToDate(settings) {
+        let today = downloadController.defaultToDate
+        let savedAuto = savedValue(settings, "toDateAuto", true)
+        let savedToDate = String(savedValue(settings, "toDate", "") || "").trim()
+
+        // 旧配置没有 toDateAuto，默认走自动结束日期。
+        // 这样可以修复“旧日期一直卡住”的问题。
+        if(savedAuto || !isIsoDate(savedToDate) || savedToDate > today) {
+            root.toDateAuto = true
+            return today
+        }
+
+        root.toDateAuto = false
+        return savedToDate
     }
     function topicScoreIndex(value) {
         let numericValue = Number(value)
@@ -283,7 +338,7 @@ Item {
         email.text=savedValue(settings, "email", "")
         outputDir.text=savedValue(settings, "outputDir", downloadController.defaultOutputDir)
         fromDate.text=savedValue(settings, "fromDate", downloadController.defaultFromDate)
-        toDate.text=savedValue(settings, "toDate", downloadController.defaultToDate)
+        toDate.text=restoredToDate(settings)
         keywords.text=savedValue(settings, "keywords", downloadController.defaultKeywords)
         let sortIndex=root.sortValues.indexOf(savedValue(settings, "sort", "relevance_score:desc"))
         sortMode.currentIndex=sortIndex >= 0 ? sortIndex : 1

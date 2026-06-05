@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .paths import AppPaths
+from datetime import date
 
 
 PASSWORD_SCHEME = "pbkdf2_sha256"

@@ -195,7 +195,7 @@ TEXTS: dict[str, tuple[str, str]] = {
     "from_date": ("起始日期", "From date"),
     "to_date": ("结束日期", "To date"),
     "keywords": ("关键词", "Keywords"),
-    "pages": ("页数", "Pages"),
+    "pages": ("查询页数", "Pages"),
     "per_page": ("每页数量", "Per page"),
     "download_pdf": ("下载 PDF", "Download PDFs"),
     "resume": ("断点续跑", "Resume"),
