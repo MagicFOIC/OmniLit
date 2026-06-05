@@ -4,12 +4,14 @@ import base64
 import csv
 import json
 import os
+import shutil
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 
 DEFAULT_KEY_FORMAT = "omnilit-default-api-key-v1"
 DEFAULT_KEY_KDF_ITERATIONS = 260_000
+DEFAULT_KEY_AUTO_PASSWORD = "omnilit-bundled-deepseek-key-v1"
 DEFAULT_KEY_ENV_NAMES = ("OMNILIT_DEFAULT_DEEPSEEK_API_KEY", "OMNILIT_DEFAULT_API_KEY")
 DEFAULT_KEY_FILE_NAME = "APIKey.enc"
 USER_KEY_FILE_NAME = "UserAPIKey.enc"
@@ -143,6 +145,16 @@ def load_default_key(translate_dir: Path, resource_translate_dir: Path, password
         if value:
             return value, f"Environment variable {env_name}"
     return "", ""
+
+
+def load_bundled_default_key(translate_dir: Path, resource_translate_dir: Path) -> tuple[str, str]:
+    """Load the bundled deployment key without asking the user for a password."""
+    target = translate_dir / DEFAULT_KEY_FILE_NAME
+    source = resource_translate_dir / DEFAULT_KEY_FILE_NAME
+    if not target.exists() and source.exists() and source.resolve() != target.resolve():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+    return load_default_key(translate_dir, resource_translate_dir, DEFAULT_KEY_AUTO_PASSWORD)
 
 
 def glossary_catalog(glossary_dir: Path) -> list[dict[str, object]]:

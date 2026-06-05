@@ -93,6 +93,8 @@ def run() -> int:
         app.setWindowIcon(QIcon(str(icon_path)))
 
     engine = QQmlApplicationEngine()
+    qml_warnings: list[str] = []
+    engine.warnings.connect(lambda warnings: qml_warnings.extend(str(item.toString()) for item in warnings))
     for name, value in {
         "appController": shell,
         "authController": auth,
@@ -110,6 +112,8 @@ def run() -> int:
         return 1
     engine.load(QUrl.fromLocalFile(str(qml_path)))
     if not engine.rootObjects():
+        for warning in qml_warnings:
+            print(warning, file=sys.stderr)
         return 1
     window = engine.rootObjects()[0]
     _center_window_on_cursor_screen(app, window)

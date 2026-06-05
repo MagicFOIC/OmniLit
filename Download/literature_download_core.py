@@ -170,6 +170,11 @@ class CrawlStats:
     failed_pdfs: int = 0
     retried_existing_records: int = 0
     request_failures: int = 0
+    active_source_key: str = ""
+    active_source_label: str = ""
+    active_keyword: str = ""
+    active_stage: str = ""
+    active_detail: str = ""
 
 
 @dataclass
@@ -233,6 +238,26 @@ def emit_progress(config: CrawlConfig, stats: Any, message: str) -> None:
         config.progress_callback(stats, message)
     except Exception:
         logging.exception("Progress callback failed.")
+
+
+def emit_source_progress(
+    config: CrawlConfig,
+    stats: CrawlStats,
+    source: str,
+    keyword: str,
+    stage: str,
+    zh_message: str,
+    en_message: str,
+    ru_message: str = "",
+    detail: str = "",
+) -> None:
+    """Emit progress with structured source metadata for the UI."""
+    stats.active_source_key = source
+    stats.active_source_label = SOURCE_LABELS.get(source, source)
+    stats.active_keyword = keyword
+    stats.active_stage = stage
+    stats.active_detail = detail
+    emit_progress(config, stats, localized(config, zh_message, en_message, ru_message))
 
 
 def sleep_or_stop(seconds: float, config: CrawlConfig) -> bool:
@@ -347,12 +372,12 @@ def append_jsonl_record(fout: TextIO, record: dict[str, Any]) -> None:
 def build_session(email: str) -> requests.Session:
     """Docstring."""
     retry = Retry(
-        total=4,
-        connect=4,
-        read=2,
-        backoff_factor=1.5,
+        total=3,
+        connect=3,
+        read=1,
+        backoff_factor=0.8,
         status_forcelist=(429, 500, 502, 503, 504),
-        allowed_methods=("GET",),
+        allowed_methods=("GET", "HEAD"),
         respect_retry_after_header=True,
     )
     adapter = HTTPAdapter(max_retries=retry, pool_connections=10, pool_maxsize=10)
@@ -1407,7 +1432,9 @@ def verify_pdf_url_with_head(
     try:
         response = head(url, timeout=(10, 30), allow_redirects=True)
     except requests.RequestException:
-        return False, "request_failed"
+        # Some publishers reject HEAD while serving the PDF through GET. Let the
+        # streamed download validate content type, bytes, and PDF structure.
+        return True, "head_unavailable"
 
     status_code = getattr(response, "status_code", None)
     if status_code in {401, 402, 403}:
@@ -1562,10 +1589,11 @@ def download_first_available_pdf(
     for pdf_url in candidates[start_index:]:
         if stop_requested(config):
             return DownloadResult(None, "stopped"), candidates
-        ok, reason = verify_pdf_url_with_head(session, pdf_url, config)
-        if not ok:
-            last_result = DownloadResult(None, "failed", pdf_url, reason)
-            continue
+        if pdf_url != resolution.url:
+            ok, reason = verify_pdf_url_with_head(session, pdf_url, config)
+            if not ok:
+                last_result = DownloadResult(None, "failed", pdf_url, reason)
+                continue
         result = download_pdf(session, pdf_url, doi_or_url, config, out_dir)
         if result.path:
             return result, candidates
@@ -1681,6 +1709,16 @@ def crawl_keyword(
     state_entry = crawl_state.get(key, CrawlStateEntry())
     if config.resume and state_entry.exhausted:
         logging.info("Skipping exhausted source and keyword: %s | %s", source, keyword)
+        emit_source_progress(
+            config,
+            stats,
+            source,
+            keyword,
+            "skipped",
+            f"{SOURCE_LABELS.get(source, source)} already exhausted for keyword: {keyword}",
+            f"{SOURCE_LABELS.get(source, source)} already exhausted for keyword: {keyword}",
+            f"{SOURCE_LABELS.get(source, source)} already exhausted for keyword: {keyword}",
+        )
         return
 
     initial_cursor = "0" if source == SOURCE_ARXIV else "1" if source == SOURCE_DOAJ else "*"
@@ -1693,7 +1731,17 @@ def crawl_keyword(
             keyword,
             completed_pages,
         )
-    emit_progress(config, stats, localized(config, f"Preparing keyword: {keyword}", f"Preparing keyword: {keyword}", f"Preparing keyword: {keyword}"))
+    source_label = SOURCE_LABELS.get(source, source)
+    emit_source_progress(
+        config,
+        stats,
+        source,
+        keyword,
+        "preparing",
+        f"Preparing {source_label}: {keyword}",
+        f"Preparing {source_label}: {keyword}",
+        f"Preparing {source_label}: {keyword}",
+    )
 
     for page in range(config.max_pages_per_keyword):
         if should_stop(stats, config):
@@ -1701,14 +1749,34 @@ def crawl_keyword(
 
         page_no = completed_pages + page + 1
         logging.info("Searching: %s | %s | page %s", source, keyword, page_no)
-        emit_progress(config, stats, localized(config, f"Searching {keyword} page {page_no}", f"Searching {keyword} page {page_no}", f"Searching {keyword} page {page_no}"))
+        emit_source_progress(
+            config,
+            stats,
+            source,
+            keyword,
+            "searching",
+            f"Searching {source_label}: {keyword} page {page_no}",
+            f"Searching {source_label}: {keyword} page {page_no}",
+            f"Searching {source_label}: {keyword} page {page_no}",
+            detail=f"page {page_no}",
+        )
         data = search_literature_source(session, source, keyword, config, cursor=cursor)
         results = data.get("results", [])
         stats.fetched_items += len(results)
         cursor = data.get("meta", {}).get("next_cursor")
         journal_pack = resolve_journal_pack(config, results)
         results = sort_records_by_resolved_packs(results, topic_pack, journal_pack)
-        emit_progress(config, stats, localized(config, f"Fetched {len(results)} records from {keyword} page {page_no}", f"Fetched {len(results)} records from {keyword} page {page_no}", f"Fetched {len(results)} records from {keyword} page {page_no}"))
+        emit_source_progress(
+            config,
+            stats,
+            source,
+            keyword,
+            "fetched",
+            f"Fetched {len(results)} records from {source_label}: {keyword} page {page_no}",
+            f"Fetched {len(results)} records from {source_label}: {keyword} page {page_no}",
+            f"Fetched {len(results)} records from {source_label}: {keyword} page {page_no}",
+            detail=f"{len(results)} records",
+        )
 
         if (
             config.fast_forward_existing_pages
@@ -1716,7 +1784,17 @@ def crawl_keyword(
         ):
             stats.skipped_duplicates += len(results)
             logging.info("Fast-forwarding already indexed page: %s | page %s", keyword, page_no)
-            emit_progress(config, stats, localized(config, f"Fast-forwarded already indexed page {page_no}", f"Fast-forwarded already indexed page {page_no}", f"Fast-forwarded already indexed page {page_no}"))
+            emit_source_progress(
+                config,
+                stats,
+                source,
+                keyword,
+                "fast_forward",
+                f"Fast-forwarded {source_label} already indexed page {page_no}",
+                f"Fast-forwarded {source_label} already indexed page {page_no}",
+                f"Fast-forwarded {source_label} already indexed page {page_no}",
+                detail=f"page {page_no}",
+            )
             save_keyword_state(
                 source,
                 keyword,
@@ -1801,6 +1879,17 @@ def crawl_keyword(
                     stats.open_access_records += 1
                     if config.download_pdfs:
                         doi_or_url = doi or item.get("id") or item.get("title") or ""
+                        emit_source_progress(
+                            config,
+                            stats,
+                            source,
+                            keyword,
+                            "downloading_pdf",
+                            f"Resolving and downloading PDF from {source_label}: {item.get('title') or item.get('display_name') or key}",
+                            f"Resolving and downloading PDF from {source_label}: {item.get('title') or item.get('display_name') or key}",
+                            f"Resolving and downloading PDF from {source_label}: {item.get('title') or item.get('display_name') or key}",
+                            detail=str(item.get("title") or item.get("display_name") or key),
+                        )
                         download, pdf_candidates = download_first_available_pdf(
                             session,
                             item,
@@ -1813,10 +1902,31 @@ def crawl_keyword(
                             stats.downloaded_pdfs += 1
                             existing_index.downloaded_keys.add(key)
                             existing_index.retry_pdf_keys.discard(key)
-                            emit_progress(config, stats, localized(config, f"Downloaded PDF: {item.get('title') or item.get('display_name')}", f"Downloaded PDF: {item.get('title') or item.get('display_name')}", f"Downloaded PDF: {item.get('title') or item.get('display_name')}"))
+                            emit_source_progress(
+                                config,
+                                stats,
+                                source,
+                                keyword,
+                                "downloaded_pdf",
+                                f"Downloaded PDF from {source_label}: {item.get('title') or item.get('display_name')}",
+                                f"Downloaded PDF from {source_label}: {item.get('title') or item.get('display_name')}",
+                                f"Downloaded PDF from {source_label}: {item.get('title') or item.get('display_name')}",
+                                detail=str(download.source_url or ""),
+                            )
                         elif pdf_candidates:
                             stats.failed_pdfs += 1
                             existing_index.retry_pdf_keys.add(key)
+                            emit_source_progress(
+                                config,
+                                stats,
+                                source,
+                                keyword,
+                                "pdf_failed",
+                                f"PDF download failed from {source_label}: {download.status} {download.reason or ''}".strip(),
+                                f"PDF download failed from {source_label}: {download.status} {download.reason or ''}".strip(),
+                                f"PDF download failed from {source_label}: {download.status} {download.reason or ''}".strip(),
+                                detail=download.reason or download.status,
+                            )
                     else:
                         pdf_candidates = iter_pdf_candidates(item, unpaywall)
                         download = DownloadResult(None, "download_disabled")
@@ -1830,12 +1940,44 @@ def crawl_keyword(
                     record = build_record(keyword, item, unpaywall, download, pdf_candidates, config.meta_path)
                     append_jsonl_record(fout, record)
                     stats.added_records += 1
-                    emit_progress(config, stats, localized(config, f"Saved metadata: {record.get('title') or key}", f"Saved metadata: {record.get('title') or key}", f"Saved metadata: {record.get('title') or key}"))
+                    emit_source_progress(
+                        config,
+                        stats,
+                        source,
+                        keyword,
+                        "saved_metadata",
+                        f"Saved metadata from {source_label}: {record.get('title') or key}",
+                        f"Saved metadata from {source_label}: {record.get('title') or key}",
+                        f"Saved metadata from {source_label}: {record.get('title') or key}",
+                        detail=str(record.get("title") or key),
+                    )
             except requests.RequestException as exc:
                 stats.request_failures += 1
                 logging.warning("Skipping record after request failure: %s | %s", key, exc)
+                emit_source_progress(
+                    config,
+                    stats,
+                    source,
+                    keyword,
+                    "request_failed",
+                    f"Request failed in {source_label}; continuing with next record: {exc}",
+                    f"Request failed in {source_label}; continuing with next record: {exc}",
+                    f"Request failed in {source_label}; continuing with next record: {exc}",
+                    detail=str(exc),
+                )
             except Exception:
                 logging.exception("Skipping record after unexpected failure: %s", key)
+                emit_source_progress(
+                    config,
+                    stats,
+                    source,
+                    keyword,
+                    "record_failed",
+                    f"Unexpected record error in {source_label}; continuing with next record.",
+                    f"Unexpected record error in {source_label}; continuing with next record.",
+                    f"Unexpected record error in {source_label}; continuing with next record.",
+                    detail=str(key),
+                )
 
             if sleep_or_stop(config.request_delay, config):
                 return
@@ -1917,6 +2059,17 @@ def run_once(config: CrawlConfig) -> CrawlStats:
                     except requests.RequestException as exc:
                         stats.request_failures += 1
                         logging.warning("Skipping source and keyword after request failure: %s | %s | %s", source, keyword, exc)
+                        emit_source_progress(
+                            config,
+                            stats,
+                            source,
+                            keyword,
+                            "source_failed",
+                            f"Source request failed for {SOURCE_LABELS.get(source, source)}; continuing with next item: {exc}",
+                            f"Source request failed for {SOURCE_LABELS.get(source, source)}; continuing with next item: {exc}",
+                            f"Source request failed for {SOURCE_LABELS.get(source, source)}; continuing with next item: {exc}",
+                            detail=str(exc),
+                        )
     finally:
         session.close()
 

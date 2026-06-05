@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import re
 import shutil
 import threading
 import traceback
@@ -23,6 +24,7 @@ from .support import (
     DEFAULT_KEY_FILE_NAME,
     USER_KEY_FILE_NAME,
     glossary_catalog,
+    load_bundled_default_key,
     load_default_key,
     load_encrypted_key,
     profile_maps,
@@ -46,6 +48,84 @@ TRANSLATION_FORM_FIELDS = (
     "translateReferences",
     "translateHeaderFooter",
 )
+
+
+def _clean_pdf_title(title: object) -> str:
+    """Normalize a PDF title so UI lists do not show raw metadata noise."""
+    text = str(title or "").replace("\x00", " ")
+    text = " ".join(text.split())
+    if not text:
+        return ""
+    lowered = text.lower()
+    if lowered in {"untitled", "none", "null"}:
+        return ""
+    return text
+
+
+def _plausible_literature_title(text: object) -> str:
+    """Return a cleaned title only when the text looks like a real paper title."""
+    title = _clean_pdf_title(text)
+    if not title:
+        return ""
+    lowered = title.lower()
+    if lowered in {"abstract", "keywords", "introduction", "contents"}:
+        return ""
+    if re.match(r"^(doi|https?://|www\.|arxiv:|issn|isbn)\b", lowered):
+        return ""
+    if re.search(r"\b(journal|volume|issue|copyright|published by|all rights reserved)\b", lowered):
+        return ""
+    if len(title) < 8 or len(title) > 320:
+        return ""
+    return title
+
+
+def _title_from_first_page_segments(document: object, core: object) -> str:
+    """Extract the visible article title from the first page layout."""
+    try:
+        segments = core.extract_segments(
+            document,
+            translate_references=False,
+            translate_header_footer=False,
+            max_pages=1,
+        )
+    except Exception:
+        return ""
+
+    title_parts: list[str] = []
+    for segment in segments:
+        if getattr(segment, "page_index", 0) != 0:
+            continue
+        if getattr(segment, "kind", "") == "title":
+            title = _plausible_literature_title(getattr(segment, "text", ""))
+            if title:
+                title_parts.append(title)
+                if len(" ".join(title_parts)) >= 220:
+                    break
+            continue
+        if title_parts and getattr(segment, "kind", "") in {"authors", "metadata", "body", "heading"}:
+            break
+    return _plausible_literature_title(" ".join(title_parts))
+
+
+def _literature_display_name(path: Path, core: object | None = None) -> str:
+    """Use the visible first-page article title, then PDF metadata, then file stem."""
+    try:
+        import fitz
+
+        document = fitz.open(path)
+        try:
+            if core is not None:
+                title = _title_from_first_page_segments(document, core)
+                if title:
+                    return title
+            title = _plausible_literature_title((document.metadata or {}).get("title"))
+            if title and title.lower() != path.stem.lower():
+                return title
+        finally:
+            document.close()
+    except Exception:
+        pass
+    return _clean_pdf_title(path.stem) or path.name
 
 
 class TranslationCancelled(RuntimeError):
@@ -253,6 +333,11 @@ class TranslationController(QObject):
         """扫描文献翻译目录。参数：目录文本。返回值：无。"""
         root = Path(directory or self.defaultInputDir).expanduser()
         documents: list[dict[str, str]] = []
+        core = None
+        try:
+            core = import_resource_module(self.paths, "Translate", "literature_translate_core")
+        except Exception:
+            core = None
         if root.is_dir():
             for path in sorted(
                 (item for item in root.iterdir() if item.is_file() and item.suffix.lower() == ".pdf"),
@@ -261,14 +346,17 @@ class TranslationController(QObject):
                 stat = path.stat()
                 documents.append(
                     {
-                        "name": path.name,
+                        "name": _literature_display_name(path, core),
+                        "fileName": path.name,
                         "path": str(path.resolve()),
                         "sizeText": _format_bytes(stat.st_size),
                         "modifiedText": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
                     }
                 )
         self._pending_documents = documents
+        self._status = self.locale.textf("ready") if documents else self.locale.textf("empty_translation_dir")
         self.pendingDocumentsChanged.emit()
+        self.changed.emit()
 
     @Slot(str)
     def addDocuments(self, directory: str) -> None:
@@ -310,6 +398,25 @@ class TranslationController(QObject):
         """解锁部署 Key。参数：加密密码。返回值：是否成功。"""
         try:
             self._default_key, self._default_key_source = load_default_key(self.paths.data("Translate"), self.paths.resource("Translate"), password)
+            if not self._default_key:
+                raise ValueError(self.locale.textf("default_key_unconfigured"))
+        except Exception as exc:
+            self._default_key = self._default_key_source = ""
+            self._status = self.locale.textf("default_key_unlock_failed", error=exc)
+            self.changed.emit()
+            return False
+        self._status = self.locale.textf("default_key_unlocked", source=self._default_key_source)
+        self.changed.emit()
+        return True
+
+    @Slot(result=bool)
+    def unlockBundledDefaultKey(self) -> bool:
+        """Load bundled APIKey.enc without exposing the key in the UI."""
+        try:
+            self._default_key, self._default_key_source = load_bundled_default_key(
+                self.paths.data("Translate"),
+                self.paths.resource("Translate"),
+            )
             if not self._default_key:
                 raise ValueError(self.locale.textf("default_key_unconfigured"))
         except Exception as exc:

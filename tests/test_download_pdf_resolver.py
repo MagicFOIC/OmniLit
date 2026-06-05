@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -87,6 +88,61 @@ class PdfResolverTests(unittest.TestCase):
         self.assertIsNone(resolved.url)
         self.assertEqual(resolved.candidates, [])
         self.assertEqual(resolved.reason, "no_oa_pdf")
+
+    def test_download_get_validates_pdf_when_head_is_unavailable(self) -> None:
+        import fitz
+
+        document = fitz.open()
+        document.new_page()
+        try:
+            payload = document.tobytes()
+        finally:
+            document.close()
+
+        class Response:
+            status_code = 200
+            headers = {"content-type": "application/pdf"}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return None
+
+            @staticmethod
+            def iter_content(chunk_size):
+                del chunk_size
+                yield payload
+
+        class Session:
+            def __init__(self) -> None:
+                self.head_calls = 0
+                self.get_calls = 0
+
+            def head(self, *_args, **_kwargs):
+                self.head_calls += 1
+                raise core.requests.RequestException("HEAD blocked")
+
+            def get(self, *_args, **_kwargs):
+                self.get_calls += 1
+                return Response()
+
+        item = {
+            "id": "https://openalex.org/W-head-blocked",
+            "title": "Publisher blocks HEAD but serves PDF",
+            "open_access": {"is_oa": True, "oa_url": "https://publisher.test/paper.pdf"},
+        }
+
+        with tempfile.TemporaryDirectory() as temp:
+            session = Session()
+            config = core.CrawlConfig(out_dir=Path(temp), min_pdf_bytes=8)
+            result, candidates = core.download_first_available_pdf(session, item, None, "10.1/head", config)
+
+            self.assertEqual(result.status, "downloaded")
+            self.assertEqual(candidates, ["https://publisher.test/paper.pdf"])
+            self.assertEqual(session.head_calls, 1)
+            self.assertEqual(session.get_calls, 1)
+            self.assertTrue(Path(result.path).read_bytes().startswith(b"%PDF"))
 
     def test_no_download_when_oa_only_and_no_pdf(self) -> None:
         item = {

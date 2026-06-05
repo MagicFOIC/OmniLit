@@ -5,11 +5,19 @@ import QtQuick.Layouts
 Item {
     id: root
     property var sortValues: ["", "relevance_score:desc", "cited_by_count:desc", "publication_date:desc"]
-    property var packValues: ["auto", "li_sulfur", "custom"]
+    property var topicScoreValues: [0, 4, 6, 9, 12]
+    property var topicScoreLabels: ["关闭过滤", "宽松", "均衡（推荐）", "严格", "极严格"]
     property var selectedSources: ["openalex"]
     property var selectedJournals: []
     property bool advancedVisible: false
     property bool restoringSettings: true
+    readonly property int logPaneMinimumHeight: metrics.compact ? (advancedVisible ? 78 : 105) : (advancedVisible ? 96 : 130)
+    readonly property int statsPaneHeight: metrics.compact ? 64 : 72
+    readonly property real downloadFormPaneHeight: Math.max(metrics.compact ? 320 : 380, form.implicitHeight + metrics.cardPadding * 2)
+    readonly property real logPanePreferredHeight: Math.max(
+        logPaneMinimumHeight,
+        root.height - metrics.pageMargin * 2 - heading.implicitHeight - downloadFormPaneHeight - statsPaneHeight - metrics.sectionSpacing * 3
+    )
     Motion { id: motion }
     PageMotion { target: root }
     I18n { id: i18n }
@@ -21,14 +29,22 @@ Item {
     onSelectedJournalsChanged: scheduleSave()
     onAdvancedVisibleChanged: scheduleSave()
 
+    ScrollView {
+        id: pageScroll
+        anchors.fill: parent
+        anchors.margins: metrics.pageMargin
+        contentWidth: availableWidth
+        clip: true
+        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+
     ColumnLayout {
-        anchors.fill: parent; anchors.margins: metrics.pageMargin; spacing: metrics.sectionSpacing
-        PageHeading { Layout.fillWidth: true; title: i18n.text("download_title"); subtitle: i18n.text("download_desc"); titleSize: metrics.headingSize }
+        width: pageScroll.availableWidth; spacing: metrics.sectionSpacing
+        PageHeading { id: heading; Layout.fillWidth: true; title: i18n.text("download_title"); subtitle: i18n.text("download_desc"); titleSize: metrics.headingSize }
         Card {
+            id: functionCard
             Layout.fillWidth: true
-            Layout.preferredHeight: Math.min(form.implicitHeight + metrics.cardPadding * 2,
-                                             Math.max(metrics.compact ? 270 : 360, root.height - (metrics.compact ? 230 : 260)))
-            Layout.minimumHeight: metrics.compact ? 250 : Math.min(form.implicitHeight + metrics.cardPadding * 2, 360)
+            Layout.preferredHeight: root.downloadFormPaneHeight
+            Layout.minimumHeight: metrics.compact ? (root.advancedVisible ? 360 : 320) : (root.advancedVisible ? 440 : 380)
             ScrollView {
                 id: formScroll
                 anchors.fill: parent
@@ -58,74 +74,13 @@ Item {
                     Text { text: i18n.text("sort"); color: theme.textMuted }
                     ComboBox {
                         id: sortMode; Layout.fillWidth: true
-                        model: [i18n.text("sort_default"), i18n.text("sort_relevance") + " ↓",
-                                i18n.text("sort_citations") + " ↓", i18n.text("sort_date") + " ↓"]
+                        model: [i18n.text("sort_default"), i18n.text("sort_relevance") + " desc",
+                                i18n.text("sort_citations") + " desc", i18n.text("sort_date") + " desc"]
                         currentIndex: 1
                         onCurrentIndexChanged: root.scheduleSave()
                     }
                     Text { text: i18n.text("max_records"); color: theme.textMuted }
                     TextField { id: maxRecords; Layout.fillWidth: true; placeholderText: i18n.text("optional"); onTextChanged: root.scheduleSave() }
-                    Text { text: "主题相关性筛选"; color: theme.textMuted }
-                    ComboBox {
-                        id: topicPack
-                        Layout.fillWidth: true
-                        model: ["自动根据关键词生成", "Li-S batteries 预设", "自定义"]
-                        currentIndex: 0
-                        hoverEnabled: true
-                        ToolTip.delay: 350
-                        ToolTip.timeout: 9000
-                        ToolTip.visible: hovered
-                        ToolTip.text: "主题包是一组关键词和评分规则。默认会根据你输入的关键词自动生成，例如输入 lithium-sulfur batteries 和 polysulfides 时，会优先保留锂硫电池相关论文。"
-                        onCurrentIndexChanged: root.scheduleSave()
-                    }
-                    Text { text: "推荐开放获取期刊"; color: theme.textMuted }
-                    ComboBox {
-                        id: journalPack
-                        Layout.fillWidth: true
-                        model: ["自动推荐", "Li-S batteries 期刊预设", "自定义"]
-                        currentIndex: 0
-                        hoverEnabled: true
-                        ToolTip.delay: 350
-                        ToolTip.timeout: 9000
-                        ToolTip.visible: hovered
-                        ToolTip.text: "开放获取期刊包用于给推荐期刊中的论文加权排序。默认不会只保留这些期刊，除非你开启‘只保留推荐开放获取期刊’。"
-                        onCurrentIndexChanged: root.scheduleSave()
-                    }
-                }
-                Rectangle {
-                    Layout.fillWidth: true
-                    implicitHeight: smartFilterHelp.implicitHeight + 18
-                    radius: 12
-                    color: theme.accentSofter
-                    border.color: theme.border
-                    ColumnLayout {
-                        id: smartFilterHelp
-                        anchors.fill: parent
-                        anchors.margins: 9
-                        spacing: 3
-                        Text { text: "智能筛选说明"; color: theme.text; font.weight: Font.DemiBold }
-                        Text {
-                            Layout.fillWidth: true
-                            text: "默认情况下，OmniLit 会根据你的关键词自动生成主题筛选规则，并优先推荐合法开放获取来源。你通常不需要修改这些高级选项。"
-                            color: theme.textMuted
-                            wrapMode: Text.WordWrap
-                            font.pixelSize: theme.baseFontSize - 2
-                        }
-                        Text {
-                            Layout.fillWidth: true
-                            text: "主题相关性筛选：OmniLit 会根据你输入的关键词自动判断论文是否相关，用于减少无关结果。"
-                            color: theme.textMuted
-                            wrapMode: Text.WordWrap
-                            font.pixelSize: theme.baseFontSize - 2
-                        }
-                        Text {
-                            Layout.fillWidth: true
-                            text: "推荐开放获取期刊：用于优先显示来自开放获取期刊的论文，不会绕过付费墙。"
-                            color: theme.textMuted
-                            wrapMode: Text.WordWrap
-                            font.pixelSize: theme.baseFontSize - 2
-                        }
-                    }
                 }
                 Text { text: i18n.text("keywords"); color: theme.textMuted }
                 SoftTextArea { id: keywords; Layout.fillWidth: true; Layout.preferredHeight: 54; text: downloadController.defaultKeywords; wrapMode: TextArea.Wrap; onTextChanged: root.scheduleSave() }
@@ -136,40 +91,55 @@ Item {
                         ModernCheckBox {
                             text: modelData.label
                             checked: root.selectedSources.indexOf(modelData.key) >= 0
+                            activePulse: downloadController.running && downloadController.activeSourceKey === modelData.key
+                            ToolTip.delay: 250
+                            ToolTip.timeout: 5000
+                            ToolTip.visible: activePulse || hovered
+                            ToolTip.text: activePulse ? downloadController.activeSourceText : modelData.label
                             onToggled: root.toggleSource(modelData.key, checked)
                         }
                     }
                     Item { Layout.fillWidth: true }
                 }
+                Rectangle {
+                    Layout.fillWidth: true
+                    implicitHeight: downloadController.activeSourceText.length > 0 ? activeSourceText.implicitHeight + 14 : 0
+                    opacity: downloadController.activeSourceText.length > 0 ? 1 : 0
+                    radius: 11
+                    color: theme.accentSofter
+                    border.color: theme.border
+                    clip: true
+                    Behavior on opacity { NumberAnimation { duration: motion.fast } }
+                    Behavior on implicitHeight { NumberAnimation { duration: motion.fast; easing.type: Easing.OutCubic } }
+                    Text {
+                        id: activeSourceText
+                        anchors.fill: parent
+                        anchors.margins: 7
+                        text: downloadController.activeSourceText
+                        color: theme.text
+                        font.weight: Font.DemiBold
+                        verticalAlignment: Text.AlignVCenter
+                        elide: Text.ElideRight
+                    }
+                }
                 RowLayout {
+                    ModernCheckBox { id: downloadPdfs; text: i18n.text("download_pdf"); checked: true; onToggled: root.scheduleSave() }
+                    ModernCheckBox { id: resume; text: i18n.text("resume"); checked: true; onToggled: root.scheduleSave() }
+                    ModernCheckBox {
+                        id: oaOnly
+                        text: i18n.text("oa_only")
+                        ToolTip.delay: 250
+                        ToolTip.timeout: 7000
+                        ToolTip.visible: hovered
+                        ToolTip.text: "只保留开放获取记录，用于排除非 OA 文献；PDF 仍只会下载合法开放获取链接。"
+                        onToggled: root.scheduleSave()
+                    }
                     Text { text: i18n.text("pages"); color: theme.textMuted }
                     SpinBox { id: pages; from: 1; to: 1000; value: 1; editable: true; onValueChanged: root.scheduleSave() }
                     Text { text: i18n.text("per_page"); color: theme.textMuted }
                     SpinBox { id: perPage; from: 1; to: 200; value: 20; editable: true; onValueChanged: root.scheduleSave() }
                     Item { Layout.fillWidth: true }
                     PillButton { text: root.advancedVisible ? i18n.text("collapse_advanced") : i18n.text("advanced"); onClicked: root.advancedVisible = !root.advancedVisible }
-                }
-                RowLayout {
-                    ModernCheckBox { id: downloadPdfs; text: i18n.text("download_pdf"); checked: true; onToggled: root.scheduleSave() }
-                    ModernCheckBox { id: resume; text: i18n.text("resume"); checked: true; onToggled: root.scheduleSave() }
-                    ModernCheckBox { id: oaOnly; text: i18n.text("oa_only"); onToggled: root.scheduleSave() }
-                    ModernCheckBox {
-                        id: journalWhitelistOnly
-                        text: "只保留推荐开放获取期刊"
-                        ToolTip.delay: 350
-                        ToolTip.timeout: 9000
-                        ToolTip.visible: hovered
-                        ToolTip.text: "关闭时，推荐期刊只用于排序加权；开启后，OmniLit 只保留匹配推荐 OA 期刊包的论文。"
-                        onToggled: root.scheduleSave()
-                    }
-                    Item { Layout.fillWidth: true }
-                }
-                Text {
-                    Layout.fillWidth: true
-                    text: "只保留推荐开放获取期刊：开启后会更严格，可能漏掉其他合法开放获取论文。"
-                    color: theme.textMuted
-                    wrapMode: Text.WordWrap
-                    font.pixelSize: theme.baseFontSize - 2
                 }
                 Item {
                     id: advancedPanel
@@ -193,30 +163,23 @@ Item {
                             TextField { id: minPdfBytes; Layout.fillWidth: true; text: "1024"; onTextChanged: root.scheduleSave() }
                             Text { text: i18n.text("match_ratio"); color: theme.textMuted }
                             TextField { id: matchRatio; Layout.fillWidth: true; text: "0.75"; onTextChanged: root.scheduleSave() }
-                            Text { text: "相关性过滤强度（6，中等）"; color: theme.textMuted }
-                            TextField {
+                            Text { text: "相关性过滤强度"; color: theme.textMuted }
+                            ComboBox {
                                 id: minTopicScore
                                 Layout.fillWidth: true
-                                text: "6"
-                                placeholderText: "6，中等"
+                                model: root.topicScoreLabels
+                                currentIndex: 2
                                 hoverEnabled: true
                                 ToolTip.delay: 350
                                 ToolTip.timeout: 9000
                                 ToolTip.visible: hovered
-                                ToolTip.text: "每篇论文会根据标题、摘要和关键词得到一个主题相关分数。只有达到该分数的论文才会保留。推荐默认值为 6。"
-                                onTextChanged: root.scheduleSave()
+                                ToolTip.text: "关闭=0；宽松=4；均衡=6；严格=9；极严格=12。分数越高越精准，但可能漏掉相关论文。"
+                                onCurrentIndexChanged: root.scheduleSave()
                             }
                             Text { text: i18n.text("loop_sleep"); color: theme.textMuted }
                             TextField { id: loopSleep; Layout.fillWidth: true; text: "3600"; onTextChanged: root.scheduleSave() }
                             Text { text: i18n.text("runtime_hours"); color: theme.textMuted }
                             TextField { id: runtimeHours; Layout.fillWidth: true; placeholderText: i18n.text("optional"); onTextChanged: root.scheduleSave() }
-                        }
-                        Text {
-                            Layout.fillWidth: true
-                            text: "相关性过滤强度：分数越高，结果越精准，但可能漏掉一些相关论文。"
-                            color: theme.textMuted
-                            wrapMode: Text.WordWrap
-                            font.pixelSize: theme.baseFontSize - 2
                         }
                         GridLayout {
                             Layout.fillWidth: true
@@ -224,6 +187,15 @@ Item {
                             ModernCheckBox { id: retryMissing; text: i18n.text("retry_missing"); checked: true; onToggled: root.scheduleSave() }
                             ModernCheckBox { id: writeRetry; text: i18n.text("write_retry"); onToggled: root.scheduleSave() }
                             ModernCheckBox { id: strictMatch; text: i18n.text("strict_match"); checked: true; onToggled: root.scheduleSave() }
+                            ModernCheckBox {
+                                id: preferredJournalOnly
+                                text: "仅限推荐 OA 期刊"
+                                ToolTip.delay: 350
+                                ToolTip.timeout: 9000
+                                ToolTip.visible: hovered
+                                ToolTip.text: "默认关闭。关闭时推荐 OA 期刊只用于排序加权；开启后只保留推荐 OA 期刊内的论文。"
+                                onToggled: root.scheduleSave()
+                            }
                             ModernCheckBox { id: loopJob; text: i18n.text("loop_job"); onToggled: root.scheduleSave() }
                             ModernCheckBox { id: fastForward; text: i18n.text("fast_forward"); checked: true; onToggled: root.scheduleSave() }
                         }
@@ -239,27 +211,40 @@ Item {
             }
         }
         RowLayout {
-            Layout.fillWidth: true; spacing: 8
-            StatCard { title: i18n.text("literature_records"); value: String(downloadController.stats.fetched_items || 0); detail: i18n.text("fetched") }
-            StatCard { title: i18n.text("metadata"); value: String(downloadController.stats.added_records || 0); detail: i18n.text("saved") }
-            StatCard { title: "PDF"; value: String(downloadController.stats.downloaded_pdfs || 0); detail: i18n.text("downloaded") }
+            id: statsRow
+            Layout.fillWidth: true; Layout.preferredHeight: root.statsPaneHeight; spacing: 8
+            StatCard { Layout.preferredHeight: root.statsPaneHeight; title: i18n.text("literature_records"); value: String(downloadController.stats.fetched_items || 0); detail: i18n.text("fetched") }
+            StatCard { Layout.preferredHeight: root.statsPaneHeight; title: i18n.text("metadata"); value: String(downloadController.stats.added_records || 0); detail: i18n.text("saved") }
+            StatCard { Layout.preferredHeight: root.statsPaneHeight; title: "PDF"; value: String(downloadController.stats.downloaded_pdfs || 0); detail: i18n.text("downloaded") }
         }
         Card {
             Layout.fillWidth: true
-            Layout.fillHeight: true
-            Layout.minimumHeight: metrics.compact ? 64 : 80
+            Layout.preferredHeight: root.logPanePreferredHeight
+            Layout.minimumHeight: root.logPaneMinimumHeight
 
-            ScrollPreservingTextArea {
+            ColumnLayout {
                 anchors.fill: parent
                 anchors.margins: 12
-                text: downloadController.logText
-                readOnly: true
-                wrapMode: TextArea.Wrap
+
+                Text{
+                    text: i18n.text("task_log")
+                    color: theme.text
+                    font.weight: Font.Bold
+                }
+
+                ScrollPreservingTextArea{
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    text: downloadController.logText
+                    readOnly: true
+                    wrapMode: TextArea.Wrap
+                }
             }
         }
     }
+    }
 
-    // 将界面字段集中映射到下载核心，避免高级选项在迁移后静默丢失。
+    // 灏嗙晫闈㈠瓧娈甸泦涓槧灏勫埌涓嬭浇鏍稿績锛岄伩鍏嶉珮绾ч€夐」鍦ㄨ縼绉诲悗闈欓粯涓㈠け銆?
     function config() {
         return { email: email.text, outputDir: outputDir.text, fromDate: fromDate.text, toDate: toDate.text,
                  keywords: keywords.text, sort: root.sortValues[sortMode.currentIndex], maxPages: pages.value,
@@ -267,9 +252,9 @@ Item {
                  pageDelay: pageDelay.text, minPdfBytes: minPdfBytes.text, downloadPdfs: downloadPdfs.checked,
                  retryMissingPdfs: retryMissing.checked, writeRetryRecords: writeRetry.checked,
                  strictKeywordMatch: strictMatch.checked, minKeywordMatchRatio: matchRatio.text,
-                 topicPack: root.packValues[topicPack.currentIndex], journalPack: root.packValues[journalPack.currentIndex],
-                 selectedJournals: root.selectedJournals, minTopicScore: minTopicScore.text,
-                 journalWhitelistOnly: journalWhitelistOnly.checked,
+                 topicPack: "auto", journalPack: "auto",
+                 selectedJournals: root.selectedJournals, minTopicScore: root.topicScoreValues[minTopicScore.currentIndex],
+                 journalWhitelistOnly: preferredJournalOnly.checked,
                  loop: loopJob.checked, loopSleep: loopSleep.text, maxRuntimeHours: runtimeHours.text,
                  resume: resume.checked, fastForwardExistingPages: fastForward.checked, oaOnly: oaOnly.checked,
                  sources: root.selectedSources, advancedVisible: root.advancedVisible }
@@ -277,11 +262,18 @@ Item {
     function savedValue(settings, key, fallback) {
         return settings[key] !== undefined && settings[key] !== null ? settings[key] : fallback
     }
-    function packIndex(value, fallback) {
-        let index = root.packValues.indexOf(value)
-        if(index >= 0) return index
-        let fallbackIndex = root.packValues.indexOf(fallback)
-        return fallbackIndex >= 0 ? fallbackIndex : 0
+    function topicScoreIndex(value) {
+        let numericValue = Number(value)
+        let bestIndex = 2
+        let bestDistance = Math.abs(root.topicScoreValues[bestIndex] - numericValue)
+        for(let i = 0; i < root.topicScoreValues.length; i++) {
+            let distance = Math.abs(root.topicScoreValues[i] - numericValue)
+            if(distance < bestDistance) {
+                bestDistance = distance
+                bestIndex = i
+            }
+        }
+        return bestIndex
     }
     function scheduleSave() {
         if(!root.restoringSettings) saveSettingsTimer.restart()
@@ -306,11 +298,9 @@ Item {
         writeRetry.checked=savedValue(settings, "writeRetryRecords", false)
         strictMatch.checked=savedValue(settings, "strictKeywordMatch", true)
         matchRatio.text=savedValue(settings, "minKeywordMatchRatio", "0.75")
-        topicPack.currentIndex=packIndex(savedValue(settings, "topicPack", "auto"), "auto")
-        journalPack.currentIndex=packIndex(savedValue(settings, "journalPack", "auto"), "auto")
         root.selectedJournals=savedValue(settings, "selectedJournals", [])
-        minTopicScore.text=savedValue(settings, "minTopicScore", "6")
-        journalWhitelistOnly.checked=savedValue(settings, "journalWhitelistOnly", false)
+        minTopicScore.currentIndex=topicScoreIndex(savedValue(settings, "minTopicScore", 6))
+        preferredJournalOnly.checked=savedValue(settings, "journalWhitelistOnly", false)
         loopJob.checked=savedValue(settings, "loop", false)
         loopSleep.text=savedValue(settings, "loopSleep", "3600")
         runtimeHours.text=savedValue(settings, "maxRuntimeHours", "")

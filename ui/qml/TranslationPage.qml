@@ -5,8 +5,14 @@ import QtQuick.Layouts
 Item {
     id: root
     property var selectedGlossaries: []
-    property bool deploymentKeyAdvancedVisible: false
     property bool restoringSettings: true
+    readonly property int resultPaneMinimumHeight: metrics.compact ? 135 : 170
+    readonly property int progressPaneHeight: metrics.compact ? 58 : 66
+    readonly property real translationFormPaneHeight: Math.max(metrics.compact ? 320 : 380, form.implicitHeight + metrics.cardPadding * 2)
+    readonly property real resultPanePreferredHeight: Math.max(
+        resultPaneMinimumHeight,
+        root.height - metrics.pageMargin * 2 - heading.implicitHeight - translationFormPaneHeight - progressPaneHeight - metrics.sectionSpacing * 3
+    )
     Motion { id: motion }
     PageMotion { target: root }
     I18n { id: i18n }
@@ -89,14 +95,22 @@ Item {
         }
     }
 
+    ScrollView {
+        id: pageScroll
+        anchors.fill: parent
+        anchors.margins: metrics.pageMargin
+        contentWidth: availableWidth
+        clip: true
+        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+
     ColumnLayout {
-        anchors.fill: parent; anchors.margins: metrics.pageMargin; spacing: metrics.sectionSpacing
-        PageHeading { Layout.fillWidth: true; title: i18n.text("translate_title"); subtitle: i18n.text("translate_desc"); titleSize: metrics.headingSize }
+        width: pageScroll.availableWidth; spacing: metrics.sectionSpacing
+        PageHeading { id: heading; Layout.fillWidth: true; title: i18n.text("translate_title"); subtitle: i18n.text("translate_desc"); titleSize: metrics.headingSize }
         Card {
+            id: functionCard
             Layout.fillWidth: true
-            Layout.preferredHeight: Math.min(form.implicitHeight + metrics.cardPadding * 2,
-                                             Math.max(metrics.compact ? 280 : 360, root.height - (metrics.compact ? 235 : 285)))
-            Layout.minimumHeight: metrics.compact ? 255 : Math.min(form.implicitHeight + metrics.cardPadding * 2, 360)
+            Layout.preferredHeight: root.translationFormPaneHeight
+            Layout.minimumHeight: metrics.compact ? 320 : 380
             ScrollView {
                 id: formScroll
                 anchors.fill: parent
@@ -146,20 +160,42 @@ Item {
                                 Text { text: i18n.text("pending_literature"); color: theme.text; font.weight: Font.Bold }
                                 Item { Layout.fillWidth: true }
                                 PillButton { text: i18n.text("refresh"); onClicked: translationController.refreshPendingDocuments(translationDir.text) }
-                                PillButton { text: i18n.text("add_literature"); onClicked: translationController.addDocuments(translationDir.text) }
                             }
                             Text {
                                 visible: translationController.pendingDocumentCount === 0
                                 text: i18n.text("empty_translation_dir")
                                 color: theme.textMuted
                             }
-                            Repeater {
-                                model: translationController.pendingDocuments
-                                delegate: RowLayout {
-                                    Layout.fillWidth: true
-                                    Text { Layout.fillWidth: true; text: modelData.name; color: theme.text; elide: Text.ElideMiddle }
-                                    Text { text: modelData.sizeText; color: theme.textMuted }
-                                    Text { text: modelData.modifiedText; color: theme.textMuted }
+                            ScrollView {
+                                id: pendingDocumentsScroll
+                                visible: translationController.pendingDocumentCount > 0
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: Math.min(pendingDocumentsList.implicitHeight, metrics.compact ? 82 : 110)
+                                contentWidth: availableWidth
+                                clip: true
+                                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                                ColumnLayout {
+                                    id: pendingDocumentsList
+                                    width: pendingDocumentsScroll.availableWidth
+                                    Repeater {
+                                        model: translationController.pendingDocuments
+                                        delegate: RowLayout {
+                                            Layout.fillWidth: true
+                                            Text {
+                                                Layout.fillWidth: true
+                                                text: modelData.name
+                                                color: theme.text
+                                                elide: Text.ElideRight
+                                                ToolTip.delay: 350
+                                                ToolTip.timeout: 5000
+                                                ToolTip.visible: truncated && titleMouse.containsMouse
+                                                ToolTip.text: modelData.fileName ? modelData.name + "\n" + modelData.fileName : modelData.name
+                                                MouseArea { id: titleMouse; anchors.fill: parent; hoverEnabled: true }
+                                            }
+                                            Text { text: modelData.sizeText; color: theme.textMuted }
+                                            Text { text: modelData.modifiedText; color: theme.textMuted }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -199,76 +235,7 @@ Item {
                     PillButton { text: i18n.text("remember_key"); enabled: !!apiKey.text; onClicked: rememberDialog.open() }
                     PillButton { text: i18n.text("unlock"); enabled: translationController.rememberedKeyExists; onClicked: unlockDialog.open() }
                     PillButton { text: i18n.text("clear_key"); enabled: translationController.rememberedKeyExists; onClicked: translationController.clearRememberedKey() }
-                }
-                RowLayout {
-                    Text { text: i18n.text("deployment_key_advanced"); color: theme.textMuted; font.weight: Font.Bold }
-                    Item { Layout.fillWidth: true }
-                    PillButton {
-                        text: root.deploymentKeyAdvancedVisible ? i18n.text("collapse_deployment_key_advanced") : i18n.text("deployment_key_advanced")
-                        onClicked: root.deploymentKeyAdvancedVisible = !root.deploymentKeyAdvancedVisible
-                    }
-                }
-                Item {
-                    id: deploymentKeyAdvancedPanel
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: panelHeight
-                    property real panelHeight: root.deploymentKeyAdvancedVisible ? deploymentKeyAdvancedContent.implicitHeight : 0
-                    opacity: root.deploymentKeyAdvancedVisible ? 1 : 0
-                    clip: true
-                    Behavior on panelHeight { NumberAnimation { duration: motion.expand; easing.type: Easing.OutCubic } }
-                    Behavior on opacity { NumberAnimation { duration: motion.normal } }
-                    ColumnLayout {
-                        id: deploymentKeyAdvancedContent
-                        width: parent.width
-                        spacing: metrics.compact ? 5 : 7
-                        Text {
-                            text: i18n.text(translationController.defaultKeyExists ? "key_exists" : "key_missing")
-                            color: theme.textMuted
-                        }
-                        Text {
-                            Layout.fillWidth: true
-                            text: i18n.text("deployment_key_path") + ": " + translationController.defaultKeyPath
-                            color: theme.textMuted
-                            elide: Text.ElideMiddle
-                        }
-                        Text {
-                            Layout.fillWidth: true
-                            text: i18n.text(translationController.defaultKeyLoaded ? "unlocked" : "locked")
-                                  + (translationController.defaultKeySource ? " · " + translationController.defaultKeySource : "")
-                            color: translationController.defaultKeyLoaded ? theme.success : theme.textMuted
-                            elide: Text.ElideMiddle
-                        }
-                        RowLayout {
-                            Text { text: i18n.text("default_key_password"); color: theme.textMuted }
-                            TextField { id: defaultKeyPassword; Layout.fillWidth: true; echoMode: TextInput.Password }
-                            TextField { id: defaultKeyConfirm; Layout.fillWidth: true; placeholderText: i18n.text("confirm_password"); echoMode: TextInput.Password }
-                        }
-                        RowLayout {
-                            Item { Layout.fillWidth: true }
-                            PillButton {
-                                text: i18n.text("save_deployment_key")
-                                primary: true
-                                enabled: !!apiKey.text
-                                onClicked: if (translationController.saveDefaultKey(apiKey.text, defaultKeyPassword.text, defaultKeyConfirm.text)) {
-                                    defaultKeyPassword.text = ""
-                                    defaultKeyConfirm.text = ""
-                                }
-                            }
-                            PillButton {
-                                text: i18n.text("unlock_default_key")
-                                enabled: !translationController.defaultKeyLoaded
-                                onClicked: if (translationController.unlockDefaultKey(defaultKeyPassword.text)) {
-                                    defaultKeyPassword.text = ""
-                                    defaultKeyConfirm.text = ""
-                                }
-                            }
-                        }
-                    }
-                }
-                RowLayout {
-                    Text { text: i18n.text("glossary"); color: theme.textMuted }
-                    Text { text: i18n.formatText("selected_count", { count: selectedGlossaries.length }); color: theme.text }
-                    PillButton { text: i18n.text("select_glossary"); onClicked: glossaryDialog.open() }
+                    PillButton { text: translationController.defaultKeyLoaded ? i18n.text("unlocked") : "默认 API Key"; onClicked: translationController.unlockBundledDefaultKey() }
                 }
                 RowLayout {
                     Text { text: i18n.text("batch_size"); color: theme.textMuted }
@@ -277,16 +244,17 @@ Item {
                     SpinBox { id: batchChars; from: 1200; to: 20000; value: 3500; stepSize: 100; editable: true; onValueChanged: root.scheduleSave() }
                     Text { text: i18n.text("test_pages"); color: theme.textMuted }
                     TextField { id: maxPages; Layout.preferredWidth: 90; placeholderText: i18n.text("all_pages"); onTextChanged: root.scheduleSave() }
-                }
-                RowLayout {
                     ModernCheckBox { id: layoutOnly; text: i18n.text("layout_only"); onToggled: root.scheduleSave() }
                     ModernCheckBox { id: useCache; text: i18n.text("use_cache"); checked: true; onToggled: root.scheduleSave() }
                     ModernCheckBox { id: summary; text: i18n.text("summary_page"); checked: true; onToggled: root.scheduleSave() }
+                    ModernCheckBox { id: references; text: i18n.text("translate_refs"); onToggled: root.scheduleSave() }
+                    ModernCheckBox { id: headerFooter; text: i18n.text("translate_headers"); onToggled: root.scheduleSave() }
                     Item { Layout.fillWidth: true }
                 }
                 RowLayout {
-                    ModernCheckBox { id: references; text: i18n.text("translate_refs"); onToggled: root.scheduleSave() }
-                    ModernCheckBox { id: headerFooter; text: i18n.text("translate_headers"); onToggled: root.scheduleSave() }
+                    Text { text: i18n.text("glossary"); color: theme.textMuted }
+                    Text { text: i18n.formatText("selected_count", { count: selectedGlossaries.length }); color: theme.text }
+                    PillButton { text: i18n.text("select_glossary"); onClicked: glossaryDialog.open() }
                     Item { Layout.fillWidth: true }
                     PillButton { text: translationController.running ? i18n.text("running") : i18n.text("start_translate"); primary: true; busy: translationController.running; onClicked: translationController.start(config()) }
                     PillButton { text: i18n.text("stop"); enabled: translationController.running; onClicked: translationController.stop() }
@@ -296,7 +264,8 @@ Item {
             }
         }
         Card {
-            Layout.fillWidth: true; Layout.preferredHeight: metrics.compact ? 58 : 66
+            id: progressCard
+            Layout.fillWidth: true; Layout.preferredHeight: root.progressPaneHeight
             ColumnLayout {
                 anchors.fill: parent; anchors.margins: 10
                 Text { text: translationController.currentDocument || i18n.text("waiting_job"); color: theme.text; font.weight: Font.Bold }
@@ -307,7 +276,7 @@ Item {
             }
         }
         GridLayout {
-            Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: metrics.compact ? 110 : 130; columns: metrics.narrow ? 1 : 2; rowSpacing: metrics.sectionSpacing; columnSpacing: metrics.sectionSpacing
+            Layout.fillWidth: true; Layout.preferredHeight: root.resultPanePreferredHeight; Layout.minimumHeight: root.resultPaneMinimumHeight; columns: metrics.narrow ? 1 : 2; rowSpacing: metrics.sectionSpacing; columnSpacing: metrics.sectionSpacing
             Card {
                 Layout.fillWidth: true; Layout.fillHeight: true
                 ColumnLayout {
@@ -332,20 +301,17 @@ Item {
                 ColumnLayout {
                     anchors.fill: parent; anchors.margins: 12
                     Text { text: i18n.text("task_log"); color: theme.text; font.weight: Font.Bold }
-                    ScrollView {
-                        Layout.fillWidth: true;
-                        Layout.fillHeight: true;
-                        ScrollPreservingTextArea {
-                            Layout.fillWidth: true
-                            Layout.fillHeight: true
-                            text: translationController.logText
-                            readOnly: true
-                            wrapMode: TextArea.Wrap
-                        }
+                    ScrollPreservingTextArea {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        text: translationController.logText
+                        readOnly: true
+                        wrapMode: TextArea.Wrap
                     }
                 }
             }
         }
+    }
     }
 
     Connections {

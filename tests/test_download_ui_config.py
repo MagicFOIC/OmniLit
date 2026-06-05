@@ -50,6 +50,7 @@ class DownloadUiConfigTests(unittest.TestCase):
 
     def test_qml_config_contains_new_fields(self) -> None:
         qml = (ROOT / "ui" / "qml" / "DownloadPage.qml").read_text(encoding="utf-8")
+        checkbox = (ROOT / "ui" / "qml" / "ModernCheckBox.qml").read_text(encoding="utf-8")
 
         for field in (
             "topicPack",
@@ -60,33 +61,30 @@ class DownloadUiConfigTests(unittest.TestCase):
         ):
             self.assertIn(field, qml)
 
-        self.assertIn('property var packValues: ["auto", "li_sulfur", "custom"]', qml)
-        self.assertIn('"自动根据关键词生成"', qml)
-        self.assertIn('"Li-S batteries 预设"', qml)
-        self.assertIn('"自动推荐"', qml)
-        self.assertIn('"Li-S batteries 期刊预设"', qml)
-        self.assertIn('"自定义"', qml)
-        self.assertIn('text: "6"', qml)
+        self.assertIn("activePulse: downloadController.running && downloadController.activeSourceKey === modelData.key", qml)
+        self.assertIn("downloadController.activeSourceText", qml)
+        self.assertIn("property bool activePulse: false", checkbox)
+        self.assertIn("SequentialAnimation on opacity", checkbox)
+        self.assertIn('topicPack: "auto", journalPack: "auto"', qml)
+        self.assertIn('property var topicScoreValues: [0, 4, 6, 9, 12]', qml)
+        self.assertIn('currentIndex: 2', qml)
 
-    def test_qml_contains_filter_guidance_copy(self) -> None:
+    def test_qml_uses_compact_hidden_filter_guidance(self) -> None:
         qml = (ROOT / "ui" / "qml" / "DownloadPage.qml").read_text(encoding="utf-8")
 
-        for text in (
-            "主题相关性筛选",
-            "推荐开放获取期刊",
-            "相关性过滤强度",
-            "只保留推荐开放获取期刊",
-            "智能筛选说明",
-            "OmniLit 会根据你输入的关键词自动判断论文是否相关，用于减少无关结果。",
-            "用于优先显示来自开放获取期刊的论文，不会绕过付费墙。",
-            "分数越高，结果越精准，但可能漏掉一些相关论文。",
-            "开启后会更严格，可能漏掉其他合法开放获取论文。",
-            "主题包是一组关键词和评分规则。",
-            "开放获取期刊包用于给推荐期刊中的论文加权排序。",
-            "推荐默认值为 6。",
-        ):
-            self.assertIn(text, qml)
-
+        self.assertIn('property var topicScoreValues: [0, 4, 6, 9, 12]', qml)
+        self.assertIn('property var topicScoreLabels:', qml)
+        self.assertIn('id: preferredJournalOnly', qml)
+        self.assertIn('text: "仅限推荐 OA 期刊"', qml)
+        self.assertIn('journalWhitelistOnly: preferredJournalOnly.checked', qml)
+        self.assertIn('minTopicScore.currentIndex=topicScoreIndex', qml)
+        self.assertIn('preferredJournalOnly.checked=savedValue(settings, "journalWhitelistOnly", false)', qml)
+        self.assertNotIn('id: smartFilterChip', qml)
+        self.assertNotIn('id: oaFilterChip', qml)
+        self.assertNotIn('id: journalScope', qml)
+        self.assertNotIn('id: smartFilterHelp\n                        anchors.fill: parent', qml)
+        self.assertNotIn("\\u767d\\u540d\\u5355".encode().decode("unicode_escape"), qml)
+        self.assertNotIn("\\u76f8\\u5173\\u6027\\u8fc7\\u6ee4\\u5f3a\\u5ea6\\uff1a".encode().decode("unicode_escape"), qml)
 
 if __name__ == "__main__":
     unittest.main()

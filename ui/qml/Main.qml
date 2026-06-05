@@ -7,8 +7,8 @@ ApplicationWindow {
     Theme { id: theme; dynamic: authController.loggedIn }
     readonly property int authWindowWidth: 472
     readonly property int authWindowHeight: 580
-    readonly property int workspaceMinimumWidth: 860
-    readonly property int workspaceMinimumHeight: 620
+    readonly property int workspaceMinimumWidth: 1280
+    readonly property int workspaceMinimumHeight: 860
     property int savedWorkspaceWidth: 0
     property int savedWorkspaceHeight: 0
     property bool applyingWindowMode: false
@@ -17,8 +17,8 @@ ApplicationWindow {
     height: authWindowHeight
     minimumWidth: authWindowWidth
     minimumHeight: authWindowHeight
-    maximumWidth: authWindowWidth
-    maximumHeight: authWindowHeight
+    maximumWidth: 16777215
+    maximumHeight: 16777215
     visible: true
     title: "OmniLit"
     color: theme.canvas
@@ -84,17 +84,21 @@ ApplicationWindow {
     function applyWindowMode() {
         applyingWindowMode = true
         if (lastLoggedIn) {
+            visibility = Window.Windowed
             maximumWidth = 16777215
             maximumHeight = 16777215
-            minimumWidth = workspaceMinimumWidth
-            minimumHeight = workspaceMinimumHeight
-            width = savedWorkspaceWidth || Math.max(workspaceMinimumWidth, Math.min(1360, Screen.desktopAvailableWidth * 0.94))
-            height = savedWorkspaceHeight || Math.max(workspaceMinimumHeight, Math.min(920, Screen.desktopAvailableHeight * 0.92))
+            minimumWidth = Math.min(workspaceMinimumWidth, Screen.desktopAvailableWidth)
+            minimumHeight = Math.min(workspaceMinimumHeight, Screen.desktopAvailableHeight)
+            x = Screen.desktopAvailableX
+            y = Screen.desktopAvailableY
+            width = Screen.desktopAvailableWidth
+            height = Screen.desktopAvailableHeight
         } else {
+            visibility = Window.Windowed
             minimumWidth = authWindowWidth
             minimumHeight = authWindowHeight
-            maximumWidth = authWindowWidth
-            maximumHeight = authWindowHeight
+            maximumWidth = 16777215
+            maximumHeight = 16777215
             width = authWindowWidth
             height = authWindowHeight
         }

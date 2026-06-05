@@ -3,6 +3,7 @@ import QtQuick.Controls
 
 CheckBox {
     id: control
+    property bool activePulse: false
     Theme { id: theme }
     Motion { id: motion }
 
@@ -19,11 +20,21 @@ CheckBox {
         y: (control.height - height) / 2
         radius: 6
         antialiasing: true
-        color: control.checked ? theme.accent : control.hovered ? theme.accentSofter : theme.surface
-        border.width: control.activeFocus ? 2 : 1
-        border.color: control.checked ? theme.accentStrong : control.activeFocus ? theme.accent : control.hovered ? theme.borderStrong : theme.border
+        scale: control.activePulse ? 1.08 : 1
+        color: control.activePulse ? theme.accentStrong : control.checked ? theme.accent : control.hovered ? theme.accentSofter : theme.surface
+        border.width: control.activePulse || control.activeFocus ? 2 : 1
+        border.color: control.activePulse ? theme.accentText : control.checked ? theme.accentStrong : control.activeFocus ? theme.accent : control.hovered ? theme.borderStrong : theme.border
+        SequentialAnimation on opacity {
+            running: control.activePulse
+            loops: Animation.Infinite
+            NumberAnimation { from: 1; to: 0.45; duration: 420; easing.type: Easing.InOutQuad }
+            NumberAnimation { from: 0.45; to: 1; duration: 420; easing.type: Easing.InOutQuad }
+        }
+        onVisibleChanged: if (!visible) opacity = 1
+        onScaleChanged: if (!control.activePulse) opacity = 1
         Behavior on color { ColorAnimation { duration: motion.fast } }
         Behavior on border.color { ColorAnimation { duration: motion.fast } }
+        Behavior on scale { NumberAnimation { duration: motion.fast; easing.type: Easing.OutCubic } }
 
         Canvas {
             anchors.fill: parent

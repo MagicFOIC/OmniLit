@@ -40,7 +40,7 @@ from omnilit_qt.i18n import LocaleController, tr
 from omnilit_qt.paths import AppPaths, MIGRATION_MARKER, _macos_bundle_sibling
 from omnilit_qt.secrets import PLAIN_PREFIX, protect_secret, unprotect_secret
 from omnilit_qt.services import AccountStore, PASSWORD_SCHEME, build_download_config, import_resource_module
-from omnilit_qt.support import decrypt_api_key, encrypt_api_key, glossary_catalog, load_encrypted_key, write_encrypted_key
+from omnilit_qt.support import DEFAULT_KEY_AUTO_PASSWORD, decrypt_api_key, encrypt_api_key, glossary_catalog, load_encrypted_key, write_encrypted_key
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -481,6 +481,41 @@ class DownloadConfigTests(unittest.TestCase):
             self.assertEqual(controller.activeTaskText, tr("zh", "downloading_keywords", keywords=expected_keywords))
 
 
+    def test_download_controller_exposes_active_literature_source(self) -> None:
+        class FakeCore:
+            @staticmethod
+            def validate_config(_config) -> None:
+                return None
+
+        class HoldingWorker:
+            def __init__(self, *, target, **_kwargs):
+                self.target = target
+
+            def start(self) -> None:
+                return None
+
+        with tempfile.TemporaryDirectory() as temp:
+            paths = AppPaths(ROOT, Path(temp), ())
+            store = AccountStore(paths.data("accounts.sqlite3"))
+            locale = LocaleController(store)
+            controller = DownloadController(AppController(paths, locale), paths, store, locale)
+            core = import_resource_module(paths, "Download", "literature_download_core")
+            stats = core.CrawlStats(active_source_key=core.SOURCE_DOAJ, active_source_label="DOAJ")
+            with patch("omnilit_qt.download_controller.build_download_config", return_value=(FakeCore, object())), patch(
+                "omnilit_qt.download_controller.ManagedWorker", HoldingWorker
+            ):
+                self.assertTrue(controller.start({"keywords": "battery"}))
+
+            controller._on_progress(stats, "Searching DOAJ: battery page 1")
+
+            self.assertEqual(controller.activeSourceKey, core.SOURCE_DOAJ)
+            self.assertEqual(controller.activeSourceLabel, "DOAJ")
+            self.assertIn("DOAJ", controller.activeSourceText)
+
+            controller._on_finished(True, "finished")
+            self.assertEqual(controller.activeSourceKey, "")
+
+
 class FormPersistenceTests(unittest.TestCase):
     def test_download_form_settings_restore_after_controller_restart(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -596,6 +631,38 @@ class TranslationDeploymentKeyTests(unittest.TestCase):
             self.assertIn("解锁失败", fresh.statusText)
 
 
+    def test_bundled_default_key_unlocks_without_ui_password(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            paths = AppPaths(root / "resource", root / "data", ())
+            store = AccountStore(paths.data("accounts.sqlite3"))
+            locale = LocaleController(store)
+            key_path = paths.data("Translate", "APIKey.enc")
+            write_encrypted_key(key_path, "sk-bundled", DEFAULT_KEY_AUTO_PASSWORD)
+
+            controller = TranslationController(AppController(paths, locale), paths, store, locale)
+
+            self.assertTrue(controller.unlockBundledDefaultKey())
+            self.assertTrue(controller.defaultKeyLoaded)
+            self.assertEqual(controller.defaultKeySource, str(key_path))
+
+    def test_bundled_default_key_is_copied_to_current_app_translate_folder(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            paths = AppPaths(root / "resource", root / "app", ())
+            store = AccountStore(paths.data("accounts.sqlite3"))
+            locale = LocaleController(store)
+            resource_key_path = paths.resource("Translate", "APIKey.enc")
+            app_key_path = paths.data("Translate", "APIKey.enc")
+            write_encrypted_key(resource_key_path, "sk-resource", DEFAULT_KEY_AUTO_PASSWORD)
+
+            controller = TranslationController(AppController(paths, locale), paths, store, locale)
+
+            self.assertTrue(controller.unlockBundledDefaultKey())
+            self.assertTrue(app_key_path.exists())
+            self.assertEqual(controller.defaultKeySource, str(app_key_path))
+
+
 class TranslationPendingDocumentsTests(unittest.TestCase):
     def test_pending_documents_scan_and_add_duplicate_pdf(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -615,7 +682,8 @@ class TranslationPendingDocumentsTests(unittest.TestCase):
             source.write_bytes(b"%PDF-copy")
 
             controller.refreshPendingDocuments(str(translation_dir))
-            self.assertEqual([item["name"] for item in controller.pendingDocuments], ["a.pdf", "b.PDF"])
+            self.assertEqual([item["name"] for item in controller.pendingDocuments], ["a", "b"])
+            self.assertEqual([item["fileName"] for item in controller.pendingDocuments], ["a.pdf", "b.PDF"])
             self.assertEqual(controller.pendingDocumentCount, 2)
             self.assertTrue(all(item["sizeText"] and item["modifiedText"] for item in controller.pendingDocuments))
 
@@ -623,6 +691,57 @@ class TranslationPendingDocumentsTests(unittest.TestCase):
                 controller.addDocuments(str(translation_dir))
             self.assertTrue((translation_dir / "a_2.pdf").exists())
             self.assertEqual(controller.pendingDocumentCount, 3)
+
+    def test_pending_documents_prefer_pdf_metadata_title(self) -> None:
+        import fitz
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            paths = AppPaths(root / "resource", root / "data", ())
+            store = AccountStore(paths.data("accounts.sqlite3"))
+            locale = LocaleController(store)
+            controller = TranslationController(AppController(paths, locale), paths, store, locale)
+            translation_dir = root / "translations"
+            translation_dir.mkdir()
+            pdf = translation_dir / "raw-file-name.pdf"
+
+            document = fitz.open()
+            document.new_page()
+            document.set_metadata({"title": "Readable Literature Title"})
+            try:
+                document.save(pdf)
+            finally:
+                document.close()
+
+            controller.refreshPendingDocuments(str(translation_dir))
+            self.assertEqual(controller.pendingDocuments[0]["name"], "Readable Literature Title")
+            self.assertEqual(controller.pendingDocuments[0]["fileName"], "raw-file-name.pdf")
+
+    def test_pending_documents_prefer_visible_pdf_title_over_metadata(self) -> None:
+        import fitz
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            paths = AppPaths(ROOT, root / "data", ())
+            store = AccountStore(paths.data("accounts.sqlite3"))
+            locale = LocaleController(store)
+            controller = TranslationController(AppController(paths, locale), paths, store, locale)
+            translation_dir = root / "translations"
+            translation_dir.mkdir()
+            pdf = translation_dir / "wrong-metadata-name.pdf"
+
+            document = fitz.open()
+            page = document.new_page()
+            page.insert_text((72, 110), "Accurate Visible Literature Title", fontsize=20)
+            page.insert_text((72, 155), "Author One, Author Two", fontsize=10)
+            document.set_metadata({"title": "Microsoft Word - draft.pdf"})
+            try:
+                document.save(pdf)
+            finally:
+                document.close()
+
+            controller.refreshPendingDocuments(str(translation_dir))
+            self.assertEqual(controller.pendingDocuments[0]["name"], "Accurate Visible Literature Title")
 
     def test_active_translation_task_uses_current_pdf_name(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -1342,11 +1461,29 @@ class QtOnlyTests(unittest.TestCase):
         self.assertNotIn("id: outputDir", translation)
         self.assertIn("translationDir.text=settings.translationDir || settings.inputDir || translationController.defaultInputDir", translation)
         self.assertIn("translationController.pendingDocuments", translation)
-        self.assertIn("translationController.addDocuments(translationDir.text)", translation)
+        self.assertNotIn("translationController.addDocuments(translationDir.text)", translation)
+        self.assertIn("id: pendingDocumentsScroll", translation)
+        self.assertIn("Math.min(pendingDocumentsList.implicitHeight", translation)
         self.assertIn("function onChanged() { root.syncPreview() }", translation)
         self.assertIn("let oldY=flick.contentY", translation)
         self.assertIn("let wasAtBottom=oldY >= maxY - 12", translation)
         self.assertNotIn("text: translationController.previewText", translation)
+        controls_row = translation[
+            translation.index('Text { text: i18n.text("batch_size")') : translation.index(
+                "PillButton { text: translationController.running"
+            )
+        ]
+        for control_id in ("layoutOnly", "useCache", "summary", "references", "headerFooter"):
+            self.assertIn(f"id: {control_id}", controls_row)
+            self.assertLess(controls_row.index("id: maxPages"), controls_row.index(f"id: {control_id}"))
+        start_row = translation[
+            translation.index('Text { text: i18n.text("glossary")') : translation.index(
+                "StatusBanner { Layout.fillWidth: true"
+            )
+        ]
+        self.assertIn('i18n.formatText("selected_count"', start_row)
+        self.assertIn('i18n.text("select_glossary")', start_row)
+        self.assertIn("PillButton { text: translationController.running", start_row)
 
     def test_workspace_uses_drawer_pages_for_account_controls_and_active_task_tooltips(self) -> None:
         workspace = (ROOT / "ui" / "qml" / "Workspace.qml").read_text(encoding="utf-8")
@@ -1395,10 +1532,34 @@ class QtOnlyTests(unittest.TestCase):
         self.assertIn("readonly property bool compact", metrics)
         self.assertIn("readonly property bool narrow", metrics)
         self.assertIn("Layout.preferredWidth: root.sidebarWidth", workspace)
+        self.assertIn("id: pageScroll", download)
         self.assertIn("id: formScroll", download)
         self.assertIn("columns: metrics.narrow ? 2 : 4", download)
+        self.assertIn("readonly property int logPaneMinimumHeight", download)
+        self.assertIn("readonly property real logPanePreferredHeight: Math.max(", download)
+        self.assertIn("root.height - metrics.pageMargin * 2 - heading.implicitHeight - downloadFormPaneHeight - statsPaneHeight", download)
+        self.assertIn("advancedVisible ? 78 : 105", download)
+        self.assertIn("form.implicitHeight + metrics.cardPadding * 2", download)
+        self.assertIn("root.advancedVisible ? 360 : 320", download)
+        download_options_row = download[
+            download.index("ModernCheckBox { id: downloadPdfs") : download.index("id: advancedPanel")
+        ]
+        self.assertLess(download_options_row.index("id: oaOnly"), download_options_row.index("id: pages"))
+        self.assertLess(download_options_row.index("id: pages"), download_options_row.index("id: perPage"))
+        self.assertIn('i18n.text("advanced")', download_options_row)
+        self.assertIn("Layout.preferredHeight: root.logPanePreferredHeight", download)
+        self.assertIn("Layout.minimumHeight: root.logPaneMinimumHeight", download)
+        self.assertIn("id: pageScroll", translation)
         self.assertIn("id: formScroll", translation)
         self.assertIn("columns: metrics.narrow ? 1 : 2", translation)
+        self.assertIn("readonly property int resultPaneMinimumHeight", translation)
+        self.assertIn("readonly property int resultPaneMinimumHeight: metrics.compact ? 135 : 170", translation)
+        self.assertIn("readonly property real resultPanePreferredHeight: Math.max(", translation)
+        self.assertIn("root.height - metrics.pageMargin * 2 - heading.implicitHeight - translationFormPaneHeight - progressPaneHeight", translation)
+        self.assertIn("form.implicitHeight + metrics.cardPadding * 2", translation)
+        self.assertIn("Layout.minimumHeight: metrics.compact ? 320 : 380", translation)
+        self.assertIn("Layout.preferredHeight: root.resultPanePreferredHeight", translation)
+        self.assertIn("Layout.minimumHeight: root.resultPaneMinimumHeight", translation)
         self.assertTrue((qml_dir / "Theme.qml").exists())
         self.assertTrue((qml_dir / "PageHeading.qml").exists())
         self.assertTrue((qml_dir / "SoftProgressBar.qml").exists())
@@ -1410,10 +1571,22 @@ class QtOnlyTests(unittest.TestCase):
         auth = (qml_dir / "AuthPage.qml").read_text(encoding="utf-8")
         self.assertIn("readonly property int authWindowWidth: 472", main)
         self.assertIn("readonly property int authWindowHeight: 580", main)
-        self.assertIn("maximumWidth = authWindowWidth", main)
-        self.assertIn("maximumHeight = authWindowHeight", main)
-        self.assertIn("savedWorkspaceWidth ||", main)
-        self.assertIn("savedWorkspaceHeight ||", main)
+        self.assertIn("readonly property int workspaceMinimumWidth: 1280", main)
+        self.assertIn("readonly property int workspaceMinimumHeight: 860", main)
+        self.assertIn("maximumWidth: 16777215", main)
+        self.assertIn("maximumHeight: 16777215", main)
+        self.assertIn("maximumWidth = 16777215", main)
+        self.assertIn("maximumHeight = 16777215", main)
+        self.assertNotIn("maximumWidth = authWindowWidth", main)
+        self.assertNotIn("maximumHeight = authWindowHeight", main)
+        self.assertIn("visibility = Window.Windowed", main)
+        self.assertIn("x = Screen.desktopAvailableX", main)
+        self.assertIn("y = Screen.desktopAvailableY", main)
+        self.assertIn("minimumWidth = Math.min(workspaceMinimumWidth, Screen.desktopAvailableWidth)", main)
+        self.assertIn("minimumHeight = Math.min(workspaceMinimumHeight, Screen.desktopAvailableHeight)", main)
+        self.assertIn("width = Screen.desktopAvailableWidth", main)
+        self.assertIn("height = Screen.desktopAvailableHeight", main)
+        self.assertNotIn("visibility = Window.Maximized", main)
         self.assertNotIn("registerMode ?", auth.split("height: Math.min(", 1)[1].split("\n", 1)[0])
         self.assertNotIn("GradientStop", auth)
         self.assertNotIn("radius: width / 2", auth)
@@ -1459,8 +1632,13 @@ class QtOnlyTests(unittest.TestCase):
         self.assertNotIn("KeyPage", workspace)
         self.assertFalse((qml_dir / "KeyPage.qml").exists())
         self.assertNotIn("keyController", app)
-        self.assertIn("property bool deploymentKeyAdvancedVisible: false", translation)
-        self.assertIn("translationController.saveDefaultKey(apiKey.text", translation)
+        self.assertIn("translationController.unlockBundledDefaultKey()", translation)
+        self.assertNotIn("id: defaultKeyDialog", translation)
+        self.assertNotIn("id: defaultApiKeyInput", translation)
+        self.assertNotIn("translationController.saveDefaultKey(apiKey.text", translation)
+        self.assertNotIn("deploymentKeyAdvancedVisible", translation)
+        self.assertIn("text: translationController.logText", translation)
+        self.assertNotIn("id: logScroll", translation)
 
     def test_update_page_has_no_editable_manifest_url(self) -> None:
         qml = (ROOT / "ui" / "qml" / "UpdatePage.qml").read_text(encoding="utf-8")

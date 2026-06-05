@@ -1,6 +1,6 @@
 {
-  "cancellation_requested": false,
-  "detail": "",
+  "cancellation_requested": true,
+  "detail": "下载已停止。",
   "metadata": {
     "keywords": [
       "lithium-sulfur batteries",
@@ -11,6 +11,6 @@
   },
   "name": "LiteratureDownload",
   "started_at": "2026-06-05T01:44:49+00:00",
-  "status": "running",
-  "updated_at": "2026-06-05T01:44:49+00:00"
+  "status": "cancelled",
+  "updated_at": "2026-06-05T02:02:11+00:00"
 }

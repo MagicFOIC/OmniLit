@@ -66,6 +66,9 @@ class DownloadController(QObject):
         self._status = locale.textf("not_started")
         self._last_round_summary = ""
         self._stats = self._empty_stats()
+        self._active_source_key = ""
+        self._active_source_label = ""
+        self._active_source_text = ""
         self._logs: list[str] = []
         self._stop = threading.Event()
         self._worker: ManagedWorker | None = None
@@ -113,6 +116,15 @@ class DownloadController(QObject):
 
         self._status = message
         self._append(message)
+        self._active_source_key = str(getattr(stats, "active_source_key", "") or "")
+        self._active_source_label = str(getattr(stats, "active_source_label", "") or "")
+        if self._active_source_label:
+            if self.locale.language == "zh":
+                self._active_source_text = f"当前文献库：{self._active_source_label}"
+            else:
+                self._active_source_text = f"Current database: {self._active_source_label}"
+        else:
+            self._active_source_text = ""
 
         if self._is_round_summary_message(message):
             self._last_round_summary = message
@@ -125,6 +137,9 @@ class DownloadController(QObject):
         message = str(message or "")
 
         self._running = False
+        self._active_source_key = ""
+        self._active_source_label = ""
+        self._active_source_text = ""
 
         final_status = (
             self._last_round_summary
@@ -160,6 +175,21 @@ class DownloadController(QObject):
     def activeTaskText(self) -> str:
         """返回当前下载任务摘要。参数：无。返回值：任务摘要或空文本。"""
         return self._active_task_text if self._running else ""
+
+    @Property(str, notify=changed)
+    def activeSourceKey(self) -> str:
+        """Return the currently processed literature database key."""
+        return self._active_source_key if self._running else ""
+
+    @Property(str, notify=changed)
+    def activeSourceLabel(self) -> str:
+        """Return the currently processed literature database label."""
+        return self._active_source_label if self._running else ""
+
+    @Property(str, notify=changed)
+    def activeSourceText(self) -> str:
+        """Return user-facing text for the currently processed source."""
+        return self._active_source_text if self._running else ""
 
     @Property(str, notify=changed)
     def logText(self) -> str:
@@ -254,6 +284,9 @@ class DownloadController(QObject):
         self._stop.clear()
         self._last_round_summary = ""
         self._logs, self._stats, self._running = [], self._empty_stats(), True
+        self._active_source_key = ""
+        self._active_source_label = ""
+        self._active_source_text = ""
         keywords = raw.get("keywords") or []
         if isinstance(keywords, str):
             keywords = [item.strip() for item in keywords.replace("\n", ",").split(",") if item.strip()]
