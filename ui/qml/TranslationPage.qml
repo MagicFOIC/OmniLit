@@ -332,7 +332,17 @@ Item {
                 ColumnLayout {
                     anchors.fill: parent; anchors.margins: 12
                     Text { text: i18n.text("task_log"); color: theme.text; font.weight: Font.Bold }
-                    ScrollView { Layout.fillWidth: true; Layout.fillHeight: true; SoftTextArea { text: translationController.logText; readOnly: true; wrapMode: TextArea.Wrap } }
+                    ScrollView {
+                        Layout.fillWidth: true;
+                        Layout.fillHeight: true;
+                        ScrollPreservingTextArea {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            text: translationController.logText
+                            readOnly: true
+                            wrapMode: TextArea.Wrap
+                        }
+                    }
                 }
             }
         }

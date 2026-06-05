@@ -245,8 +245,17 @@ Item {
             StatCard { title: "PDF"; value: String(downloadController.stats.downloaded_pdfs || 0); detail: i18n.text("downloaded") }
         }
         Card {
-            Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: metrics.compact ? 64 : 80
-            ScrollView { anchors.fill: parent; anchors.margins: 12; SoftTextArea { text: downloadController.logText; readOnly: true; wrapMode: TextArea.Wrap } }
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            Layout.minimumHeight: metrics.compact ? 64 : 80
+
+            ScrollPreservingTextArea {
+                anchors.fill: parent
+                anchors.margins: 12
+                text: downloadController.logText
+                readOnly: true
+                wrapMode: TextArea.Wrap
+            }
         }
     }
 
