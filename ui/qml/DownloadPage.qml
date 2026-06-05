@@ -6,7 +6,7 @@ Item {
     id: root
     property var sortValues: ["", "relevance_score:desc", "cited_by_count:desc", "publication_date:desc"]
     property var topicScoreValues: [0, 4, 6, 9, 12]
-    property var topicScoreLabels: ["关闭过滤", "宽松", "均衡（推荐）", "严格", "极严格"]
+    property var topicScoreLabels: ["关键词提及即可 / 0", "宽松 / 4", "均衡 / 6", "严格 / 9", "极严格 / 12"]
     property var selectedSources: ["openalex"]
     property var selectedJournals: []
     property bool advancedVisible: false
@@ -180,12 +180,12 @@ Item {
                                 id: minTopicScore
                                 Layout.fillWidth: true
                                 model: root.topicScoreLabels
-                                currentIndex: 2
+                                currentIndex: 0
                                 hoverEnabled: true
                                 ToolTip.delay: 350
                                 ToolTip.timeout: 9000
                                 ToolTip.visible: hovered
-                                ToolTip.text: "关闭=0；宽松=4；均衡=6；严格=9；极严格=12。分数越高越精准，但可能漏掉相关论文。"
+                                ToolTip.text: "关键词提及即可 / 0：召回最多。只要标题或摘要提到你的关键词就保留，适合建库、初筛和尽量多收文献。\n宽松 / 4：保留大多数相关文献，只过滤明显偏离主题的结果，适合希望减少少量噪声。\n均衡 / 6：在数量和准确性之间折中，适合日常检索和普通主题整理。\n严格 / 9：只保留主题信号更充分的文献，数量会减少，适合精读前筛选。\n极严格 / 12：只保留高度聚焦的文献，准确性更高，但可能漏掉综述、边缘相关或摘要较短的文献。"
                                 onCurrentIndexChanged: root.scheduleSave()
                             }
                             Text { text: i18n.text("loop_sleep"); color: theme.textMuted }
@@ -210,11 +210,25 @@ Item {
                             }
                             ModernCheckBox { id: loopJob; text: i18n.text("loop_job"); onToggled: root.scheduleSave() }
                             ModernCheckBox { id: fastForward; text: i18n.text("fast_forward"); checked: true; onToggled: root.scheduleSave() }
+                            ModernCheckBox {
+                                id: discoveryMode
+                                text: "宽松发现模式 / Discovery mode"
+                                ToolTip.delay: 350
+                                ToolTip.timeout: 9000
+                                ToolTip.visible: hovered
+                                ToolTip.text: "Disable strict keyword/topic/journal filters and resume fast-forward to diagnose source yield."
+                                onToggled: {
+                                    if(checked)
+                                        root.applyDiscoveryMode()
+                                    root.scheduleSave()
+                                }
+                            }
                         }
                     }
                 }
                 RowLayout {
                     Item { Layout.fillWidth: true }
+                    PillButton { text: "补全已有文献 PDF"; enabled: !downloadController.running; onClicked: downloadController.backfillMissingPdfs(config()) }
                     PillButton { text: downloadController.running ? i18n.text("running") : i18n.text("start_download"); primary: true; busy: downloadController.running; onClicked: downloadController.start(config()) }
                     PillButton { text: i18n.text("stop"); enabled: downloadController.running; onClicked: downloadController.stop() }
                 }
@@ -237,7 +251,7 @@ Item {
             Layout.fillWidth: true; Layout.preferredHeight: root.statsPaneHeight; spacing: 8
             StatCard { Layout.preferredHeight: root.statsPaneHeight; title: i18n.text("literature_records"); value: String(downloadController.stats.fetched_items || 0); detail: i18n.text("fetched") }
             StatCard { Layout.preferredHeight: root.statsPaneHeight; title: i18n.text("metadata"); value: String(downloadController.stats.added_records || 0); detail: i18n.text("saved") }
-            StatCard { Layout.preferredHeight: root.statsPaneHeight; title: "PDF"; value: String(downloadController.stats.downloaded_pdfs || 0); detail: i18n.text("downloaded") }
+            StatCard { Layout.preferredHeight: root.statsPaneHeight; title: "PDF"; value: String((downloadController.stats.downloaded_pdfs || 0) + (downloadController.stats.backfill_downloaded_pdfs || 0)); detail: i18n.text("downloaded") }
         }
         Card {
             Layout.fillWidth: true
@@ -278,6 +292,7 @@ Item {
                  topicPack: "auto", journalPack: "auto",
                  selectedJournals: root.selectedJournals, minTopicScore: root.topicScoreValues[minTopicScore.currentIndex],
                  journalWhitelistOnly: preferredJournalOnly.checked,
+                 discoveryMode: discoveryMode.checked,
                  loop: loopJob.checked, loopSleep: loopSleep.text, maxRuntimeHours: runtimeHours.text,
                  resume: resume.checked, fastForwardExistingPages: fastForward.checked, oaOnly: oaOnly.checked,
                  sources: root.selectedSources, advancedVisible: root.advancedVisible }
@@ -333,6 +348,14 @@ Item {
     function scheduleSave() {
         if(!root.restoringSettings) saveSettingsTimer.restart()
     }
+    function applyDiscoveryMode() {
+        strictMatch.checked = false
+        matchRatio.text = "0.3"
+        minTopicScore.currentIndex = topicScoreIndex(0)
+        preferredJournalOnly.checked = false
+        resume.checked = false
+        fastForward.checked = false
+    }
     function restoreSavedConfig() {
         let settings=downloadController.savedConfig || {}
         email.text=savedValue(settings, "email", "")
@@ -354,13 +377,16 @@ Item {
         strictMatch.checked=savedValue(settings, "strictKeywordMatch", true)
         matchRatio.text=savedValue(settings, "minKeywordMatchRatio", "0.75")
         root.selectedJournals=savedValue(settings, "selectedJournals", [])
-        minTopicScore.currentIndex=topicScoreIndex(savedValue(settings, "minTopicScore", 6))
+        minTopicScore.currentIndex=topicScoreIndex(savedValue(settings, "minTopicScore", 0))
         preferredJournalOnly.checked=savedValue(settings, "journalWhitelistOnly", false)
+        discoveryMode.checked=savedValue(settings, "discoveryMode", false)
         loopJob.checked=savedValue(settings, "loop", false)
         loopSleep.text=savedValue(settings, "loopSleep", "3600")
         runtimeHours.text=savedValue(settings, "maxRuntimeHours", "")
         resume.checked=savedValue(settings, "resume", true)
         fastForward.checked=savedValue(settings, "fastForwardExistingPages", true)
+        if(discoveryMode.checked)
+            root.applyDiscoveryMode()
         oaOnly.checked=savedValue(settings, "oaOnly", false)
         root.selectedSources=savedValue(settings, "sources", ["openalex"])
         root.advancedVisible=savedValue(settings, "advancedVisible", false)

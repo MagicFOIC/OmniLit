@@ -7,6 +7,7 @@ Controller implementations live in focused modules. Importing from
 from .app_controller import AppController
 from .auth_controller import AuthController
 from .download_controller import DOWNLOAD_FORM_SETTING, DownloadController
+from .literature_library_controller import LiteratureLibraryController
 from .preferences_controller import PreferencesController
 from .translation_controller import TRANSLATION_FORM_SETTING, TranslationController
 from .update_controller import DEFAULT_UPDATE_MANIFEST_URL, UpdateController
@@ -17,6 +18,7 @@ __all__ = [
     "DEFAULT_UPDATE_MANIFEST_URL",
     "DOWNLOAD_FORM_SETTING",
     "DownloadController",
+    "LiteratureLibraryController",
     "PreferencesController",
     "TRANSLATION_FORM_SETTING",
     "TranslationController",

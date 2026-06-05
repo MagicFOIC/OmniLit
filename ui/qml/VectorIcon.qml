@@ -28,6 +28,7 @@ Item {
 
     function pathData(iconName) {
         if (iconName === "download") return "M12 3 L12 14 M7.5 10 L12 14.5 L16.5 10 M5 17 L5 20 L19 20 L19 17"
+        if (iconName === "library") return "M5 4 L15 4 L19 8 L19 20 L5 20 Z M15 4 L15 8 L19 8 M8 12 L16 12 M8 16 L16 16"
         if (iconName === "translate") return "M4 5 L14 5 M9 3 L9 5 M6 8 C7 11 9 13 12 15 M12 8 C11 11 8 14 5 16 M14.5 20 L18 11 L21.5 20 M15.8 17 L20.2 17"
         if (iconName === "back") return "M15 5 L8 12 L15 19"
         if (iconName === "power") return "M12 3.2 L12 11.2 M7.5 5.8 C5 7.3 3.8 10.1 4.5 13 C5.2 16 7.9 18.2 11 18.6 C14.3 19 17.5 17.2 18.8 14.2 C20.2 10.9 19 7.5 16.5 5.8"

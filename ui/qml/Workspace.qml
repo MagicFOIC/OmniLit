@@ -72,6 +72,7 @@ Item {
                 Repeater {
                     model: [
                         { label: "nav_download", icon: "download" },
+                        { label: "nav_library", icon: "library" },
                         { label: "nav_translate", icon: "translate" }
                     ]
                     Button {
@@ -233,6 +234,7 @@ Item {
             Layout.fillHeight: true
             currentIndex: root.pageIndex
             DownloadPage {}
+            LiteratureLibraryPage {}
             TranslationPage {}
         }
     }
@@ -845,7 +847,7 @@ Item {
     function navigationTooltip(index, fallbackLabel) {
         if(index === 0 && downloadController.running && downloadController.activeTaskText.length > 0)
             return downloadController.activeTaskText
-        if(index === 1 && translationController.running && translationController.activeTaskText.length > 0)
+        if(index === 2 && translationController.running && translationController.activeTaskText.length > 0)
             return translationController.activeTaskText
         return i18n.text(fallbackLabel)
     }

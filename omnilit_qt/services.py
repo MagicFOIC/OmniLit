@@ -238,6 +238,21 @@ def build_download_config(paths: AppPaths, raw: dict[str, Any], stop_callback, p
         selected_journals = [str(item).strip() for item in selected_journals_raw if str(item).strip()] or None
     else:
         selected_journals = [item.strip() for item in str(selected_journals_raw).replace(";", "\n").splitlines() if item.strip()] or None
+    discovery_mode = as_bool(raw.get("discoveryMode"))
+    strict_keyword_match = as_bool(raw.get("strictKeywordMatch"), True)
+    min_keyword_match_ratio = as_float(raw.get("minKeywordMatchRatio"), 0.75)
+    min_topic_score = as_int(raw.get("minTopicScore"), 0)
+    journal_whitelist_only = as_bool(raw.get("journalWhitelistOnly"))
+    resume = as_bool(raw.get("resume"), True)
+    fast_forward_existing_pages = as_bool(raw.get("fastForwardExistingPages"), True)
+    if discovery_mode:
+        strict_keyword_match = False
+        min_keyword_match_ratio = 0.3
+        min_topic_score = 0
+        journal_whitelist_only = False
+        resume = False
+        fast_forward_existing_pages = False
+
     return core, core.CrawlConfig(
         email=str(raw.get("email") or "").strip(),
         out_dir=output_root / "pdfs",
@@ -258,18 +273,18 @@ def build_download_config(paths: AppPaths, raw: dict[str, Any], stop_callback, p
         download_pdfs=as_bool(raw.get("downloadPdfs"), True),
         retry_missing_pdfs=as_bool(raw.get("retryMissingPdfs"), True),
         write_retry_records=as_bool(raw.get("writeRetryRecords")),
-        strict_keyword_match=as_bool(raw.get("strictKeywordMatch"), True),
-        min_keyword_match_ratio=as_float(raw.get("minKeywordMatchRatio"), 0.75),
+        strict_keyword_match=strict_keyword_match,
+        min_keyword_match_ratio=min_keyword_match_ratio,
         topic_pack=str(raw.get("topicPack") or "auto").strip() or None,
         journal_pack=str(raw.get("journalPack") or "auto").strip() or None,
         selected_journals=selected_journals,
-        min_topic_score=as_int(raw.get("minTopicScore"), 6),
-        journal_whitelist_only=as_bool(raw.get("journalWhitelistOnly")),
+        min_topic_score=min_topic_score,
+        journal_whitelist_only=journal_whitelist_only,
         loop=as_bool(raw.get("loop")),
         loop_sleep=as_float(raw.get("loopSleep"), 3600),
         max_runtime_hours=optional_float(raw.get("maxRuntimeHours")),
-        resume=as_bool(raw.get("resume"), True),
-        fast_forward_existing_pages=as_bool(raw.get("fastForwardExistingPages"), True),
+        resume=resume,
+        fast_forward_existing_pages=fast_forward_existing_pages,
         language=language,
         stop_callback=stop_callback,
         progress_callback=progress_callback,

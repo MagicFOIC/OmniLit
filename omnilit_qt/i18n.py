@@ -60,6 +60,7 @@ TEXTS: dict[str, tuple[str, str]] = {
     "logged_out": ("已退出登录。", "Signed out."),
     "migrated": ("已补齐 {count} 项旧版运行数据。", "Filled {count} missing items from legacy data."),
     "nav_download": ("文献下载", "Literature download"),
+    "nav_library": ("文献库", "Literature library"),
     "nav_translate": ("文献翻译", "Literature translation"),
     "nav_update": ("更新", "Updates"),
     "workspace_eyebrow": ("OMNILIT 科研工作台", "OMNILIT RESEARCH WORKSPACE"),

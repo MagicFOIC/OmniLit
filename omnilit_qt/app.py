@@ -13,6 +13,7 @@ from .controllers import (
     AppController,
     AuthController,
     DownloadController,
+    LiteratureLibraryController,
     PreferencesController,
     TranslationController,
     UpdateController,
@@ -82,6 +83,7 @@ def run() -> int:
     auth = AuthController(shell, store, locale)
     preferences = PreferencesController(paths, store, auth)
     download = DownloadController(shell, paths, store, locale)
+    literature_library = LiteratureLibraryController(shell, paths, store, locale)
     translation = TranslationController(shell, paths, store, locale)
     updater = UpdateController(shell, paths, store, locale)
     shell.set_migration_summary(copied)
@@ -100,6 +102,7 @@ def run() -> int:
         "authController": auth,
         "preferencesController": preferences,
         "downloadController": download,
+        "literatureLibraryController": literature_library,
         "translationController": translation,
         "updateController": updater,
         "localeController": locale,

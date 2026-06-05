@@ -1517,6 +1517,7 @@ class QtOnlyTests(unittest.TestCase):
     def test_translation_feature_is_named_literature_translation(self) -> None:
         from omnilit_qt.i18n import TEXTS
 
+        self.assertEqual(TEXTS["nav_library"][1], "Literature library")
         self.assertEqual(TEXTS["nav_translate"], ("文献翻译", "Literature translation"))
         self.assertEqual(TEXTS["translate_title"], ("文献翻译", "Literature translation"))
 
@@ -1527,6 +1528,7 @@ class QtOnlyTests(unittest.TestCase):
         workspace = (qml_dir / "Workspace.qml").read_text(encoding="utf-8")
         download = (qml_dir / "DownloadPage.qml").read_text(encoding="utf-8")
         translation = (qml_dir / "TranslationPage.qml").read_text(encoding="utf-8")
+        literature = (qml_dir / "LiteratureLibraryPage.qml").read_text(encoding="utf-8")
         self.assertIn("Screen.desktopAvailableWidth", main)
         self.assertIn("Screen.desktopAvailableHeight", main)
         self.assertIn("readonly property bool compact", metrics)
@@ -1551,6 +1553,8 @@ class QtOnlyTests(unittest.TestCase):
         self.assertIn("Layout.minimumHeight: root.logPaneMinimumHeight", download)
         self.assertIn("id: pageScroll", translation)
         self.assertIn("id: formScroll", translation)
+        self.assertIn("literatureLibraryController.records", literature)
+        self.assertIn("literatureLibraryController.organizeByRelevance()", literature)
         self.assertIn("columns: metrics.narrow ? 1 : 2", translation)
         self.assertIn("readonly property int resultPaneMinimumHeight", translation)
         self.assertIn("readonly property int resultPaneMinimumHeight: metrics.compact ? 135 : 170", translation)
@@ -1627,6 +1631,7 @@ class QtOnlyTests(unittest.TestCase):
         workspace = (qml_dir / "Workspace.qml").read_text(encoding="utf-8")
         translation = (qml_dir / "TranslationPage.qml").read_text(encoding="utf-8")
         self.assertIn('{ label: "nav_download", icon: "download" }', workspace)
+        self.assertIn('{ label: "nav_library", icon: "library" }', workspace)
         self.assertIn('{ label: "nav_translate", icon: "translate" }', workspace)
         self.assertNotIn('{ label: "nav_update"', workspace)
         self.assertNotIn("KeyPage", workspace)

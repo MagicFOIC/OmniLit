@@ -46,6 +46,7 @@ DOWNLOAD_FORM_FIELDS = (
     "selectedJournals",
     "minTopicScore",
     "journalWhitelistOnly",
+    "discoveryMode",
     "advancedVisible",
 )
 
@@ -78,9 +79,32 @@ class DownloadController(QObject):
 
     @staticmethod
     def _empty_stats() -> dict[str, int]:
-        """生成空统计值。参数：无。返回值：统计字典。"""
-        return {key: 0 for key in ("existing_records", "fetched_items", "added_records", "skipped_duplicates", "skipped_without_key", "skipped_irrelevant", "open_access_records", "downloaded_pdfs", "failed_pdfs", "retried_existing_records", "request_failures")}
-
+        """Return all integer stats exposed to QML."""
+        return {key: 0 for key in (
+            "existing_records",
+            "fetched_items",
+            "fetched_items_total",
+            "added_records",
+            "skipped_duplicates",
+            "skipped_without_key",
+            "skipped_irrelevant",
+            "skipped_not_oa",
+            "skipped_by_topic_score",
+            "skipped_by_keyword_match",
+            "open_access_records",
+            "downloaded_pdfs",
+            "failed_pdfs",
+            "pdf_candidates_found",
+            "pdf_download_attempted",
+            "pdf_downloaded",
+            "pdf_failed",
+            "retried_existing_records",
+            "backfill_scanned_records",
+            "backfill_missing_pdf_records",
+            "backfill_downloaded_pdfs",
+            "backfill_failed_pdfs",
+            "request_failures",
+        )}
     @staticmethod
     def _is_round_summary_message(message: str) -> bool:
         """判断进度消息是否是本轮抓取总结。"""
@@ -94,6 +118,7 @@ class DownloadController(QObject):
                 "本轮抓取完成",
                 "Crawl round finished",
                 "Crawl round completed",
+                "Metadata PDF backfill finished",
                 "Раунд сканирования завершён",
                 "Раунд обхода завершён",
             )
@@ -309,6 +334,62 @@ class DownloadController(QObject):
         task.start()
         return True
 
+    @Slot("QVariantMap", result=bool)
+    def backfillMissingPdfs(self, config_map: dict[str, Any]) -> bool:
+        """Start a metadata-only PDF backfill task."""
+        if self._running:
+            self._on_finished(False, self.locale.textf("download_busy"))
+            return False
+        language = self.locale.language
+        try:
+            raw = dict(config_map or {})
+            core, config = build_download_config(
+                self.paths,
+                raw,
+                lambda: self._stop.is_set(),
+                lambda stats, message: self.progress.emit(stats, str(message)),
+                language,
+            )
+            core.validate_config(config)
+            self.saveConfig(raw)
+        except Exception as exc:
+            self._on_finished(False, tr(language, "config_error", error=exc))
+            return False
+
+        def worker() -> None:
+            try:
+                core.backfill_missing_pdfs_from_metadata(config, stop_event=self._stop)
+            except Exception as exc:
+                message = tr(language, "download_failed", error=exc)
+                task.update_state("failed", detail=message)
+                self.finished.emit(False, message)
+            else:
+                cancelled = self._stop.is_set()
+                message = tr(language, "download_stopped" if cancelled else "download_done")
+                task.update_state("cancelled" if cancelled else "completed", detail=message)
+                self.finished.emit(not cancelled, message)
+
+        self._stop.clear()
+        self._last_round_summary = ""
+        self._logs, self._stats, self._running = [], self._empty_stats(), True
+        self._active_source_key = ""
+        self._active_source_label = ""
+        self._active_source_text = ""
+        self._active_task_text = "补全已有文献 PDF" if language == "zh" else "Backfill existing PDFs"
+        self._status = "已启动已有 metadata PDF 补全。" if language == "zh" else "Existing metadata PDF backfill started."
+        self._append(self._status)
+        self.changed.emit()
+        task = ManagedWorker(
+            name="LiteraturePdfBackfill",
+            target=worker,
+            state_path=self.paths.data("task_state", "literature_pdf_backfill.json"),
+            cancel_event=self._stop,
+            metadata={"mode": "metadata_pdf_backfill"},
+        )
+        self._worker = task
+        task.start()
+        return True
+
     @Slot()
     def stop(self) -> None:
         """请求停止下载。参数：无。返回值：无。"""
@@ -325,3 +406,6 @@ class DownloadController(QObject):
     def shutdown(self, timeout: float = 15.0) -> bool:
         """Request a clean stop and wait for metadata and PDF writes to settle."""
         return shutdown_workers([self._worker], timeout)
+
+
+

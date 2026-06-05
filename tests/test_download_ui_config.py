@@ -47,6 +47,7 @@ class DownloadUiConfigTests(unittest.TestCase):
             self.assertIsNone(config.selected_journals)
             self.assertEqual(config.topic_pack, "auto")
             self.assertEqual(config.journal_pack, "auto")
+            self.assertEqual(config.min_topic_score, 0)
 
     def test_qml_config_contains_new_fields(self) -> None:
         qml = (ROOT / "ui" / "qml" / "DownloadPage.qml").read_text(encoding="utf-8")
@@ -67,7 +68,8 @@ class DownloadUiConfigTests(unittest.TestCase):
         self.assertIn("SequentialAnimation on opacity", checkbox)
         self.assertIn('topicPack: "auto", journalPack: "auto"', qml)
         self.assertIn('property var topicScoreValues: [0, 4, 6, 9, 12]', qml)
-        self.assertIn('currentIndex: 2', qml)
+        self.assertIn('currentIndex: 0', qml)
+        self.assertIn('关键词提及即可 / 0', qml)
 
     def test_qml_uses_compact_hidden_filter_guidance(self) -> None:
         qml = (ROOT / "ui" / "qml" / "DownloadPage.qml").read_text(encoding="utf-8")
