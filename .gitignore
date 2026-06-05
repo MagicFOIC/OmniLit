@@ -18,7 +18,7 @@ Download/pdfs/
 Download/metadata_battery.jsonl
 Download/crawl_state.json
 Download/gui_settings.json
-task_state
+task_state/
 Translate/pdf/
 Translate/out/
 Translate/*.pdf
