@@ -1,15 +1,22 @@
 {
-  "version": "0.0.10",
+  "version": "0.0.11",
   "download_url": "https://originchaos.top/omnilit/OmniLit.exe",
-  "sha256": "0909ae85c81ee537d570b9b05eb445650ec473d2d1a29e66e9c13cf45c581e75",
+  "sha256": "980d385ebcf215a64296a53adc8723aee20157a6d3a83bc77d543b323c1ac8c0",
   "mandatory": false,
-  "notes": "完成 Qt/QML 迁移收尾与交互抛光：程序目录数据、双语界面、日期选择器、密码记忆、旧账号兼容、可写术语表、页面过渡、弹窗动画和任务忙碌反馈。侧边栏设计。拓展栏集合所有设置，目前有头像设置，头像状态，界面语言，界面外观，更新管理",
+  "notes": "新增文献库管理",
   "history": [
     {
+      "version": "0.0.11",
+      "date": "2026-06-06 06:58:15",
+      "notes": "新增文献库管理",
+      "sha256": "980d385ebcf215a64296a53adc8723aee20157a6d3a83bc77d543b323c1ac8c0",
+      "download_url": "https://originchaos.top/omnilit/OmniLit.exe"
+    },
+    {
       "version": "0.0.10",
-      "date": "2026-06-05 19:19:05",
+      "date": "2026-06-06 00:59:56",
       "notes": "完成 Qt/QML 迁移收尾与交互抛光：程序目录数据、双语界面、日期选择器、密码记忆、旧账号兼容、可写术语表、页面过渡、弹窗动画和任务忙碌反馈。侧边栏设计。拓展栏集合所有设置，目前有头像设置，头像状态，界面语言，界面外观，更新管理",
-      "sha256": "0909ae85c81ee537d570b9b05eb445650ec473d2d1a29e66e9c13cf45c581e75",
+      "sha256": "1ba54a7396446e8a0b87e591cbe8426fbd290b15ea14f020a7a3c78b45d63c65",
       "download_url": "https://originchaos.top/omnilit/OmniLit.exe"
     },
     {
@@ -57,6 +64,6 @@
   "signature": {
     "algorithm": "ed25519",
     "key_id": "omnilit-release-2026-01",
-    "value": "pWy86tA/Mxj47dlfk1K16hbCcK2rTDXbgGTuhqQcmR+GqKQlE7zOZFEl6eaaWhXLWyf4LdThbOT6EwDUgmVLAg=="
+    "value": "vTfLGxnDj3HoK+E9mwb15Omzmkyyxs0kxFQyoTtcaIedzTsOlt/xvUjQ0iLwiOjqQ/qlzzN+2YupvefM/z1SDw=="
   }
 }

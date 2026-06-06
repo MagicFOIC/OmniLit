@@ -9,9 +9,12 @@ Item {
     property var topicScoreLabels: ["关键词提及即可 / 0", "宽松 / 4", "均衡 / 6", "严格 / 9", "极严格 / 12"]
     property var selectedSources: ["openalex"]
     property var selectedJournals: []
+    property var discoverySnapshot: ({})
     property bool advancedVisible: false
     property bool restoringSettings: true
     property bool toDateAuto: true
+    property bool discoverySnapshotAvailable: false
+    readonly property bool discoveryModeActive: filterStrategy.currentIndex === 1
     readonly property int logPaneMinimumHeight: metrics.compact ? (advancedVisible ? 78 : 105) : (advancedVisible ? 96 : 130)
     readonly property int statsPaneHeight: metrics.compact ? 64 : 72
     readonly property real downloadFormPaneHeight: Math.max(metrics.compact ? 320 : 380, form.implicitHeight + metrics.cardPadding * 2)
@@ -134,16 +137,33 @@ Item {
                         elide: Text.ElideRight
                     }
                 }
+                Text {
+                    Layout.fillWidth: true
+                    text: i18n.text("settings_group_search_scope")
+                    color: theme.text
+                    font.weight: Font.Bold
+                }
                 RowLayout {
                     ModernCheckBox { id: downloadPdfs; text: i18n.text("download_pdf"); checked: true; onToggled: root.scheduleSave() }
-                    ModernCheckBox { id: resume; text: i18n.text("resume"); checked: true; onToggled: root.scheduleSave() }
+                    ModernCheckBox {
+                        id: resume
+                        text: i18n.text("resume")
+                        checked: true
+                        enabled: !root.discoveryModeActive
+                        opacity: enabled ? 1 : 0.55
+                        ToolTip.delay: 250
+                        ToolTip.timeout: 5000
+                        ToolTip.visible: hovered && root.discoveryModeActive
+                        ToolTip.text: i18n.text("discovery_managed_setting_tip")
+                        onToggled: root.scheduleSave()
+                    }
                     ModernCheckBox {
                         id: oaOnly
                         text: i18n.text("oa_only")
                         ToolTip.delay: 250
                         ToolTip.timeout: 7000
                         ToolTip.visible: hovered
-                        ToolTip.text: "只保留开放获取记录，用于排除非 OA 文献；PDF 仍只会下载合法开放获取链接。"
+                        ToolTip.text: i18n.text("oa_only_tip")
                         onToggled: root.scheduleSave()
                     }
                     Text { text: i18n.text("pages"); color: theme.textMuted }
@@ -165,61 +185,163 @@ Item {
                     ColumnLayout {
                         id: advancedContent
                         width: parent.width
+                        Rectangle {
+                            id: discoveryNotice
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: noticeHeight
+                            property real noticeHeight: root.discoveryModeActive ? discoveryNoticeText.implicitHeight + 16 : 0
+                            opacity: root.discoveryModeActive ? 1 : 0
+                            radius: 10
+                            color: theme.accentSofter
+                            border.color: theme.border
+                            clip: true
+                            Behavior on noticeHeight { NumberAnimation { duration: motion.fast; easing.type: Easing.OutCubic } }
+                            Behavior on opacity { NumberAnimation { duration: motion.fast } }
+                            Text {
+                                id: discoveryNoticeText
+                                anchors.fill: parent
+                                anchors.margins: 8
+                                text: i18n.text("discovery_mode_active_tip")
+                                color: theme.text
+                                font.weight: Font.DemiBold
+                                wrapMode: Text.Wrap
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            text: i18n.text("settings_group_filter_quality")
+                            color: theme.text
+                            font.weight: Font.Bold
+                        }
                         GridLayout {
                             Layout.fillWidth: true; columns: metrics.narrow ? 2 : 4; columnSpacing: 12; rowSpacing: metrics.compact ? 6 : 8
+                            ModernCheckBox {
+                                id: strictMatch
+                                Layout.fillWidth: true
+                                text: i18n.text("strict_match")
+                                checked: true
+                                enabled: !root.discoveryModeActive
+                                opacity: enabled ? 1 : 0.55
+                                ToolTip.delay: 250
+                                ToolTip.timeout: 5000
+                                ToolTip.visible: hovered && root.discoveryModeActive
+                                ToolTip.text: i18n.text("discovery_managed_setting_tip")
+                                onToggled: root.scheduleSave()
+                            }
+                            Text { text: i18n.text("match_ratio"); color: theme.textMuted }
+                            TextField {
+                                id: matchRatio
+                                Layout.fillWidth: true
+                                text: "0.75"
+                                enabled: !root.discoveryModeActive
+                                opacity: enabled ? 1 : 0.55
+                                hoverEnabled: true
+                                ToolTip.delay: 250
+                                ToolTip.timeout: 5000
+                                ToolTip.visible: hovered && root.discoveryModeActive
+                                ToolTip.text: i18n.text("discovery_managed_setting_tip")
+                                onTextChanged: root.scheduleSave()
+                            }
+                            Text { text: i18n.text("topic_filter_strength"); color: theme.textMuted }
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 2
+                                ComboBox {
+                                    id: minTopicScore
+                                    Layout.fillWidth: true
+                                    model: root.topicScoreLabels
+                                    currentIndex: 0
+                                    enabled: !root.discoveryModeActive
+                                    opacity: enabled ? 1 : 0.55
+                                    hoverEnabled: true
+                                    ToolTip.delay: 350
+                                    ToolTip.timeout: 9000
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: root.discoveryModeActive ? i18n.text("discovery_managed_setting_tip") : i18n.text("topic_filter_strength_tip")
+                                    onCurrentIndexChanged: root.scheduleSave()
+                                }
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: i18n.text("topic_filter_hint")
+                                    color: theme.textMuted
+                                    font.pixelSize: Math.max(10, theme.baseFontSize - 3)
+                                    wrapMode: Text.Wrap
+                                }
+                            }
+                            Text { text: i18n.text("journal_scope"); color: theme.textMuted }
+                            ComboBox {
+                                id: journalScope
+                                Layout.fillWidth: true
+                                model: [i18n.text("journal_rank_only"), i18n.text("journal_whitelist_only")]
+                                currentIndex: 0
+                                enabled: !root.discoveryModeActive
+                                opacity: enabled ? 1 : 0.55
+                                hoverEnabled: true
+                                ToolTip.delay: 350
+                                ToolTip.timeout: 9000
+                                ToolTip.visible: hovered
+                                ToolTip.text: root.discoveryModeActive ? i18n.text("discovery_managed_setting_tip") : i18n.text("journal_scope_tip")
+                                onCurrentIndexChanged: root.scheduleSave()
+                            }
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            text: i18n.text("settings_group_runtime")
+                            color: theme.text
+                            font.weight: Font.Bold
+                        }
+                        GridLayout {
+                            Layout.fillWidth: true
+                            columns: metrics.narrow ? 2 : 4
                             Text { text: i18n.text("request_delay"); color: theme.textMuted }
                             TextField { id: requestDelay; Layout.fillWidth: true; text: "0.2"; onTextChanged: root.scheduleSave() }
                             Text { text: i18n.text("page_delay"); color: theme.textMuted }
                             TextField { id: pageDelay; Layout.fillWidth: true; text: "0.5"; onTextChanged: root.scheduleSave() }
                             Text { text: i18n.text("min_pdf_bytes"); color: theme.textMuted }
                             TextField { id: minPdfBytes; Layout.fillWidth: true; text: "1024"; onTextChanged: root.scheduleSave() }
-                            Text { text: i18n.text("match_ratio"); color: theme.textMuted }
-                            TextField { id: matchRatio; Layout.fillWidth: true; text: "0.75"; onTextChanged: root.scheduleSave() }
-                            Text { text: "相关性过滤强度"; color: theme.textMuted }
+                            Text { text: i18n.text("loop_sleep"); color: theme.textMuted }
+                            TextField { id: loopSleep; Layout.fillWidth: true; text: "3600"; onTextChanged: root.scheduleSave() }
+                            Text { text: i18n.text("runtime_hours"); color: theme.textMuted }
+                            TextField { id: runtimeHours; Layout.fillWidth: true; placeholderText: i18n.text("optional"); onTextChanged: root.scheduleSave() }
+                            ModernCheckBox { id: retryMissing; text: i18n.text("retry_missing"); checked: true; onToggled: root.scheduleSave() }
+                            ModernCheckBox { id: writeRetry; text: i18n.text("write_retry"); onToggled: root.scheduleSave() }
+                            ModernCheckBox { id: loopJob; text: i18n.text("loop_job"); onToggled: root.scheduleSave() }
+                            ModernCheckBox {
+                                id: fastForward
+                                text: i18n.text("fast_forward")
+                                checked: true
+                                enabled: !root.discoveryModeActive
+                                opacity: enabled ? 1 : 0.55
+                                ToolTip.delay: 250
+                                ToolTip.timeout: 5000
+                                ToolTip.visible: hovered && root.discoveryModeActive
+                                ToolTip.text: i18n.text("discovery_managed_setting_tip")
+                                onToggled: root.scheduleSave()
+                            }
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            text: i18n.text("settings_group_filter_strategy")
+                            color: theme.text
+                            font.weight: Font.Bold
+                        }
+                        GridLayout {
+                            Layout.fillWidth: true
+                            columns: metrics.narrow ? 2 : 4
+                            Text { text: i18n.text("filter_strategy"); color: theme.textMuted }
                             ComboBox {
-                                id: minTopicScore
+                                id: filterStrategy
                                 Layout.fillWidth: true
-                                model: root.topicScoreLabels
+                                model: [i18n.text("standard_filter"), i18n.text("loose_discovery")]
                                 currentIndex: 0
                                 hoverEnabled: true
                                 ToolTip.delay: 350
                                 ToolTip.timeout: 9000
                                 ToolTip.visible: hovered
-                                ToolTip.text: "关键词提及即可 / 0：召回最多。只要标题或摘要提到你的关键词就保留，适合建库、初筛和尽量多收文献。\n宽松 / 4：保留大多数相关文献，只过滤明显偏离主题的结果，适合希望减少少量噪声。\n均衡 / 6：在数量和准确性之间折中，适合日常检索和普通主题整理。\n严格 / 9：只保留主题信号更充分的文献，数量会减少，适合精读前筛选。\n极严格 / 12：只保留高度聚焦的文献，准确性更高，但可能漏掉综述、边缘相关或摘要较短的文献。"
-                                onCurrentIndexChanged: root.scheduleSave()
-                            }
-                            Text { text: i18n.text("loop_sleep"); color: theme.textMuted }
-                            TextField { id: loopSleep; Layout.fillWidth: true; text: "3600"; onTextChanged: root.scheduleSave() }
-                            Text { text: i18n.text("runtime_hours"); color: theme.textMuted }
-                            TextField { id: runtimeHours; Layout.fillWidth: true; placeholderText: i18n.text("optional"); onTextChanged: root.scheduleSave() }
-                        }
-                        GridLayout {
-                            Layout.fillWidth: true
-                            columns: metrics.narrow ? 2 : 3
-                            ModernCheckBox { id: retryMissing; text: i18n.text("retry_missing"); checked: true; onToggled: root.scheduleSave() }
-                            ModernCheckBox { id: writeRetry; text: i18n.text("write_retry"); onToggled: root.scheduleSave() }
-                            ModernCheckBox { id: strictMatch; text: i18n.text("strict_match"); checked: true; onToggled: root.scheduleSave() }
-                            ModernCheckBox {
-                                id: preferredJournalOnly
-                                text: "仅限推荐 OA 期刊"
-                                ToolTip.delay: 350
-                                ToolTip.timeout: 9000
-                                ToolTip.visible: hovered
-                                ToolTip.text: "默认关闭。关闭时推荐 OA 期刊只用于排序加权；开启后只保留推荐 OA 期刊内的论文。"
-                                onToggled: root.scheduleSave()
-                            }
-                            ModernCheckBox { id: loopJob; text: i18n.text("loop_job"); onToggled: root.scheduleSave() }
-                            ModernCheckBox { id: fastForward; text: i18n.text("fast_forward"); checked: true; onToggled: root.scheduleSave() }
-                            ModernCheckBox {
-                                id: discoveryMode
-                                text: "宽松发现模式 / Discovery mode"
-                                ToolTip.delay: 350
-                                ToolTip.timeout: 9000
-                                ToolTip.visible: hovered
-                                ToolTip.text: "Disable strict keyword/topic/journal filters and resume fast-forward to diagnose source yield."
-                                onToggled: {
-                                    if(checked)
-                                        root.applyDiscoveryMode()
+                                ToolTip.text: i18n.text("discovery_mode_tip")
+                                onCurrentIndexChanged: {
+                                    root.handleFilterStrategyChanged(currentIndex)
                                     root.scheduleSave()
                                 }
                             }
@@ -291,8 +413,8 @@ Item {
                  strictKeywordMatch: strictMatch.checked, minKeywordMatchRatio: matchRatio.text,
                  topicPack: "auto", journalPack: "auto",
                  selectedJournals: root.selectedJournals, minTopicScore: root.topicScoreValues[minTopicScore.currentIndex],
-                 journalWhitelistOnly: preferredJournalOnly.checked,
-                 discoveryMode: discoveryMode.checked,
+                 journalWhitelistOnly: journalScope.currentIndex === 1,
+                 discoveryMode: filterStrategy.currentIndex === 1,
                  loop: loopJob.checked, loopSleep: loopSleep.text, maxRuntimeHours: runtimeHours.text,
                  resume: resume.checked, fastForwardExistingPages: fastForward.checked, oaOnly: oaOnly.checked,
                  sources: root.selectedSources, advancedVisible: root.advancedVisible }
@@ -345,19 +467,71 @@ Item {
         }
         return bestIndex
     }
+    function journalScopeIndex(value) {
+        return value === true || value === 1 || value === "true" || value === "1" ? 1 : 0
+    }
+    function filterStrategyIndex(value) {
+        return value === true || value === 1 || value === "true" || value === "1" ? 1 : 0
+    }
     function scheduleSave() {
         if(!root.restoringSettings) saveSettingsTimer.restart()
     }
-    function applyDiscoveryMode() {
+    function saveDiscoverySnapshot() {
+        if(root.discoverySnapshotAvailable)
+            return
+        root.discoverySnapshot = {
+            strictMatch: strictMatch.checked,
+            matchRatio: matchRatio.text,
+            minTopicScore: minTopicScore.currentIndex,
+            journalScope: journalScope.currentIndex,
+            resume: resume.checked,
+            fastForward: fastForward.checked
+        }
+        root.discoverySnapshotAvailable = true
+    }
+    function clearDiscoverySnapshot() {
+        root.discoverySnapshot = ({})
+        root.discoverySnapshotAvailable = false
+    }
+    function applyDiscoveryMode(rememberPrevious) {
+        if(rememberPrevious)
+            root.saveDiscoverySnapshot()
         strictMatch.checked = false
         matchRatio.text = "0.3"
         minTopicScore.currentIndex = topicScoreIndex(0)
-        preferredJournalOnly.checked = false
+        journalScope.currentIndex = journalScopeIndex(false)
         resume.checked = false
         fastForward.checked = false
     }
+    function restoreDiscoveryMode() {
+        if(root.discoverySnapshotAvailable) {
+            strictMatch.checked = root.discoverySnapshot.strictMatch
+            matchRatio.text = root.discoverySnapshot.matchRatio
+            minTopicScore.currentIndex = root.discoverySnapshot.minTopicScore
+            journalScope.currentIndex = root.discoverySnapshot.journalScope
+            resume.checked = root.discoverySnapshot.resume
+            fastForward.checked = root.discoverySnapshot.fastForward
+        } else {
+            strictMatch.checked = true
+            matchRatio.text = "0.75"
+            minTopicScore.currentIndex = topicScoreIndex(0)
+            journalScope.currentIndex = journalScopeIndex(false)
+            resume.checked = true
+            fastForward.checked = true
+        }
+        root.clearDiscoverySnapshot()
+    }
+    function handleFilterStrategyChanged(index) {
+        if(root.restoringSettings)
+            return
+        if(index === filterStrategyIndex(true))
+            root.applyDiscoveryMode(true)
+        else
+            root.restoreDiscoveryMode()
+    }
     function restoreSavedConfig() {
         let settings=downloadController.savedConfig || {}
+        root.clearDiscoverySnapshot()
         email.text=savedValue(settings, "email", "")
         outputDir.text=savedValue(settings, "outputDir", downloadController.defaultOutputDir)
         fromDate.text=savedValue(settings, "fromDate", downloadController.defaultFromDate)
@@ -378,15 +552,15 @@ Item {
         matchRatio.text=savedValue(settings, "minKeywordMatchRatio", "0.75")
         root.selectedJournals=savedValue(settings, "selectedJournals", [])
         minTopicScore.currentIndex=topicScoreIndex(savedValue(settings, "minTopicScore", 0))
-        preferredJournalOnly.checked=savedValue(settings, "journalWhitelistOnly", false)
-        discoveryMode.checked=savedValue(settings, "discoveryMode", false)
+        journalScope.currentIndex=journalScopeIndex(savedValue(settings, "journalWhitelistOnly", false))
         loopJob.checked=savedValue(settings, "loop", false)
         loopSleep.text=savedValue(settings, "loopSleep", "3600")
         runtimeHours.text=savedValue(settings, "maxRuntimeHours", "")
         resume.checked=savedValue(settings, "resume", true)
         fastForward.checked=savedValue(settings, "fastForwardExistingPages", true)
-        if(discoveryMode.checked)
-            root.applyDiscoveryMode()
+        filterStrategy.currentIndex=filterStrategyIndex(savedValue(settings, "discoveryMode", false))
+        if(root.discoveryModeActive)
+            root.applyDiscoveryMode(false)
         oaOnly.checked=savedValue(settings, "oaOnly", false)
         root.selectedSources=savedValue(settings, "sources", ["openalex"])
         root.advancedVisible=savedValue(settings, "advancedVisible", false)

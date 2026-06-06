@@ -201,6 +201,37 @@ TEXTS: dict[str, tuple[str, str]] = {
     "download_pdf": ("下载 PDF", "Download PDFs"),
     "resume": ("断点续跑", "Resume"),
     "oa_only": ("仅开放获取", "Open access only"),
+    "oa_only_tip": ("只保留开放获取记录，用于排除非 OA 文献；PDF 仍只会下载合法开放获取链接。", "Keep only open-access records; PDFs are still downloaded only from legal open-access links."),
+    "settings_group_search_scope": ("检索范围", "Search scope"),
+    "settings_group_filter_quality": ("筛选质量", "Filter quality"),
+    "settings_group_runtime": ("运行参数", "Runtime settings"),
+    "settings_group_filter_strategy": ("检索策略", "Search strategy"),
+    "filter_strategy": ("检索策略", "Search strategy"),
+    "standard_filter": ("标准筛选", "Standard filters"),
+    "loose_discovery": ("宽松发现", "Loose discovery"),
+    "topic_filter_strength": ("相关性过滤强度", "Relevance filter strength"),
+    "topic_filter_hint": ("只控制主题分数；发现诊断模式会临时接管多项筛选。", "Only controls the topic score; discovery diagnostics temporarily manages several filters."),
+    "topic_filter_strength_tip": (
+        "关键词提及即可 / 0：召回最多。只要标题或摘要提到你的关键词就保留，适合建库、初筛和尽量多收文献。\n"
+        "宽松 / 4：保留大多数相关文献，只过滤明显偏离主题的结果，适合希望减少少量噪声。\n"
+        "均衡 / 6：在数量和准确性之间折中，适合日常检索和普通主题整理。\n"
+        "严格 / 9：只保留主题信号更充分的文献，数量会减少，适合精读前筛选。\n"
+        "极严格 / 12：只保留高度聚焦的文献，准确性更高，但可能漏掉综述、边缘相关或摘要较短的文献。",
+        "Keyword mention / 0: highest recall. Keeps records whose title or abstract mentions your keywords.\n"
+        "Loose / 4: keeps most relevant records and removes obvious noise.\n"
+        "Balanced / 6: balances volume and precision for everyday searches.\n"
+        "Strict / 9: keeps records with stronger topic signals for pre-reading triage.\n"
+        "Very strict / 12: keeps highly focused records, but may miss reviews, adjacent work, or short abstracts.",
+    ),
+    "journal_scope": ("期刊范围", "Journal scope"),
+    "journal_rank_only": ("推荐期刊仅排序优先", "Recommended journals rank first"),
+    "journal_scope_tip": ("默认只把推荐 OA 期刊用于排序加权；切换后才只保留推荐 OA 期刊内的论文。", "By default, recommended OA journals only boost ranking; switch scope to keep only papers from recommended OA journals."),
+    "journal_whitelist_only": ("仅限推荐 OA 期刊", "Recommended OA journals only"),
+    "journal_whitelist_only_tip": ("默认关闭。关闭时推荐 OA 期刊只用于排序加权；开启后只保留推荐 OA 期刊内的论文。", "Off by default. When off, recommended OA journals only boost ranking; when on, only papers from recommended OA journals are kept."),
+    "discovery_mode": ("发现诊断模式", "Discovery diagnostics"),
+    "discovery_mode_tip": ("临时放宽关键词、主题、期刊和续跑限制，用于排查来源召回量；关闭后恢复开启前设置。", "Temporarily relaxes keyword, topic, journal, and resume filters to diagnose source yield; turning it off restores the previous settings."),
+    "discovery_mode_active_tip": ("发现诊断模式已接管 6 项设置，关闭后恢复之前配置。", "Discovery diagnostics is managing 6 settings. Turn it off to restore the previous configuration."),
+    "discovery_managed_setting_tip": ("由发现诊断模式临时接管，关闭后恢复。", "Temporarily managed by discovery diagnostics; turn it off to restore."),
     "start_download": ("开始下载", "Start download"),
     "download_started": ("下载任务已启动。", "Download job started."),
     "download_done": ("下载任务完成。", "Download job finished."),
@@ -442,6 +473,28 @@ RU_TEXTS.update({
     "user_key_unlock_failed": "Не удалось разблокировать пользовательский ключ: {error}",
     "user_key_unlocked": "Сохранённый пользовательский ключ разблокирован.",
     "welcome": "С возвращением, {username}", "workspace_eyebrow": "НАУЧНОЕ РАБОЧЕЕ МЕСТО OMNILIT",
+})
+RU_TEXTS.update({
+    "oa_only_tip": "Оставлять только записи открытого доступа; PDF загружаются только из легальных открытых ссылок.",
+    "settings_group_search_scope": "Область поиска",
+    "settings_group_filter_quality": "Качество фильтрации",
+    "settings_group_runtime": "Параметры выполнения",
+    "settings_group_filter_strategy": "Стратегия поиска",
+    "filter_strategy": "Стратегия поиска",
+    "standard_filter": "Стандартные фильтры",
+    "loose_discovery": "Мягкий поиск",
+    "topic_filter_strength": "Сила фильтра релевантности",
+    "topic_filter_hint": "Управляет только оценкой темы; диагностика поиска временно управляет несколькими фильтрами.",
+    "topic_filter_strength_tip": "0: максимум охвата.\n4: мягкий фильтр.\n6: баланс.\n9: строгий фильтр.\n12: только очень сфокусированные записи.",
+    "journal_scope": "Область журналов",
+    "journal_rank_only": "Рекомендованные журналы выше в сортировке",
+    "journal_scope_tip": "По умолчанию рекомендованные OA журналы только повышают сортировку; переключите область, чтобы оставить только статьи из них.",
+    "journal_whitelist_only": "Только рекомендованные OA журналы",
+    "journal_whitelist_only_tip": "Если выключено, рекомендованные OA журналы только повышают сортировку; если включено, остаются только статьи из них.",
+    "discovery_mode": "Диагностика поиска",
+    "discovery_mode_tip": "Временно ослабляет фильтры ключевых слов, темы, журналов и продолжения; при выключении возвращает прежние настройки.",
+    "discovery_mode_active_tip": "Диагностика поиска управляет 6 настройками. Выключите её, чтобы вернуть прежнюю конфигурацию.",
+    "discovery_managed_setting_tip": "Временно управляется диагностикой поиска; выключите её, чтобы восстановить.",
 })
 
 

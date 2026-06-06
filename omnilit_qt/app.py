@@ -88,7 +88,7 @@ def run() -> int:
     updater = UpdateController(shell, paths, store, locale)
     shell.set_migration_summary(copied)
     auth.authenticated.connect(updater.check)
-    app.aboutToQuit.connect(lambda: _shutdown_background_tasks(download, translation, updater))
+    app.aboutToQuit.connect(lambda: _shutdown_background_tasks(download, literature_library, translation, updater))
 
     icon_path = paths.resource("assets", "omnilit_logo.ico")
     if icon_path.exists():
