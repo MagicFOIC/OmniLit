@@ -23,6 +23,7 @@ class DownloadUiConfigTests(unittest.TestCase):
                     "selectedJournals": ["Batteries", "ACS Omega"],
                     "minTopicScore": "8",
                     "journalWhitelistOnly": True,
+                    "minImpactFactor": "5.5",
                 },
                 lambda: False,
                 lambda _stats, _message: None,
@@ -33,6 +34,7 @@ class DownloadUiConfigTests(unittest.TestCase):
             self.assertEqual(config.selected_journals, ["Batteries", "ACS Omega"])
             self.assertEqual(config.min_topic_score, 8)
             self.assertTrue(config.journal_whitelist_only)
+            self.assertEqual(config.min_impact_factor, 5.5)
 
     def test_build_download_config_treats_empty_selected_journals_as_none(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -106,9 +108,11 @@ class DownloadUiConfigTests(unittest.TestCase):
         self.assertIn('id: filterStrategy', qml)
         self.assertIn('text: i18n.text("journal_scope")', qml)
         self.assertIn('journalWhitelistOnly: journalScope.currentIndex === 1', qml)
+        self.assertIn('minImpactFactor: minImpactFactor.text', qml)
         self.assertIn('discoveryMode: filterStrategy.currentIndex === 1', qml)
         self.assertIn('minTopicScore.currentIndex=topicScoreIndex', qml)
         self.assertIn('journalScope.currentIndex=journalScopeIndex(savedValue(settings, "journalWhitelistOnly", false))', qml)
+        self.assertIn('minImpactFactor.text=savedValue(settings, "minImpactFactor", "")', qml)
         self.assertIn('filterStrategy.currentIndex=filterStrategyIndex(savedValue(settings, "discoveryMode", false))', qml)
         self.assertIn('text: i18n.text("topic_filter_hint")', qml)
         self.assertIn('text: i18n.text("settings_group_search_scope")', qml)

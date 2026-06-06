@@ -280,6 +280,7 @@ def build_download_config(paths: AppPaths, raw: dict[str, Any], stop_callback, p
         selected_journals=selected_journals,
         min_topic_score=min_topic_score,
         journal_whitelist_only=journal_whitelist_only,
+        min_impact_factor=optional_float(raw.get("minImpactFactor")),
         loop=as_bool(raw.get("loop")),
         loop_sleep=as_float(raw.get("loopSleep"), 3600),
         max_runtime_hours=optional_float(raw.get("maxRuntimeHours")),

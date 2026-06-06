@@ -226,6 +226,7 @@ TEXTS: dict[str, tuple[str, str]] = {
     "journal_scope": ("期刊范围", "Journal scope"),
     "journal_rank_only": ("推荐期刊仅排序优先", "Recommended journals rank first"),
     "journal_scope_tip": ("默认只把推荐 OA 期刊用于排序加权；切换后才只保留推荐 OA 期刊内的论文。", "By default, recommended OA journals only boost ranking; switch scope to keep only papers from recommended OA journals."),
+    "min_impact_factor": ("最低影响因子", "Minimum impact factor"),
     "journal_whitelist_only": ("仅限推荐 OA 期刊", "Recommended OA journals only"),
     "journal_whitelist_only_tip": ("默认关闭。关闭时推荐 OA 期刊只用于排序加权；开启后只保留推荐 OA 期刊内的论文。", "Off by default. When off, recommended OA journals only boost ranking; when on, only papers from recommended OA journals are kept."),
     "discovery_mode": ("发现诊断模式", "Discovery diagnostics"),

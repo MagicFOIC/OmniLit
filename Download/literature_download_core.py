@@ -21,10 +21,12 @@ from urllib3.util.retry import Retry
 
 try:
     from .journal_registry import is_whitelisted_journal
+    from .journal_metrics import match_journal_metric
     from .pack_builder import journal_pack_match_score, resolve_journal_pack, resolve_topic_pack
     from .topic_packs import score_topic_relevance
 except ImportError:  # pragma: no cover - supports direct script execution.
     from journal_registry import is_whitelisted_journal
+    from journal_metrics import match_journal_metric
     from pack_builder import journal_pack_match_score, resolve_journal_pack, resolve_topic_pack
     from topic_packs import score_topic_relevance
 
@@ -136,6 +138,7 @@ class CrawlConfig:
     selected_journals: list[str] | None = None
     min_topic_score: int = 6
     journal_whitelist_only: bool = False
+    min_impact_factor: float | None = None
     loop: bool = False
     loop_sleep: float = 3600.0
     max_runtime_hours: float | None = None
@@ -175,6 +178,7 @@ class CrawlStats:
     skipped_not_oa: int = 0
     skipped_by_topic_score: int = 0
     skipped_by_keyword_match: int = 0
+    skipped_by_impact_factor: int = 0
     open_access_records: int = 0
     downloaded_pdfs: int = 0
     failed_pdfs: int = 0
@@ -1556,6 +1560,32 @@ def record_passes_relevance_filters(
     return True, score, None
 
 
+def enrich_record_with_journal_metrics(item: dict[str, Any]) -> dict[str, Any]:
+    """Attach normalized journal and local impact-factor fields to a search record."""
+    match = match_journal_metric(item)
+    fields = match.as_record_fields()
+    item.update(fields)
+    return fields
+
+
+def record_passes_impact_factor_filter(item: dict[str, Any], config: CrawlConfig) -> tuple[bool, dict[str, Any]]:
+    """Return whether a record passes the configured minimum impact factor.
+
+    Records with unknown impact factor are retained so an incomplete local metrics
+    table does not silently hide relevant literature.
+    """
+    fields = enrich_record_with_journal_metrics(item)
+    if config.min_impact_factor is None:
+        return True, fields
+    value = fields.get("impact_factor")
+    if value is None:
+        return True, fields
+    try:
+        return float(value) >= float(config.min_impact_factor), fields
+    except (TypeError, ValueError):
+        return True, fields
+
+
 def record_matches_resolved_journal_pack(
     item: dict[str, Any],
     config: CrawlConfig,
@@ -1696,6 +1726,153 @@ def extract_authors(item: dict[str, Any], limit: int = 12) -> list[str]:
         if len(authors) >= limit:
             break
     return authors
+
+
+def extract_pdf_text(pdf_path: Path, max_pages: int = 4) -> str:
+    """Extract text from the first pages of a downloaded PDF."""
+    try:
+        import fitz
+
+        chunks: list[str] = []
+        with fitz.open(pdf_path) as document:
+            for page_index in range(min(max_pages, len(document))):
+                text = document.load_page(page_index).get_text("text")
+                if text:
+                    chunks.append(text)
+        return "\n".join(chunks)
+    except Exception:
+        return ""
+
+
+def _clean_extracted_text(value: Any) -> str:
+    return re.sub(r"\s+", " ", html.unescape(str(value or ""))).strip()
+
+
+def extract_abstract_from_text(text: str) -> str:
+    """Extract an abstract-like paragraph from raw PDF text."""
+    if not text:
+        return ""
+    normalized = text.replace("\r", "\n")
+    match = re.search(
+        r"(?is)\babstract\b\s*[:.\-]?\s*(.+?)(?=\n\s*(?:keywords?|index terms|introduction|1\s*\.?\s*introduction|background)\b)",
+        normalized,
+    )
+    if not match:
+        return ""
+    abstract = _clean_extracted_text(match.group(1))
+    return abstract[:2400].strip()
+
+
+def extract_keywords_from_text(text: str) -> list[str]:
+    """Extract explicit Keywords/Index Terms lines from raw PDF text."""
+    if not text:
+        return []
+    match = re.search(
+        r"(?is)\b(?:keywords?|index terms)\b\s*[:.\-]?\s*(.+?)(?=\n\s*(?:introduction|1\s*\.?\s*introduction|abstract|background)\b)",
+        text.replace("\r", "\n"),
+    )
+    if not match:
+        return []
+    raw = _clean_extracted_text(match.group(1))
+    return _unique_keyword_labels(re.split(r"[,;•·|]", raw))
+
+
+def _unique_keyword_labels(values: list[Any]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = _clean_extracted_text(value)
+        text = re.sub(r"^[\-\u2010-\u2015\s]+|[\.\s]+$", "", text)
+        if not text or len(text) > 80:
+            continue
+        key = keyword_group_key(text)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        result.append(text)
+    return result
+
+
+def keyword_group_key(value: Any) -> str:
+    """Return a stable key for grouping similar literature keywords."""
+    terms = keyword_terms(str(value or ""))
+    if not terms:
+        return ""
+    return " ".join(terms)
+
+
+def keyword_group_label(value: Any) -> str:
+    text = _clean_extracted_text(value)
+    return text if text else str(value or "").strip()
+
+
+def generate_extracted_keywords(
+    keyword: str,
+    title: str,
+    abstract: str,
+    explicit_keywords: list[str],
+    matched_keywords: list[str] | None = None,
+    limit: int = 10,
+) -> list[str]:
+    """Build display keywords from explicit PDF keywords, matched user terms, and text phrases."""
+    candidates: list[Any] = [*explicit_keywords, *(matched_keywords or []), keyword]
+    text = f"{title}. {abstract}"
+    candidates.extend(
+        match.group(0)
+        for match in re.finditer(
+            r"\b[a-z][a-z0-9]*(?:[- ][a-z0-9]+){1,4}\b",
+            text.casefold(),
+        )
+    )
+    result = _unique_keyword_labels(candidates)
+    return result[:limit]
+
+
+def summarize_content(abstract: str, title: str = "") -> str:
+    text = _clean_extracted_text(abstract)
+    if not text:
+        return _clean_extracted_text(title)
+    sentence = re.split(r"(?<=[.!?])\s+", text, maxsplit=1)[0]
+    if len(sentence) < 80 and len(text) > len(sentence):
+        sentence = text[:360]
+    return sentence[:420].strip()
+
+
+def content_fields_for_record(
+    keyword: str,
+    item: dict[str, Any],
+    download: DownloadResult,
+    meta_path: Path,
+    relevance_info: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Return abstract, extracted PDF abstract, display keywords, and a short summary."""
+    source_abstract = _clean_extracted_text(item.get("abstract") or reconstruct_abstract(item.get("abstract_inverted_index")))
+    extracted_abstract = ""
+    explicit_keywords: list[str] = list(item.get("extracted_keywords") or [])
+    if download.path and (not source_abstract or not explicit_keywords):
+        pdf_path = Path(download.path)
+        if not pdf_path.is_absolute():
+            pdf_path = meta_path.parent / pdf_path
+        text = extract_pdf_text(pdf_path)
+        if not source_abstract:
+            extracted_abstract = extract_abstract_from_text(text)
+        if not explicit_keywords:
+            explicit_keywords = extract_keywords_from_text(text)
+    abstract = source_abstract or extracted_abstract
+    matched_keywords = list((relevance_info or {}).get("matched_keywords") or [])
+    extracted_keywords = generate_extracted_keywords(
+        keyword,
+        str(item.get("title") or item.get("display_name") or ""),
+        abstract,
+        explicit_keywords,
+        matched_keywords,
+    )
+    return {
+        "abstract": abstract,
+        "extracted_abstract": extracted_abstract,
+        "extracted_keywords": extracted_keywords,
+        "content_summary": summarize_content(abstract, str(item.get("title") or item.get("display_name") or "")),
+    }
 
 
 def query_unpaywall(
@@ -2336,6 +2513,9 @@ def build_record(
     if download.path:
         local_pdf_path = display_path(Path(download.path), meta_path.parent)
     retry_attempts = 1 if download.status not in {"download_disabled", "not_open_access"} else 0
+    if "impact_factor_unknown" not in item:
+        enrich_record_with_journal_metrics(item)
+    content_fields = content_fields_for_record(keyword, item, download, meta_path, relevance_info)
     record = {
         "keyword": keyword,
         "literature_source": item.get("literature_source") or SOURCE_OPENALEX,
@@ -2348,7 +2528,17 @@ def build_record(
         "publication_year": item.get("publication_year"),
         "cited_by_count": item.get("cited_by_count"),
         "authors": extract_authors(item),
-        "abstract": item.get("abstract") or reconstruct_abstract(item.get("abstract_inverted_index")),
+        "abstract": content_fields["abstract"],
+        "extracted_abstract": content_fields["extracted_abstract"],
+        "extracted_keywords": content_fields["extracted_keywords"],
+        "content_summary": content_fields["content_summary"],
+        "journal_title": item.get("journal_title"),
+        "journal_issns": item.get("journal_issns") or [],
+        "impact_factor": item.get("impact_factor"),
+        "impact_factor_year": item.get("impact_factor_year"),
+        "impact_factor_source": item.get("impact_factor_source"),
+        "impact_factor_quartile": item.get("impact_factor_quartile"),
+        "impact_factor_unknown": bool(item.get("impact_factor_unknown")),
         "open_access": item.get("open_access"),
         "unpaywall": unpaywall,
         "pdf_candidates": pdf_candidates,
@@ -2575,6 +2765,18 @@ def crawl_keyword(
                     config.min_topic_score,
                 )
                 continue
+            passes_impact_factor, journal_fields = record_passes_impact_factor_filter(item, config)
+            if not passes_impact_factor:
+                stats.skipped_irrelevant += 1
+                stats.skipped_by_impact_factor += 1
+                logging.info(
+                    "Skipping low-impact-factor record: %s | journal=%s | impact_factor=%s | threshold=%s",
+                    item.get("title") or item.get("display_name") or key,
+                    journal_fields.get("journal_title") or "unknown",
+                    journal_fields.get("impact_factor"),
+                    config.min_impact_factor,
+                )
+                continue
             is_existing_record = key in existing_index.keys
             has_downloaded_pdf = key in existing_index.downloaded_keys
             if is_existing_record and (has_downloaded_pdf or not config.retry_missing_pdfs):
@@ -2754,7 +2956,7 @@ def log_summary(stats: CrawlStats) -> None:
     """Log a diagnostic crawl summary."""
     logging.info(
         "Crawl summary: existing=%s fetched_total=%s fetched_by_source=%s added=%s "
-        "duplicates=%s no_key=%s irrelevant=%s keyword_filtered=%s topic_filtered=%s "
+        "duplicates=%s no_key=%s irrelevant=%s keyword_filtered=%s topic_filtered=%s impact_filtered=%s "
         "not_oa=%s oa=%s pdf_candidates=%s pdf_attempted=%s pdf_downloaded=%s "
         "pdf_failed=%s pdf_failure_reasons=%s retried_existing=%s request_failures=%s",
         stats.existing_records,
@@ -2766,6 +2968,7 @@ def log_summary(stats: CrawlStats) -> None:
         stats.skipped_irrelevant,
         stats.skipped_by_keyword_match,
         stats.skipped_by_topic_score,
+        stats.skipped_by_impact_factor,
         stats.skipped_not_oa,
         stats.open_access_records,
         stats.pdf_candidates_found,
@@ -2837,7 +3040,7 @@ def format_round_finished_message(config: CrawlConfig, stats: CrawlStats) -> str
         "Crawl round finished.",
         f"Fetched total: {fetched_total}; by source: {stats.fetched_by_source}.",
         f"Metadata added: {stats.added_records}; duplicate skips: {stats.skipped_duplicates}; missing-key skips: {stats.skipped_without_key}.",
-        f"Filter skips: total={stats.skipped_irrelevant}, keyword={stats.skipped_by_keyword_match}, topic_score={stats.skipped_by_topic_score}, not_oa={stats.skipped_not_oa}.",
+        f"Filter skips: total={stats.skipped_irrelevant}, keyword={stats.skipped_by_keyword_match}, topic_score={stats.skipped_by_topic_score}, impact_factor={stats.skipped_by_impact_factor}, not_oa={stats.skipped_not_oa}.",
         f"PDF resolver: candidates={stats.pdf_candidates_found}, attempted={stats.pdf_download_attempted}, downloaded={pdf_downloaded}, failed={pdf_failed}.",
     ]
     if stats.pdf_failure_reasons:
@@ -2946,6 +3149,8 @@ def validate_config(config: CrawlConfig) -> None:
         raise ValueError("--per-page must be between 1 and 200.")
     if config.min_topic_score < 0:
         raise ValueError("--min-topic-score must be zero or greater.")
+    if config.min_impact_factor is not None and config.min_impact_factor < 0:
+        raise ValueError("--min-impact-factor must be zero or greater.")
     if config.max_records is not None and config.max_records < 1:
         raise ValueError("--max-records must be at least 1.")
     if config.request_delay < 0 or config.page_delay < 0 or config.loop_sleep < 0:

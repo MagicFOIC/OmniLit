@@ -104,7 +104,15 @@ class LiteratureLibraryControllerTests(unittest.TestCase):
                     "title": "Lithium-sulfur batteries with improved separator design",
                     "abstract": "This paper discusses polysulfide shuttle control in rechargeable cells.",
                     "authors": ["A. Researcher"],
+                    "publication_date": "2024-05-06",
                     "publication_year": 2024,
+                    "journal_title": "Batteries",
+                    "impact_factor": 7.1,
+                    "impact_factor_year": "2025",
+                    "impact_factor_source": "local",
+                    "impact_factor_unknown": False,
+                    "extracted_keywords": ["lithium-sulfur batteries", "polysulfide shuttle"],
+                    "content_summary": "This paper discusses polysulfide shuttle control in rechargeable cells.",
                     "download_status": "downloaded",
                     "local_pdf_path": "pdfs/sample.pdf",
                 },
@@ -202,12 +210,22 @@ class LiteratureLibraryControllerTests(unittest.TestCase):
             self.assertNotIn("abstract", record)
             self.assertIn("lithium-sulfur batteries", details["matchedKeywordsText"])
             self.assertIn("polysulfide", details["abstract"].casefold())
+            self.assertEqual(details["publicationDate"], "2024-05-06")
+            self.assertEqual(details["journalTitle"], "Batteries")
+            self.assertEqual(details["impactFactorText"], "7.1")
+            self.assertIn("polysulfide shuttle", details["keywordsText"])
             self.assertTrue(record["localPdfPath"].endswith("sample.pdf"))
 
             controller.setFilters("very_strict", "all", "")
             self.assertEqual(controller.filteredCount, 0)
             controller.setFilters("strict", "downloaded", "separator")
             self.assertEqual(controller.filteredCount, 1)
+            keyword_options = controller.keywordGroupOptions
+            self.assertTrue(any(option["key"] == "lithium sulfur battery" for option in keyword_options))
+            controller.setFilters("strict", "downloaded", "", ["lithium sulfur battery"])
+            self.assertEqual(controller.filteredCount, 1)
+            controller.setFilters("strict", "downloaded", "", ["not present"])
+            self.assertEqual(controller.filteredCount, 0)
 
     def test_recompute_writes_relevance_fields_to_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

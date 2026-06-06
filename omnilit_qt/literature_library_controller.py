@@ -53,6 +53,8 @@ class LiteratureLibraryController(QObject):
         self._query = ""
         self._relevance_filter = "all"
         self._pdf_status_filter = "all"
+        self._keyword_group_filter: set[str] = set()
+        self._keyword_group_options: list[dict[str, Any]] = []
         self._status = "文献库尚未加载。" if locale.language == "zh" else "Library has not been loaded."
         self._loading = False
         self._busy_action = ""
@@ -221,16 +223,48 @@ class LiteratureLibraryController(QObject):
             enriched[key] = value
         record_id = self._record_identity(core, enriched)
         pdf_path = self._resolve_pdf_path(core, enriched, meta_path, validate=False)
+        if "impact_factor_unknown" not in enriched:
+            core.enrich_record_with_journal_metrics(enriched)
+        abstract = str(enriched.get("abstract") or enriched.get("extracted_abstract") or "")
+        extracted_abstract = str(enriched.get("extracted_abstract") or "")
+        explicit_keywords = list(enriched.get("extracted_keywords") or [])
+        if (not abstract or not explicit_keywords) and pdf_path:
+            pdf_text = core.extract_pdf_text(pdf_path)
+            if not abstract:
+                extracted_abstract = core.extract_abstract_from_text(pdf_text)
+                abstract = extracted_abstract
+            if not explicit_keywords:
+                explicit_keywords = core.extract_keywords_from_text(pdf_text)
+        extracted_keywords = core.generate_extracted_keywords(
+            keyword,
+            str(enriched.get("title") or ""),
+            abstract,
+            explicit_keywords,
+            list(enriched.get("matched_keywords") or []),
+        )
+        keyword_groups = self._keyword_groups_for_record(core, enriched, keyword, extracted_keywords)
         authors = enriched.get("authors") or []
         authors_text = ", ".join(str(author) for author in authors[:6]) if isinstance(authors, list) else str(authors or "")
+        impact_factor = enriched.get("impact_factor")
+        impact_factor_text = "未知" if impact_factor is None else str(impact_factor)
+        publication_date = str(enriched.get("publication_date") or "")
         enriched.update(
             {
                 "recordId": record_id,
                 "title": str(enriched.get("title") or "Untitled"),
-                "abstract": str(enriched.get("abstract") or ""),
+                "abstract": abstract,
+                "extracted_abstract": extracted_abstract,
+                "extracted_keywords": extracted_keywords,
+                "keywordsText": ", ".join(extracted_keywords),
+                "keywordGroups": keyword_groups,
+                "keywordGroupKeys": [group["key"] for group in keyword_groups],
+                "contentSummary": str(enriched.get("content_summary") or core.summarize_content(abstract, str(enriched.get("title") or ""))),
                 "authorsText": authors_text,
                 "source": str(enriched.get("literature_source") or ""),
                 "year": str(enriched.get("publication_year") or "") or str(enriched.get("publication_date") or "")[:4],
+                "publicationDate": publication_date,
+                "journalTitle": str(enriched.get("journal_title") or ""),
+                "impactFactorText": impact_factor_text,
                 "pdfStatus": str(enriched.get("download_status") or ""),
                 "localPdfPath": str(pdf_path) if pdf_path else "",
                 "localPdfName": pdf_path.name if pdf_path else "",
@@ -241,6 +275,37 @@ class LiteratureLibraryController(QObject):
             }
         )
         return enriched
+
+    @staticmethod
+    def _keyword_groups_for_record(core: Any, record: dict[str, Any], keyword: str, extracted_keywords: list[str]) -> list[dict[str, str]]:
+        values: list[Any] = [*extracted_keywords, *(record.get("matched_keywords") or []), keyword]
+        groups: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for value in values:
+            key = core.keyword_group_key(value)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            groups.append({"key": key, "label": core.keyword_group_label(value)})
+        return groups
+
+    @staticmethod
+    def _build_keyword_group_options(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        labels: dict[str, str] = {}
+        counts: dict[str, int] = {}
+        for record in records:
+            keys_seen: set[str] = set()
+            for group in record.get("keywordGroups") or []:
+                key = str(group.get("key") or "")
+                if not key or key in keys_seen:
+                    continue
+                keys_seen.add(key)
+                labels.setdefault(key, str(group.get("label") or key))
+                counts[key] = counts.get(key, 0) + 1
+        return [
+            {"key": key, "label": labels[key], "count": count}
+            for key, count in sorted(counts.items(), key=lambda item: (-item[1], labels[item[0]].casefold()))
+        ]
 
     def _load_records(self, *, rewrite_metadata: bool, settings: dict[str, Any], output_root: Path) -> list[dict[str, Any]]:
         core = import_resource_module(self.paths, "Download", "literature_download_core")
@@ -576,6 +641,9 @@ class LiteratureLibraryController(QObject):
     def _apply_loaded_records(self, records: list[dict[str, Any]]) -> None:
         self._records = records
         self._record_by_id = {str(record["recordId"]): record for record in self._records}
+        self._keyword_group_options = self._build_keyword_group_options(self._records)
+        valid_keys = {str(option.get("key") or "") for option in self._keyword_group_options}
+        self._keyword_group_filter = {key for key in self._keyword_group_filter if key in valid_keys}
         self._apply_filters()
 
     @staticmethod
@@ -586,6 +654,11 @@ class LiteratureLibraryController(QObject):
             "authorsText": record.get("authorsText", ""),
             "source": record.get("source", ""),
             "year": record.get("year", ""),
+            "publicationDate": record.get("publicationDate", ""),
+            "journalTitle": record.get("journalTitle", ""),
+            "impactFactorText": record.get("impactFactorText", ""),
+            "keywordsText": record.get("keywordsText", ""),
+            "contentSummary": record.get("contentSummary", ""),
             "pdfStatus": record.get("pdfStatus", ""),
             "localPdfPath": record.get("localPdfPath", ""),
             "localPdfName": record.get("localPdfName", ""),
@@ -594,6 +667,7 @@ class LiteratureLibraryController(QObject):
             "relevance_score": record.get("relevance_score", 0),
             "matchedKeywordsText": record.get("matchedKeywordsText", ""),
             "matchedFieldsText": record.get("matchedFieldsText", ""),
+            "keywordGroupKeys": record.get("keywordGroupKeys", []),
         }
 
     def _apply_filters(self) -> None:
@@ -611,10 +685,24 @@ class LiteratureLibraryController(QObject):
                         continue
                 elif status != self._pdf_status_filter:
                     continue
+            if self._keyword_group_filter:
+                record_groups = {str(key) for key in record.get("keywordGroupKeys") or []}
+                if not record_groups.intersection(self._keyword_group_filter):
+                    continue
             if query:
                 haystack = " ".join(
                     str(record.get(name) or "")
-                    for name in ("title", "abstract", "authorsText", "doi", "normalized_doi", "keyword")
+                    for name in (
+                        "title",
+                        "abstract",
+                        "contentSummary",
+                        "keywordsText",
+                        "authorsText",
+                        "doi",
+                        "normalized_doi",
+                        "keyword",
+                        "journalTitle",
+                    )
                 ).casefold()
                 if query not in haystack:
                     continue
@@ -715,6 +803,10 @@ class LiteratureLibraryController(QObject):
     def records(self) -> list[dict[str, Any]]:
         return [self._list_record(record) for record in self._filtered]
 
+    @Property("QVariantList", notify=changed)
+    def keywordGroupOptions(self) -> list[dict[str, Any]]:
+        return list(self._keyword_group_options)
+
     @Property(int, notify=changed)
     def totalCount(self) -> int:
         return len(self._records)
@@ -809,10 +901,12 @@ class LiteratureLibraryController(QObject):
         )
 
     @Slot(str, str, str)
-    def setFilters(self, relevance: str, pdf_status: str, query: str) -> None:
+    @Slot(str, str, str, "QVariantList")
+    def setFilters(self, relevance: str, pdf_status: str, query: str, keyword_groups: list[Any] | None = None) -> None:
         self._relevance_filter = relevance or "all"
         self._pdf_status_filter = pdf_status or "all"
         self._query = query or ""
+        self._keyword_group_filter = {str(item) for item in (keyword_groups or []) if str(item)}
         self._apply_filters()
         self.changed.emit()
 
@@ -869,6 +963,11 @@ class LiteratureLibraryController(QObject):
             "doi": record.get("doi") or record.get("normalized_doi") or "",
             "source": record.get("source", ""),
             "year": record.get("year", ""),
+            "publicationDate": record.get("publicationDate", ""),
+            "journalTitle": record.get("journalTitle", ""),
+            "impactFactorText": record.get("impactFactorText", ""),
+            "keywordsText": record.get("keywordsText", ""),
+            "contentSummary": record.get("contentSummary", ""),
             "pdfStatus": record.get("pdfStatus", ""),
             "localPdfPath": record.get("localPdfPath", ""),
             "relevanceLabel": record.get("relevanceLabel", ""),

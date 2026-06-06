@@ -1,15 +1,15 @@
 {
   "version": "0.0.11",
   "download_url": "https://originchaos.top/omnilit/OmniLit.exe",
-  "sha256": "980d385ebcf215a64296a53adc8723aee20157a6d3a83bc77d543b323c1ac8c0",
+  "sha256": "583f41354857a8c02e8b8fbf17cdc3b6a4c2555d98f51cec1a914276af46b910",
   "mandatory": false,
   "notes": "新增文献库管理",
   "history": [
     {
       "version": "0.0.11",
-      "date": "2026-06-06 06:58:15",
+      "date": "2026-06-06 08:34:25",
       "notes": "新增文献库管理",
-      "sha256": "980d385ebcf215a64296a53adc8723aee20157a6d3a83bc77d543b323c1ac8c0",
+      "sha256": "583f41354857a8c02e8b8fbf17cdc3b6a4c2555d98f51cec1a914276af46b910",
       "download_url": "https://originchaos.top/omnilit/OmniLit.exe"
     },
     {
@@ -64,6 +64,6 @@
   "signature": {
     "algorithm": "ed25519",
     "key_id": "omnilit-release-2026-01",
-    "value": "vTfLGxnDj3HoK+E9mwb15Omzmkyyxs0kxFQyoTtcaIedzTsOlt/xvUjQ0iLwiOjqQ/qlzzN+2YupvefM/z1SDw=="
+    "value": "VsveNP6dUKXDpFEkqluQMMTKORZsGfJSSMirRraXrh4RMdN4daZ0evfwnF4FMXzFbnf2WMfgEvaZJ9fftFFtDA=="
   }
 }

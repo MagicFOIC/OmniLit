@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from Download import literature_download_core as core
+from Download.journal_metrics import JournalMetricMatch
 
 
 class DownloadRelevanceFilterTests(unittest.TestCase):
@@ -99,6 +100,62 @@ class DownloadRelevanceFilterTests(unittest.TestCase):
 
         self.assertFalse(passed)
         self.assertEqual(reason, "journal_not_whitelisted")
+
+    def test_impact_factor_filter_rejects_known_low_if_but_keeps_unknown(self) -> None:
+        low_match = JournalMetricMatch("Low IF Journal", ("1111-1111",), 2.1, "2025", "local", "", False)
+        unknown_match = JournalMetricMatch("Unknown Journal", (), None, "", "", "", True)
+        config = core.CrawlConfig(min_impact_factor=5.0)
+
+        with patch.object(core, "match_journal_metric", return_value=low_match):
+            passed_low, low_fields = core.record_passes_impact_factor_filter({"journal": "Low IF Journal"}, config)
+        with patch.object(core, "match_journal_metric", return_value=unknown_match):
+            passed_unknown, unknown_fields = core.record_passes_impact_factor_filter({"journal": "Unknown Journal"}, config)
+
+        self.assertFalse(passed_low)
+        self.assertEqual(low_fields["impact_factor"], 2.1)
+        self.assertTrue(passed_unknown)
+        self.assertTrue(unknown_fields["impact_factor_unknown"])
+
+    def test_content_extraction_helpers_find_abstract_and_keywords(self) -> None:
+        text = (
+            "Title\nAbstract\n"
+            "This study improves lithium sulfur batteries by catalytic polysulfide conversion.\n"
+            "Keywords: lithium-sulfur batteries; polysulfide conversion; sulfur cathode\n"
+            "1. Introduction\nBody"
+        )
+
+        abstract = core.extract_abstract_from_text(text)
+        keywords = core.extract_keywords_from_text(text)
+
+        self.assertIn("catalytic polysulfide conversion", abstract)
+        self.assertEqual(keywords[:2], ["lithium-sulfur batteries", "polysulfide conversion"])
+
+    def test_build_record_writes_journal_metrics_and_keywords(self) -> None:
+        metric = JournalMetricMatch("Batteries", ("2313-0105",), 7.1, "2025", "local", "Q1", False)
+        item = {
+            "id": "https://openalex.org/W-metric",
+            "title": "Lithium-sulfur batteries with polysulfide conversion",
+            "abstract": "This paper discusses sulfur cathode design and polysulfide conversion.",
+            "open_access": {"is_oa": True},
+            "primary_location": {"source": {"display_name": "Batteries", "issn_l": "2313-0105"}},
+        }
+        relevance_info = {"matched_keywords": ["lithium-sulfur batteries"], "matched_fields": ["title"]}
+
+        with patch.object(core, "match_journal_metric", return_value=metric):
+            record = core.build_record(
+                "lithium-sulfur batteries",
+                item,
+                None,
+                core.DownloadResult(None, "download_disabled"),
+                [],
+                Path("metadata.jsonl"),
+                relevance_info,
+            )
+
+        self.assertEqual(record["journal_title"], "Batteries")
+        self.assertEqual(record["impact_factor"], 7.1)
+        self.assertIn("lithium-sulfur batteries", record["extracted_keywords"])
+        self.assertIn("sulfur cathode", record["content_summary"])
 
 
 if __name__ == "__main__":

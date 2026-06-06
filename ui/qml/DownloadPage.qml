@@ -284,6 +284,14 @@ Item {
                                 ToolTip.text: root.discoveryModeActive ? i18n.text("discovery_managed_setting_tip") : i18n.text("journal_scope_tip")
                                 onCurrentIndexChanged: root.scheduleSave()
                             }
+                            Text { text: i18n.text("min_impact_factor"); color: theme.textMuted }
+                            TextField {
+                                id: minImpactFactor
+                                Layout.fillWidth: true
+                                placeholderText: i18n.text("optional")
+                                validator: DoubleValidator { bottom: 0 }
+                                onTextChanged: root.scheduleSave()
+                            }
                         }
                         Text {
                             Layout.fillWidth: true
@@ -414,6 +422,7 @@ Item {
                  topicPack: "auto", journalPack: "auto",
                  selectedJournals: root.selectedJournals, minTopicScore: root.topicScoreValues[minTopicScore.currentIndex],
                  journalWhitelistOnly: journalScope.currentIndex === 1,
+                 minImpactFactor: minImpactFactor.text,
                  discoveryMode: filterStrategy.currentIndex === 1,
                  loop: loopJob.checked, loopSleep: loopSleep.text, maxRuntimeHours: runtimeHours.text,
                  resume: resume.checked, fastForwardExistingPages: fastForward.checked, oaOnly: oaOnly.checked,
@@ -553,6 +562,7 @@ Item {
         root.selectedJournals=savedValue(settings, "selectedJournals", [])
         minTopicScore.currentIndex=topicScoreIndex(savedValue(settings, "minTopicScore", 0))
         journalScope.currentIndex=journalScopeIndex(savedValue(settings, "journalWhitelistOnly", false))
+        minImpactFactor.text=savedValue(settings, "minImpactFactor", "")
         loopJob.checked=savedValue(settings, "loop", false)
         loopSleep.text=savedValue(settings, "loopSleep", "3600")
         runtimeHours.text=savedValue(settings, "maxRuntimeHours", "")

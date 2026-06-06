@@ -14,6 +14,7 @@ Item {
     property string previewUrl: ""
     property string previewState: "missing_pdf"
     property real previewZoom: 1.0
+    property var selectedKeywordGroups: []
 
     readonly property var relevanceValues: ["all", "keyword_only", "loose", "balanced", "strict", "very_strict"]
     readonly property var statusValues: ["all", "downloaded", "no_candidate", "failed", "not_open_access", "not_pdf", "request_error"]
@@ -99,6 +100,12 @@ Item {
                     currentIndex: 0
                     enabled: !literatureLibraryController.loading
                     onCurrentIndexChanged: root.applyFilters()
+                }
+                PillButton {
+                    id: keywordGroupButton
+                    text: root.selectedKeywordGroupsText()
+                    enabled: !literatureLibraryController.loading && literatureLibraryController.keywordGroupOptions.length > 0
+                    onClicked: keywordGroupPopup.open()
                 }
                 PillButton {
                     text: literatureLibraryController.loading && literatureLibraryController.busyAction === "refresh" ? "刷新中..." : i18n.text("refresh")
@@ -190,7 +197,7 @@ Item {
                         }
                         delegate: Rectangle {
                             width: literatureList.width
-                            height: 112
+                            height: 132
                             radius: 8
                             color: ListView.isCurrentItem ? theme.navSelected : mouse.containsMouse ? theme.navHover : "transparent"
                             border.color: ListView.isCurrentItem ? theme.borderStrong : "transparent"
@@ -217,7 +224,13 @@ Item {
                                 }
                                 Text {
                                     Layout.fillWidth: true
-                                    text: (modelData.authorsText || "Unknown authors") + "  ·  " + (modelData.year || "n.d.")
+                                    text: (modelData.authorsText || "Unknown authors") + "  ·  " + (modelData.publicationDate || modelData.year || "n.d.")
+                                    color: theme.textMuted
+                                    elide: Text.ElideRight
+                                }
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: (modelData.journalTitle || "Unknown journal") + "  ·  IF " + (modelData.impactFactorText || "未知")
                                     color: theme.textMuted
                                     elide: Text.ElideRight
                                 }
@@ -301,6 +314,12 @@ Item {
                         Text { text: root.selectedRecord.relevanceLabel || "-"; color: theme.accent; font.weight: Font.DemiBold }
                         Text { text: "PDF"; color: theme.textMuted }
                         Text { text: root.selectedRecord.localPdfPath ? "已下载" : (root.selectedRecord.pdfStatus || "-"); color: root.selectedRecord.localPdfPath ? theme.success : theme.warning }
+                        Text { text: "发表时间"; color: theme.textMuted }
+                        Text { text: root.selectedDetails.publicationDate || root.selectedRecord.publicationDate || root.selectedRecord.year || "-"; color: theme.text }
+                        Text { text: "发表期刊"; color: theme.textMuted }
+                        Text { Layout.fillWidth: true; text: root.selectedDetails.journalTitle || root.selectedRecord.journalTitle || "-"; color: theme.text; elide: Text.ElideRight }
+                        Text { text: "影响因子"; color: theme.textMuted }
+                        Text { text: root.selectedDetails.impactFactorText || root.selectedRecord.impactFactorText || "未知"; color: theme.text }
                         Text { text: "命中词"; color: theme.textMuted }
                         Text { Layout.fillWidth: true; text: root.selectedDetails.matchedKeywordsText || root.selectedRecord.matchedKeywordsText || "-"; color: theme.text; elide: Text.ElideRight }
                         Text { text: "命中位置"; color: theme.textMuted }
@@ -378,6 +397,22 @@ Item {
 
                     Text {
                         Layout.fillWidth: true
+                        text: root.selectedDetails.keywordsText ? ("关键词：" + root.selectedDetails.keywordsText) : ""
+                        color: theme.textSecondary
+                        wrapMode: Text.WordWrap
+                        visible: text.length > 0
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: root.selectedDetails.contentSummary ? ("主要内容：" + root.selectedDetails.contentSummary) : ""
+                        color: theme.textSecondary
+                        wrapMode: Text.WordWrap
+                        visible: text.length > 0
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
                         text: root.selectedDetails.abstract || "暂无摘要。"
                         color: theme.text
                         wrapMode: Text.WordWrap
@@ -391,7 +426,25 @@ Item {
     function applyFilters() {
         literatureLibraryController.setFilters(root.relevanceValues[relevanceFilter.currentIndex],
                                                root.statusValues[pdfStatusFilter.currentIndex],
-                                               query.text)
+                                               query.text,
+                                               root.selectedKeywordGroups)
+    }
+
+    function selectedKeywordGroupsText() {
+        if(root.selectedKeywordGroups.length === 0)
+            return "关键词组"
+        return "关键词组 " + root.selectedKeywordGroups.length
+    }
+
+    function toggleKeywordGroup(key, enabled) {
+        let result = root.selectedKeywordGroups.slice()
+        let index = result.indexOf(key)
+        if(enabled && index < 0)
+            result.push(key)
+        if(!enabled && index >= 0)
+            result.splice(index, 1)
+        root.selectedKeywordGroups = result
+        root.applyFilters()
     }
 
     function selectRecord(index, record) {
@@ -473,6 +526,63 @@ Item {
 
     function adjustPreviewZoom(delta) {
         root.previewZoom = Math.max(0.5, Math.min(4.0, root.previewZoom + delta))
+    }
+
+    Popup {
+        id: keywordGroupPopup
+        parent: Overlay.overlay
+        modal: false
+        focus: true
+        width: 300
+        height: Math.min(420, root.height - 80)
+        x: Math.max(24, Math.min(root.width - width - 24, keywordGroupButton.mapToItem(root, 0, 0).x))
+        y: keywordGroupButton.mapToItem(root, 0, 0).y + keywordGroupButton.height + 8
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        padding: 0
+
+        background: Rectangle {
+            color: theme.surface
+            radius: theme.radiusMedium
+            border.color: theme.border
+        }
+
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 12
+            spacing: 8
+
+            RowLayout {
+                Layout.fillWidth: true
+                Text {
+                    Layout.fillWidth: true
+                    text: "关键词组"
+                    color: theme.text
+                    font.weight: Font.Bold
+                }
+                PillButton {
+                    text: "清空"
+                    enabled: root.selectedKeywordGroups.length > 0
+                    onClicked: {
+                        root.selectedKeywordGroups = []
+                        root.applyFilters()
+                    }
+                }
+            }
+
+            ListView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                model: literatureLibraryController.keywordGroupOptions
+                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                delegate: ModernCheckBox {
+                    width: ListView.view.width
+                    text: modelData.label + " (" + modelData.count + ")"
+                    checked: root.selectedKeywordGroups.indexOf(modelData.key) >= 0
+                    onToggled: root.toggleKeywordGroup(modelData.key, checked)
+                }
+            }
+        }
     }
 
     Popup {

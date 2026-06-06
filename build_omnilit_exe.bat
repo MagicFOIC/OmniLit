@@ -193,6 +193,8 @@ call "%PYTHON_CMD%" -m PyInstaller ^
   --add-data "update_manifest.json;." ^
   --add-data "Download\__init__.py;Download" ^
   --add-data "Download\literature_download_core.py;Download" ^
+  --add-data "Download\journal_metrics.py;Download" ^
+  --add-data "Download\journal_metrics.csv;Download" ^
   --add-data "Update\__init__.py;Update" ^
   --add-data "Update\update_core.py;Update" ^
   --add-data "Translate\__init__.py;Translate" ^
