@@ -6,6 +6,8 @@ Rectangle {
     id: root
     property var element: ({})
     property string statusText: ""
+    property string exportedPath: ""
+    onElementChanged: exportedPath = ""
 
     color: theme.surface
     border.color: theme.border
@@ -30,7 +32,7 @@ Rectangle {
             Layout.fillWidth: true
             text: root.element && root.element.id ? ((root.element.label || root.element.id) + " · Page " + (Number(root.element.page || 0) + 1)) : "请选择页面上的框或左侧书签。"
             color: theme.textMuted
-            wrapMode: Text.WordWrap
+            wrapMode: Text.WrapAnywhere
         }
 
         Rectangle {
@@ -95,6 +97,7 @@ Rectangle {
                 Layout.fillWidth: true
                 PillButton { text: "复制图片"; onClicked: root.copyImageCurrent() }
                 PillButton { text: "导出 PNG"; onClicked: root.exportCurrent("png") }
+                PillButton { text: "打开 PNG 目录"; visible: root.exportedPath !== ""; onClicked: pdfExtractionController.openExportDirectory(root.exportedPath) }
             }
             PillButton {
                 text: "图数据提取（实验）"
@@ -133,7 +136,7 @@ Rectangle {
             Layout.fillWidth: true
             text: root.statusText || pdfExtractionController.statusText
             color: theme.textMuted
-            wrapMode: Text.WordWrap
+            wrapMode: Text.WrapAnywhere
         }
 
         Item { Layout.fillHeight: true }
@@ -165,6 +168,7 @@ Rectangle {
         if(!root.element || !root.element.id)
             return
         var path = pdfExtractionController.exportElement(root.element.id, fmt)
+        root.exportedPath = path || ""
         root.statusText = path ? ("已导出：" + path) : pdfExtractionController.statusText
     }
 

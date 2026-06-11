@@ -18,6 +18,8 @@ class LiteratureLibraryQmlTests(unittest.TestCase):
         self.assertIn("modelData.impactFactorText", qml)
         self.assertIn("root.selectedDetails.keywordsText", qml)
         self.assertIn("root.selectedDetails.contentSummary", qml)
+        self.assertIn("literatureLibraryController.ensureLoaded()", qml)
+        self.assertIn("onClicked: literatureLibraryController.refresh()", qml)
 
     def test_qml_exposes_pdf_extraction_reader_entry(self) -> None:
         qml_dir = ROOT / "ui" / "qml"
@@ -28,7 +30,18 @@ class LiteratureLibraryQmlTests(unittest.TestCase):
         reader = (qml_dir / "LiteratureReaderPage.qml").read_text(encoding="utf-8")
         self.assertIn("pdfExtractionController", reader)
         self.assertIn("pdfExtractionController.pages", reader)
-        self.assertIn("onPdfPathChanged", reader)
+        self.assertIn("property real zoom: 1.0", reader)
+        self.assertIn("Timer { id: openRecordTimer", reader)
+        self.assertIn("onPdfPathChanged: root.scheduleOpenRecord()", reader)
+        self.assertIn("function openRecordNow()", reader)
+        self.assertIn("WheelHandler", reader)
+        self.assertIn("acceptedModifiers: Qt.ControlModifier", reader)
+        self.assertIn("pdfExtractionController.openExportDirectory(root.exportedPath)", reader)
+        panel = (qml_dir / "PdfExtractionPanel.qml").read_text(encoding="utf-8")
+        self.assertIn("property string exportedPath", panel)
+        self.assertIn("打开 PNG 目录", panel)
+        self.assertIn("pdfExtractionController.openExportDirectory(root.exportedPath)", panel)
+        self.assertIn("wrapMode: Text.WrapAnywhere", panel)
         self.assertTrue((qml_dir / "PdfElementBookmarkBar.qml").exists())
         self.assertTrue((qml_dir / "PdfElementOverlay.qml").exists())
         self.assertTrue((qml_dir / "PdfExtractionPanel.qml").exists())

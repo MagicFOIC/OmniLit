@@ -8,23 +8,30 @@ Item {
     property string recordId: ""
     property string pdfPath: ""
     property string title: ""
-    property real zoom: 1.25
+    property real zoom: 1.0
     property bool showAnnotations: true
     property int renderRevision: 0
     property int currentPage: 0
     property string operationStatus: ""
     property string activeOpenKey: ""
+    property string exportedPath: ""
     signal backRequested()
 
     Motion { id: motion }
     Theme { id: theme }
     LayoutMetrics { id: metrics; viewportWidth: root.width; viewportHeight: root.height }
+    Timer { id: openRecordTimer; interval: 0; repeat: false; onTriggered: root.openRecordNow() }
 
-    Component.onCompleted: { root.openRecord(); root.registerTourTargets() }
+    Component.onCompleted: { root.scheduleOpenRecord(); root.registerTourTargets() }
     Component.onDestruction: root.unregisterTourTargets()
-    onRecordIdChanged: root.openRecord()
-    onPdfPathChanged: root.openRecord()
-    onVisibleChanged: if(visible) root.openRecord()
+    onRecordIdChanged: root.scheduleOpenRecord()
+    onPdfPathChanged: root.scheduleOpenRecord()
+    onVisibleChanged: {
+        if(visible) {
+            root.zoom = 1.0
+            root.scheduleOpenRecord()
+        }
+    }
 
     Connections {
         target: pdfExtractionController
@@ -73,6 +80,7 @@ Item {
                 PillButton { text: "-"; onClicked: root.adjustZoom(-0.15) }
                 Text { text: Math.round(root.zoom * 100) + "%"; color: theme.textMuted; Layout.preferredWidth: 48; horizontalAlignment: Text.AlignHCenter }
                 PillButton { text: "+"; onClicked: root.adjustZoom(0.15) }
+                PillButton { text: "打开 PNG 目录"; visible: root.exportedPath !== ""; onClicked: pdfExtractionController.openExportDirectory(root.exportedPath) }
                 PillButton { text: "重新解析"; enabled: !pdfExtractionController.loading; onClicked: root.reanalyze() }
                 PillButton { text: "导出全部"; onClicked: root.exportAll() }
             }
@@ -106,6 +114,15 @@ Item {
                     boundsBehavior: Flickable.StopAtBounds
                     contentWidth: Math.max(width, pageColumn.width)
                     contentHeight: pageColumn.height
+
+                    WheelHandler {
+                        acceptedModifiers: Qt.ControlModifier
+                        target: null
+                        onWheel: function(event) {
+                            root.adjustZoom(event.angleDelta.y > 0 ? 0.1 : -0.1)
+                            event.accepted = true
+                        }
+                    }
 
                     Column {
                         id: pageColumn
@@ -173,6 +190,7 @@ Item {
                 Layout.fillHeight: true
                 element: pdfExtractionController.selectedElement
                 statusText: root.operationStatus
+                onExportedPathChanged: root.exportedPath = exportedPath
             }
         }
 
@@ -180,11 +198,17 @@ Item {
             Layout.fillWidth: true
             text: pdfExtractionController.loading ? pdfExtractionController.progressText : (root.operationStatus || pdfExtractionController.statusText)
             color: theme.textMuted
-            elide: Text.ElideRight
+            wrapMode: Text.WrapAnywhere
+            maximumLineCount: 2
         }
     }
 
-    function openRecord() {
+    function scheduleOpenRecord() {
+        if(root.visible)
+            openRecordTimer.restart()
+    }
+
+    function openRecordNow() {
         if(root.recordId === "" || root.pdfPath === "")
             return
         var openKey = root.recordId + "|" + root.pdfPath
@@ -192,6 +216,8 @@ Item {
             return
         root.activeOpenKey = openKey
         root.currentPage = 0
+        root.zoom = 1.0
+        root.exportedPath = ""
         root.operationStatus = ""
         if(!pdfExtractionController.loadIndex(root.recordId))
             pdfExtractionController.analyzeRecord(root.recordId, root.pdfPath)
@@ -205,6 +231,7 @@ Item {
 
     function exportAll() {
         var path = pdfExtractionController.exportElement("__all__", "dir")
+        root.exportedPath = path || ""
         root.operationStatus = path ? ("已导出到：" + path) : pdfExtractionController.statusText
     }
 

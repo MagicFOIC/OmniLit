@@ -11,6 +11,7 @@ from PySide6.QtCore import QObject, Property, QUrl, Signal, Slot
 from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QApplication
 
+from ._controller_support import _open_path
 from .background_tasks import ManagedWorker, shutdown_workers
 from .pdf_extraction_core import analyze_pdf
 
@@ -126,6 +127,12 @@ class PdfExtractionController(QObject):
         self._status = self._progress
         self._stop.clear()
         self._pdf_paths[key] = str(source)
+        self._current_record_id = key
+        self._current_pdf_path = str(source)
+        self._page_count = 0
+        self._pages = []
+        self._elements = []
+        self._selected = {}
         self.changed.emit()
 
         def run() -> None:
@@ -232,6 +239,21 @@ class PdfExtractionController(QObject):
             self._status = f"导出失败：{exc}"
             self.changed.emit()
             return ""
+
+    @Slot(str, result=bool)
+    def openExportDirectory(self, path: str) -> bool:
+        try:
+            target = Path(str(path or "")).expanduser()
+            if not str(target):
+                self._status = "还没有可打开的导出目录。"
+                self.changed.emit()
+                return False
+            _open_path(target)
+            return True
+        except Exception as exc:
+            self._status = f"打开导出目录失败：{exc}"
+            self.changed.emit()
+            return False
 
     @Slot(str, result=bool)
     def copyElement(self, element_id: str) -> bool:

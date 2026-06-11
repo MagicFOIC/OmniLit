@@ -244,6 +244,97 @@ class LiteratureLibraryControllerTests(unittest.TestCase):
             controller.setFilters("strict", "downloaded", "", ["not present"])
             self.assertEqual(controller.filteredCount, 0)
 
+    def test_ensure_loaded_uses_cache_when_signatures_match(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:
+            root = Path(temp)
+            self.seed_metadata(root)
+            controller = self.make_controller(root)
+
+            self.assertTrue(controller.ensureLoaded())
+            self.wait_for_idle(controller)
+            cache_path = root / "Download" / "library_cache.json"
+            self.assertTrue(cache_path.exists())
+
+            cached_controller = self.make_controller(root)
+            with mock.patch.object(cached_controller, "_load_records", side_effect=AssertionError("cache miss")) as load_records:
+                self.assertTrue(cached_controller.ensureLoaded())
+                self.wait_for_idle(cached_controller)
+
+            load_records.assert_not_called()
+            self.assertEqual(cached_controller.totalCount, 1)
+            self.assertTrue(cached_controller.hasLoaded)
+
+    def test_metadata_change_invalidates_library_cache(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:
+            root = Path(temp)
+            metadata_path, _pdf_path = self.seed_metadata(root)
+            controller = self.make_controller(root)
+            self.assertTrue(controller.ensureLoaded())
+            self.wait_for_idle(controller)
+
+            metadata_path.write_text(
+                metadata_path.read_text(encoding="utf-8")
+                + json.dumps(
+                    {
+                        "keyword": "lithium-sulfur batteries",
+                        "literature_source": "openalex",
+                        "source_record_id": "https://openalex.org/W2",
+                        "doi": "10.1000/example-2",
+                        "title": "Polysulfide conversion in lithium-sulfur batteries",
+                        "abstract": "A second lithium-sulfur batteries record about polysulfide conversion.",
+                        "publication_year": 2025,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            changed_controller = self.make_controller(root)
+            with mock.patch.object(changed_controller, "_load_records", wraps=changed_controller._load_records) as load_records:
+                self.assertTrue(changed_controller.ensureLoaded())
+                self.wait_for_idle(changed_controller)
+
+            self.assertTrue(load_records.called)
+            self.assertEqual(changed_controller.totalCount, 2)
+
+    def test_pdf_tree_change_invalidates_library_cache(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:
+            root = Path(temp)
+            self.seed_metadata(root)
+            controller = self.make_controller(root)
+            self.assertTrue(controller.ensureLoaded())
+            self.wait_for_idle(controller)
+
+            manual_pdf = root / "Download" / "pdfs" / "manual-added.pdf"
+            write_sample_pdf(manual_pdf)
+
+            changed_controller = self.make_controller(root)
+            with mock.patch.object(changed_controller, "_load_records", wraps=changed_controller._load_records) as load_records:
+                self.assertTrue(changed_controller.ensureLoaded())
+                self.wait_for_idle(changed_controller)
+
+            self.assertTrue(load_records.called)
+            self.assertEqual(changed_controller.totalCount, 2)
+
+    def test_refresh_force_rebuilds_even_when_cache_is_valid(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:
+            root = Path(temp)
+            self.seed_metadata(root)
+            controller = self.make_controller(root)
+            self.assertTrue(controller.ensureLoaded())
+            self.wait_for_idle(controller)
+
+            refreshed_controller = self.make_controller(root)
+            with mock.patch.object(refreshed_controller, "_read_library_cache", side_effect=AssertionError("cache should not be read")) as read_cache:
+                with mock.patch.object(refreshed_controller, "_load_records", wraps=refreshed_controller._load_records) as load_records:
+                    self.assertTrue(refreshed_controller.refresh())
+                    self.wait_for_idle(refreshed_controller)
+
+            read_cache.assert_not_called()
+            self.assertTrue(load_records.called)
+            self.assertEqual(refreshed_controller.totalCount, 1)
+
     def test_old_metadata_without_impact_factor_does_not_crash(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

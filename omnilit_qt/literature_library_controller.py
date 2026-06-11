@@ -50,6 +50,8 @@ KEYWORD_GROUP_ALIASES: dict[str, str] = {
 
 BROAD_KEYWORD_GROUPS = {"article", "study", "result", "method", "battery"}
 
+LIBRARY_CACHE_VERSION = 1
+
 
 class LiteratureLibraryController(QObject):
     """Expose downloaded literature metadata, previews, and organization actions."""
@@ -118,6 +120,98 @@ class LiteratureLibraryController(QObject):
     @property
     def _pdf_root(self) -> Path:
         return self._output_root() / "pdfs"
+
+    @staticmethod
+    def _library_cache_path(output_root: Path) -> Path:
+        return output_root / "library_cache.json"
+
+    @staticmethod
+    def _metadata_signature(meta_path: Path) -> dict[str, Any]:
+        try:
+            stat = meta_path.stat()
+            return {"exists": True, "size": int(stat.st_size), "mtime_ns": int(stat.st_mtime_ns)}
+        except OSError:
+            return {"exists": False, "size": 0, "mtime_ns": 0}
+
+    @staticmethod
+    def _pdf_tree_signature(pdf_root: Path) -> dict[str, Any]:
+        pdf_count = 0
+        latest_mtime_ns = 0
+        try:
+            iterator = pdf_root.rglob("*.pdf") if pdf_root.exists() else ()
+            for path in iterator:
+                try:
+                    if not path.is_file():
+                        continue
+                    stat = path.stat()
+                except OSError:
+                    continue
+                pdf_count += 1
+                latest_mtime_ns = max(latest_mtime_ns, int(stat.st_mtime_ns))
+        except OSError:
+            pdf_count = 0
+            latest_mtime_ns = 0
+        return {"pdf_count": pdf_count, "latest_mtime_ns": latest_mtime_ns}
+
+    @staticmethod
+    def _settings_signature(settings: dict[str, Any]) -> str:
+        relevant = {
+            "keywords": settings.get("keywords"),
+            "strictKeywordMatch": settings.get("strictKeywordMatch"),
+            "minKeywordMatchRatio": settings.get("minKeywordMatchRatio"),
+            "topicPack": settings.get("topicPack"),
+            "minTopicScore": settings.get("minTopicScore"),
+            "journalPack": settings.get("journalPack"),
+            "selectedJournals": settings.get("selectedJournals"),
+            "journalWhitelistOnly": settings.get("journalWhitelistOnly"),
+            "journalMetricSource": settings.get("journalMetricSource"),
+            "journalMetricCsv": settings.get("journalMetricCsv"),
+            "outputDir": settings.get("outputDir"),
+        }
+        payload = json.dumps(relevant, ensure_ascii=False, sort_keys=True, default=str)
+        return hashlib.sha1(payload.encode("utf-8", errors="ignore")).hexdigest()
+
+    def _library_cache_signature(self, settings: dict[str, Any], output_root: Path) -> dict[str, Any]:
+        return {
+            "cache_version": LIBRARY_CACHE_VERSION,
+            "metadata": self._metadata_signature(output_root / "metadata_battery.jsonl"),
+            "pdf_tree": self._pdf_tree_signature(output_root / "pdfs"),
+            "settings": self._settings_signature(settings),
+        }
+
+    @staticmethod
+    def _read_library_cache(cache_path: Path, expected_signature: dict[str, Any]) -> list[dict[str, Any]] | None:
+        try:
+            with cache_path.open("r", encoding="utf-8") as fin:
+                payload = json.load(fin)
+        except Exception:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        if payload.get("version") != LIBRARY_CACHE_VERSION:
+            return None
+        if payload.get("signature") != expected_signature:
+            return None
+        records = payload.get("records")
+        if not isinstance(records, list):
+            return None
+        return [dict(record) for record in records if isinstance(record, dict)]
+
+    @staticmethod
+    def _write_library_cache(cache_path: Path, signature: dict[str, Any], records: list[dict[str, Any]]) -> None:
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = cache_path.with_name(f"{cache_path.name}.tmp")
+            payload = {"version": LIBRARY_CACHE_VERSION, "signature": signature, "records": records}
+            with tmp_path.open("w", encoding="utf-8") as fout:
+                json.dump(payload, fout, ensure_ascii=False)
+            tmp_path.replace(cache_path)
+        except Exception:
+            return
+
+    def _write_current_library_cache(self, settings: dict[str, Any], output_root: Path, records: list[dict[str, Any]]) -> None:
+        signature = self._library_cache_signature(settings, output_root)
+        self._write_library_cache(self._library_cache_path(output_root), signature, records)
 
     def _download_settings(self) -> dict[str, Any]:
         raw = self.store.setting("download_form_config", "")
@@ -714,6 +808,7 @@ class LiteratureLibraryController(QObject):
                     fout.write(json.dumps(record, ensure_ascii=False) + "\n")
 
         refreshed = self._load_records(rewrite_metadata=False, settings=settings, output_root=output_root)
+        self._write_current_library_cache(settings, output_root, refreshed)
         summary = {
             "deletedCount": deleted,
             "freedBytes": freed,
@@ -926,10 +1021,17 @@ class LiteratureLibraryController(QObject):
         task.start()
         return True
 
-    def _load_task(self, rewrite_metadata: bool) -> tuple[object, str]:
+    def _load_task(self, rewrite_metadata: bool, *, force: bool = False) -> tuple[object, str]:
         settings = self._download_settings()
         output_root = self._output_root_from_settings(settings)
+        signature = self._library_cache_signature(settings, output_root)
+        cache_path = self._library_cache_path(output_root)
+        if not force and not rewrite_metadata:
+            cached_records = self._read_library_cache(cache_path, signature)
+            if cached_records is not None:
+                return {"records": cached_records, "fromCache": True}, f"已从缓存加载 {len(cached_records)} 条文献记录。"
         records = self._load_records(rewrite_metadata=rewrite_metadata, settings=settings, output_root=output_root)
+        self._write_current_library_cache(settings, output_root, records)
         return {"records": records}, f"已加载 {len(records)} 条文献记录。"
 
     def _organize_task(self, records: list[dict[str, Any]]) -> tuple[object, str]:
@@ -972,6 +1074,7 @@ class LiteratureLibraryController(QObject):
                     fout.write(json.dumps(record, ensure_ascii=False) + "\n")
 
         refreshed = self._load_records(rewrite_metadata=False, settings=settings, output_root=output_root)
+        self._write_current_library_cache(settings, output_root, refreshed)
         return {"records": refreshed, "organized": organized}, f"已按最高相关性等级归档 {organized} 篇 PDF。"
 
     @Property("QVariantList", notify=changed)
@@ -1027,6 +1130,19 @@ class LiteratureLibraryController(QObject):
         return self._cleanup_pending
 
     @Slot(result=bool)
+    def ensureLoaded(self) -> bool:
+        if self._has_loaded:
+            return False
+        message = "正在后台加载文献库..." if self.locale.language == "zh" else "Loading literature library in the background..."
+        return self._start_worker(
+            action="refresh",
+            name="LiteratureLibraryRefresh",
+            state_file="literature_library_refresh.json",
+            start_message=message,
+            target=lambda _task: self._load_task(False, force=False),
+        )
+
+    @Slot(result=bool)
     def refresh(self) -> bool:
         message = "正在后台加载文献库..." if self.locale.language == "zh" else "Loading literature library in the background..."
         return self._start_worker(
@@ -1034,7 +1150,7 @@ class LiteratureLibraryController(QObject):
             name="LiteratureLibraryRefresh",
             state_file="literature_library_refresh.json",
             start_message=message,
-            target=lambda _task: self._load_task(False),
+            target=lambda _task: self._load_task(False, force=True),
         )
 
     @Slot(result=bool)
@@ -1045,7 +1161,7 @@ class LiteratureLibraryController(QObject):
             name="LiteratureLibraryRecompute",
             state_file="literature_library_recompute.json",
             start_message=message,
-            target=lambda _task: self._load_task(True),
+            target=lambda _task: self._load_task(True, force=True),
         )
 
     @Slot(result=bool)

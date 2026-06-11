@@ -36,7 +36,7 @@ Item {
 
     onVisibleChanged: {
         if(visible && !literatureLibraryController.hasLoaded && !literatureLibraryController.loading)
-            literatureLibraryController.refresh()
+            literatureLibraryController.ensureLoaded()
     }
 
     Connections {
