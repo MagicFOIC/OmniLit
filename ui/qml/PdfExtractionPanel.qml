@@ -4,12 +4,15 @@ import QtQuick.Layouts
 
 Rectangle {
     id: root
-    property var element: ({})
-    property string statusText: ""
-    property string exportedPath: ""
 
-    onElementChanged: {
-        exportedPath = ""
+    property var element: ({})
+    property string documentKey: ""
+    property string feedbackText: ""
+    property string lastExportPath: ""
+
+    onDocumentKeyChanged: {
+        lastExportPath = ""
+        feedbackText = ""
     }
 
     color: theme.surface
@@ -25,7 +28,9 @@ Rectangle {
 
         Text {
             Layout.fillWidth: true
-            text: root.element && root.element.id ? (root.kindName(root.element.type) + "详情") : "元素详情"
+            text: root.element && root.element.id
+                ? (root.kindName(root.element.type) + "详情")
+                : "元素详情"
             color: theme.text
             font.weight: Font.Bold
             font.pixelSize: theme.baseFontSize + 2
@@ -33,7 +38,9 @@ Rectangle {
 
         Text {
             Layout.fillWidth: true
-            text: root.element && root.element.id ? ((root.element.label || root.element.id) + " · Page " + (Number(root.element.page || 0) + 1)) : "请选择页面上的框或左侧书签。"
+            text: root.element && root.element.id
+                ? ((root.element.label || root.element.id) + " · Page " + (Number(root.element.page || 0) + 1))
+                : "请选择页面上的框或左侧书签。"
             color: theme.textMuted
             wrapMode: Text.WrapAnywhere
         }
@@ -55,29 +62,47 @@ Rectangle {
                 color: theme.text
                 font.weight: Font.DemiBold
             }
+
             ListView {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 190
                 clip: true
                 model: root.tablePreviewRows()
+
                 delegate: Text {
                     width: ListView.view.width
-                    text: modelData.join("    ")
+                    text: modelData.join(" ")
                     color: theme.textSecondary
                     elide: Text.ElideRight
                     font.family: "Consolas"
                     font.pixelSize: 11
                 }
             }
-            RowLayout {
+
+            Flow {
                 Layout.fillWidth: true
-                PillButton { text: "复制表格"; onClicked: root.copyCurrent() }
-                PillButton { text: "导出 CSV"; onClicked: root.exportCurrent("csv") }
-                PillButton { text: "导出 JSON"; onClicked: root.exportCurrent("json") }
+                spacing: 8
+                clip: true
 
                 PillButton {
-                    text: "打开导出目录"
-                    enabled: root.exportedPath !== ""
+                    text: "复制表格"
+                    onClicked: root.copyCurrent()
+                }
+
+                PillButton {
+                    text: "导出 CSV"
+                    onClicked: root.exportCurrent("csv")
+                }
+
+                PillButton {
+                    text: "导出 JSON"
+                    onClicked: root.exportCurrent("json")
+                }
+
+                PillButton {
+                    text: "打开表格导出目录"
+                    visible: root.lastExportPath.length > 0
+                    enabled: visible
                     onClicked: root.openLastExportDirectory()
                 }
             }
@@ -91,40 +116,47 @@ Rectangle {
             Image {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 220
-                source: root.element && root.element.id ? pdfExtractionController.cropElement(root.element.id) : ""
+                source: root.element && root.element.id
+                    ? pdfExtractionController.cropElement(root.element.id)
+                    : ""
                 fillMode: Image.PreserveAspectFit
                 asynchronous: true
                 cache: false
             }
+
             Text {
                 Layout.fillWidth: true
                 text: root.element.caption || "暂无图注。"
                 color: theme.textSecondary
                 wrapMode: Text.WordWrap
             }
-            RowLayout {
+
+            Flow {
                 Layout.fillWidth: true
-                PillButton { text: "复制图片"; onClicked: root.copyImageCurrent() }
-                PillButton { text: "导出 PNG"; onClicked: root.exportCurrent("png") }
+                spacing: 8
+                clip: true
+
                 PillButton {
-                    text: "打开文件夹"
-                    visible: root.exportedPath !== ""
-                    onClicked: {
-                        root.statusText = pdfExtractionController.openExportDirectory(root.exportedPath)
-                            ? "已打开导出文件夹。"
-                            : pdfExtractionController.statusText
-                    }
+                    text: "复制图片"
+                    onClicked: root.copyImageCurrent()
                 }
 
                 PillButton {
-                    text: "打开导出目录"
-                    enabled: root.exportedPath !== ""
+                    text: "导出图片"
+                    onClicked: root.exportCurrent("png")
+                }
+
+                PillButton {
+                    text: "打开图片导出目录"
+                    visible: root.lastExportPath.length > 0
+                    enabled: visible
                     onClicked: root.openLastExportDirectory()
                 }
-            }
-            PillButton {
-                text: "图数据提取（实验）"
-                onClicked: root.statusText = "需要手动坐标轴标定，后续 PR 实现。"
+
+                PillButton {
+                    text: "图数据提取（实验）"
+                    onClicked: root.feedbackText = "需要手动坐标轴标定，后续 PR 实现。"
+                }
             }
         }
 
@@ -140,86 +172,99 @@ Rectangle {
                 readOnly: true
                 wrapMode: TextArea.Wrap
             }
+
             Image {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 130
-                source: root.element && root.element.id ? pdfExtractionController.cropElement(root.element.id) : ""
+                source: root.element && root.element.id
+                    ? pdfExtractionController.cropElement(root.element.id)
+                    : ""
                 fillMode: Image.PreserveAspectFit
                 asynchronous: true
                 cache: false
             }
-            RowLayout {
-                Layout.fillWidth: true
-                PillButton { text: "复制公式文本"; onClicked: root.copyCurrent() }
-                PillButton { text: "复制公式图片"; onClicked: root.copyImageCurrent() }
-            }
-        }
 
-        PillButton {
-            Layout.fillWidth: true
-            text: "打开文件夹"
-            visible: root.exportedPath.length > 0
-            enabled: visible
-            onClicked: {
-                root.statusText = pdfExtractionController.openExportDirectory(root.exportedPath)
-                    ? "已打开导出文件夹。"
-                    : pdfExtractionController.statusText
+            Flow {
+                Layout.fillWidth: true
+                spacing: 8
+                clip: true
+
+                PillButton {
+                    text: "复制公式文本"
+                    onClicked: root.copyCurrent()
+                }
+
+                PillButton {
+                    text: "复制公式图片"
+                    onClicked: root.copyImageCurrent()
+                }
             }
         }
 
         Text {
             Layout.fillWidth: true
-            text: root.statusText || pdfExtractionController.statusText
+            visible: root.feedbackText.length > 0
+            text: root.feedbackText
             color: theme.textMuted
             wrapMode: Text.WrapAnywhere
+            maximumLineCount: 2
+            elide: Text.ElideRight
         }
 
         Item { Layout.fillHeight: true }
     }
 
     function kindName(kind) {
-        if(kind === "table")
+        if (kind === "table")
             return "表格"
-        if(kind === "figure")
+        if (kind === "figure")
             return "图"
-        if(kind === "formula")
+        if (kind === "formula")
             return "公式"
         return "元素"
     }
 
     function tablePreviewRows() {
-        if(!root.element || !root.element.table)
+        if (!root.element || !root.element.table)
             return []
         return root.element.table.slice(0, 8)
     }
 
     function copyCurrent() {
-        if(!root.element || !root.element.id)
+        if (!root.element || !root.element.id)
             return
-        root.statusText = pdfExtractionController.copyElement(root.element.id) ? "操作成功。" : pdfExtractionController.statusText
+        root.feedbackText = pdfExtractionController.copyElement(root.element.id)
+            ? "操作成功。"
+            : pdfExtractionController.statusText
     }
 
     function exportCurrent(fmt) {
-        if(!root.element || !root.element.id)
+        if (!root.element || !root.element.id)
             return
 
         var path = pdfExtractionController.exportElement(root.element.id, fmt)
-        root.exportedPath = path || ""
-        root.statusText = path ? ("已导出：" + path) : pdfExtractionController.statusText
+        if (path) {
+            root.lastExportPath = path
+            root.feedbackText = "已导出：" + path
+        } else {
+            root.feedbackText = pdfExtractionController.statusText
+        }
     }
 
     function openLastExportDirectory() {
-        if(root.exportedPath === "")
+        if (root.lastExportPath.length === 0)
             return
 
-        root.statusText = pdfExtractionController.openExportDirectory(root.exportedPath)
+        root.feedbackText = pdfExtractionController.openExportDirectory(root.lastExportPath)
             ? "已打开导出目录。"
             : pdfExtractionController.statusText
     }
 
     function copyImageCurrent() {
-        if(!root.element || !root.element.id)
+        if (!root.element || !root.element.id)
             return
-        root.statusText = pdfExtractionController.copyElementImage(root.element.id) ? "操作成功。" : pdfExtractionController.statusText
+        root.feedbackText = pdfExtractionController.copyElementImage(root.element.id)
+            ? "操作成功。"
+            : pdfExtractionController.statusText
     }
 }

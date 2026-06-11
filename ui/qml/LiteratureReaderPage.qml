@@ -82,7 +82,12 @@ Item {
                 PillButton { text: "-"; onClicked: root.adjustZoom(-0.15) }
                 Text { text: Math.round(root.zoom * 100) + "%"; color: theme.textMuted; Layout.preferredWidth: 48; horizontalAlignment: Text.AlignHCenter }
                 PillButton { text: "+"; onClicked: root.adjustZoom(0.15) }
-                PillButton { text: "打开 PNG 目录"; visible: root.exportedPath !== ""; onClicked: pdfExtractionController.openExportDirectory(root.exportedPath) }
+                PillButton {
+                    text: "打开 PNG 目录"
+                    visible: root.exportedPath !== ""
+                    enabled: visible
+                    onClicked: pdfExtractionController.openExportDirectory(root.exportedPath)
+                }
                 PillButton { text: "重新解析"; enabled: !pdfExtractionController.loading; onClicked: root.reanalyze() }
                 PillButton { text: "导出全部"; onClicked: root.exportAll() }
             }
@@ -196,20 +201,19 @@ Item {
 
             PdfExtractionPanel {
                 Layout.preferredWidth: 300
+                Layout.minimumWidth: 260
+                Layout.maximumWidth: 340
                 Layout.fillHeight: true
                 element: pdfExtractionController.selectedElement
-                statusText: root.operationStatus
-                onExportedPathChanged: root.exportedPath = exportedPath
+                documentKey: root.recordId + "|" + root.pdfPath
+
+                onLastExportPathChanged: {
+                    if (lastExportPath.length > 0)
+                        root.exportedPath = lastExportPath
+                }
             }
         }
 
-        Text {
-            Layout.fillWidth: true
-            text: pdfExtractionController.loading ? pdfExtractionController.progressText : (root.operationStatus || pdfExtractionController.statusText)
-            color: theme.textMuted
-            wrapMode: Text.WrapAnywhere
-            maximumLineCount: 2
-        }
     }
 
     function scheduleOpenRecord() {

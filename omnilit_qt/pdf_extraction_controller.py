@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QObject, Property, QUrl, Signal, Slot
-from PySide6.QtGui import QDesktopServices, QImage
+from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QApplication
 
 from ._controller_support import _open_path
@@ -291,29 +291,26 @@ class PdfExtractionController(QObject):
     @Slot(str, result=bool)
     def openExportDirectory(self, path: str) -> bool:
         try:
-            target = Path(str(path or "")).expanduser()
-
-            if not str(target):
+            raw = str(path or "").strip()
+            if not raw:
                 self._status = "还没有可打开的导出目录。"
                 self.changed.emit()
                 return False
 
-            # 如果传进来的是文件路径，例如 xxx.csv / xxx.json / xxx.png，则打开它所在目录
-            if target.exists() and target.is_file():
-                target = target.parent
-            elif target.suffix:
-                target = target.parent
+            target = Path(raw).expanduser()
 
-            if not target.exists():
+            # 传入可能是 csv/json/png 文件，也可能是导出目录。
+            directory = target if target.is_dir() else target.parent
+
+            if not directory.exists():
                 self._status = "导出目录不存在。"
                 self.changed.emit()
                 return False
 
-            ok = QDesktopServices.openUrl(QUrl.fromLocalFile(str(target)))
-            self._status = f"已打开目录：{target}" if ok else f"无法打开目录：{target}"
+            _open_path(directory)
+            self._status = f"已打开目录：{directory}"
             self.changed.emit()
-            return bool(ok)
-
+            return True
         except Exception as exc:
             self._status = f"打开导出目录失败：{exc}"
             self.changed.emit()
