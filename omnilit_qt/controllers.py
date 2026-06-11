@@ -8,6 +8,7 @@ from .app_controller import AppController
 from .auth_controller import AuthController
 from .download_controller import DOWNLOAD_FORM_SETTING, DownloadController
 from .literature_library_controller import LiteratureLibraryController
+from .pdf_extraction_controller import PdfExtractionController
 from .preferences_controller import PreferencesController
 from .translation_controller import TRANSLATION_FORM_SETTING, TranslationController
 from .update_controller import DEFAULT_UPDATE_MANIFEST_URL, UpdateController
@@ -19,6 +20,7 @@ __all__ = [
     "DOWNLOAD_FORM_SETTING",
     "DownloadController",
     "LiteratureLibraryController",
+    "PdfExtractionController",
     "PreferencesController",
     "TRANSLATION_FORM_SETTING",
     "TranslationController",

@@ -7,6 +7,8 @@ Item {
     property var sortValues: ["", "relevance_score:desc", "cited_by_count:desc", "publication_date:desc"]
     property var topicScoreValues: [0, 4, 6, 9, 12]
     property var topicScoreLabels: ["关键词提及即可 / 0", "宽松 / 4", "均衡 / 6", "严格 / 9", "极严格 / 12"]
+    property var journalMetricSourceValues: ["local_then_openalex", "local_only", "openalex_only"]
+    property var journalMetricSourceLabels: [i18n.text("local_then_openalex"), i18n.text("local_only"), i18n.text("openalex_only")]
     property var selectedSources: ["openalex"]
     property var selectedJournals: []
     property var discoverySnapshot: ({})
@@ -107,11 +109,14 @@ Item {
                             text: modelData.label
                             checked: root.selectedSources.indexOf(modelData.key) >= 0
                             activePulse: downloadController.running && downloadController.activeSourceKey === modelData.key
-                            ToolTip.delay: 250
-                            ToolTip.timeout: 5000
-                            ToolTip.visible: activePulse || hovered
-                            ToolTip.text: activePulse ? downloadController.activeSourceText : modelData.label
                             onToggled: root.toggleSource(modelData.key, checked)
+                            ModernToolTip {
+                                placement: "bottom"
+                                delay: 250
+                                timeout: 5000
+                                shown: parent.activePulse || parent.hovered
+                                text: parent.activePulse ? downloadController.activeSourceText : modelData.label
+                            }
                         }
                     }
                     Item { Layout.fillWidth: true }
@@ -151,20 +156,26 @@ Item {
                         checked: true
                         enabled: !root.discoveryModeActive
                         opacity: enabled ? 1 : 0.55
-                        ToolTip.delay: 250
-                        ToolTip.timeout: 5000
-                        ToolTip.visible: hovered && root.discoveryModeActive
-                        ToolTip.text: i18n.text("discovery_managed_setting_tip")
                         onToggled: root.scheduleSave()
+                        ModernToolTip {
+                            placement: "bottom"
+                            delay: 250
+                            timeout: 5000
+                            shown: parent.hovered && root.discoveryModeActive
+                            text: i18n.text("discovery_managed_setting_tip")
+                        }
                     }
                     ModernCheckBox {
                         id: oaOnly
                         text: i18n.text("oa_only")
-                        ToolTip.delay: 250
-                        ToolTip.timeout: 7000
-                        ToolTip.visible: hovered
-                        ToolTip.text: i18n.text("oa_only_tip")
                         onToggled: root.scheduleSave()
+                        ModernToolTip {
+                            placement: "bottom"
+                            delay: 250
+                            timeout: 7000
+                            shown: parent.hovered
+                            text: i18n.text("oa_only_tip")
+                        }
                     }
                     Text { text: i18n.text("pages"); color: theme.textMuted }
                     SpinBox { id: pages; from: 1; to: 1000; value: 1; editable: true; onValueChanged: root.scheduleSave() }
@@ -223,11 +234,14 @@ Item {
                                 checked: true
                                 enabled: !root.discoveryModeActive
                                 opacity: enabled ? 1 : 0.55
-                                ToolTip.delay: 250
-                                ToolTip.timeout: 5000
-                                ToolTip.visible: hovered && root.discoveryModeActive
-                                ToolTip.text: i18n.text("discovery_managed_setting_tip")
                                 onToggled: root.scheduleSave()
+                                ModernToolTip {
+                                    placement: "bottom"
+                                    delay: 250
+                                    timeout: 5000
+                                    shown: parent.hovered && root.discoveryModeActive
+                                    text: i18n.text("discovery_managed_setting_tip")
+                                }
                             }
                             Text { text: i18n.text("match_ratio"); color: theme.textMuted }
                             TextField {
@@ -237,11 +251,14 @@ Item {
                                 enabled: !root.discoveryModeActive
                                 opacity: enabled ? 1 : 0.55
                                 hoverEnabled: true
-                                ToolTip.delay: 250
-                                ToolTip.timeout: 5000
-                                ToolTip.visible: hovered && root.discoveryModeActive
-                                ToolTip.text: i18n.text("discovery_managed_setting_tip")
                                 onTextChanged: root.scheduleSave()
+                                ModernToolTip {
+                                    placement: "bottom"
+                                    delay: 250
+                                    timeout: 5000
+                                    shown: parent.hovered && root.discoveryModeActive
+                                    text: i18n.text("discovery_managed_setting_tip")
+                                }
                             }
                             Text { text: i18n.text("topic_filter_strength"); color: theme.textMuted }
                             ColumnLayout {
@@ -255,11 +272,14 @@ Item {
                                     enabled: !root.discoveryModeActive
                                     opacity: enabled ? 1 : 0.55
                                     hoverEnabled: true
-                                    ToolTip.delay: 350
-                                    ToolTip.timeout: 9000
-                                    ToolTip.visible: hovered
-                                    ToolTip.text: root.discoveryModeActive ? i18n.text("discovery_managed_setting_tip") : i18n.text("topic_filter_strength_tip")
                                     onCurrentIndexChanged: root.scheduleSave()
+                                    ModernToolTip {
+                                        placement: "bottom"
+                                        delay: 350
+                                        timeout: 9000
+                                        shown: parent.hovered
+                                        text: root.discoveryModeActive ? i18n.text("discovery_managed_setting_tip") : i18n.text("topic_filter_strength_tip")
+                                    }
                                 }
                                 Text {
                                     Layout.fillWidth: true
@@ -278,11 +298,14 @@ Item {
                                 enabled: !root.discoveryModeActive
                                 opacity: enabled ? 1 : 0.55
                                 hoverEnabled: true
-                                ToolTip.delay: 350
-                                ToolTip.timeout: 9000
-                                ToolTip.visible: hovered
-                                ToolTip.text: root.discoveryModeActive ? i18n.text("discovery_managed_setting_tip") : i18n.text("journal_scope_tip")
                                 onCurrentIndexChanged: root.scheduleSave()
+                                ModernToolTip {
+                                    placement: "bottom"
+                                    delay: 350
+                                    timeout: 9000
+                                    shown: parent.hovered
+                                    text: root.discoveryModeActive ? i18n.text("discovery_managed_setting_tip") : i18n.text("journal_scope_tip")
+                                }
                             }
                             Text { text: i18n.text("min_impact_factor"); color: theme.textMuted }
                             TextField {
@@ -291,6 +314,37 @@ Item {
                                 placeholderText: i18n.text("optional")
                                 validator: DoubleValidator { bottom: 0 }
                                 onTextChanged: root.scheduleSave()
+                            }
+                            ModernCheckBox {
+                                id: includeUnknownImpactFactor
+                                Layout.fillWidth: true
+                                text: i18n.text("include_unknown_impact_factor")
+                                checked: true
+                                onToggled: root.scheduleSave()
+                            }
+                            Item { Layout.fillWidth: true; visible: !metrics.narrow }
+                            Text { text: i18n.text("journal_metric_source"); color: theme.textMuted }
+                            ComboBox {
+                                id: journalMetricSource
+                                Layout.fillWidth: true
+                                model: root.journalMetricSourceLabels
+                                currentIndex: 0
+                                onCurrentIndexChanged: root.scheduleSave()
+                            }
+                            Text { text: i18n.text("journal_metric_csv"); color: theme.textMuted }
+                            TextField {
+                                id: journalMetricCsv
+                                Layout.fillWidth: true
+                                placeholderText: i18n.text("optional")
+                                onTextChanged: root.scheduleSave()
+                            }
+                            Text {
+                                Layout.fillWidth: true
+                                Layout.columnSpan: metrics.narrow ? 2 : 4
+                                text: i18n.text("impact_metric_hint")
+                                color: theme.textMuted
+                                font.pixelSize: Math.max(10, theme.baseFontSize - 3)
+                                wrapMode: Text.Wrap
                             }
                         }
                         Text {
@@ -321,11 +375,14 @@ Item {
                                 checked: true
                                 enabled: !root.discoveryModeActive
                                 opacity: enabled ? 1 : 0.55
-                                ToolTip.delay: 250
-                                ToolTip.timeout: 5000
-                                ToolTip.visible: hovered && root.discoveryModeActive
-                                ToolTip.text: i18n.text("discovery_managed_setting_tip")
                                 onToggled: root.scheduleSave()
+                                ModernToolTip {
+                                    placement: "bottom"
+                                    delay: 250
+                                    timeout: 5000
+                                    shown: parent.hovered && root.discoveryModeActive
+                                    text: i18n.text("discovery_managed_setting_tip")
+                                }
                             }
                         }
                         Text {
@@ -344,13 +401,16 @@ Item {
                                 model: [i18n.text("standard_filter"), i18n.text("loose_discovery")]
                                 currentIndex: 0
                                 hoverEnabled: true
-                                ToolTip.delay: 350
-                                ToolTip.timeout: 9000
-                                ToolTip.visible: hovered
-                                ToolTip.text: i18n.text("discovery_mode_tip")
                                 onCurrentIndexChanged: {
                                     root.handleFilterStrategyChanged(currentIndex)
                                     root.scheduleSave()
+                                }
+                                ModernToolTip {
+                                    placement: "bottom"
+                                    delay: 350
+                                    timeout: 9000
+                                    shown: parent.hovered
+                                    text: i18n.text("discovery_mode_tip")
                                 }
                             }
                         }
@@ -382,6 +442,9 @@ Item {
             StatCard { Layout.preferredHeight: root.statsPaneHeight; title: i18n.text("literature_records"); value: String(downloadController.stats.fetched_items || 0); detail: i18n.text("fetched") }
             StatCard { Layout.preferredHeight: root.statsPaneHeight; title: i18n.text("metadata"); value: String(downloadController.stats.added_records || 0); detail: i18n.text("saved") }
             StatCard { Layout.preferredHeight: root.statsPaneHeight; title: "PDF"; value: String((downloadController.stats.downloaded_pdfs || 0) + (downloadController.stats.backfill_downloaded_pdfs || 0)); detail: i18n.text("downloaded") }
+            StatCard { Layout.preferredHeight: root.statsPaneHeight; title: i18n.text("journal_metric_resolved"); value: String(downloadController.stats.journal_metric_resolved || 0); detail: i18n.text("local_then_openalex") }
+            StatCard { Layout.preferredHeight: root.statsPaneHeight; title: i18n.text("journal_metric_missing"); value: String(downloadController.stats.journal_metric_missing || 0); detail: i18n.text("impact_metric") }
+            StatCard { Layout.preferredHeight: root.statsPaneHeight; title: i18n.text("skipped_by_impact_factor"); value: String(downloadController.stats.skipped_by_impact_factor || 0); detail: i18n.text("min_impact_factor") }
         }
         Card {
             Layout.fillWidth: true
@@ -423,6 +486,9 @@ Item {
                  selectedJournals: root.selectedJournals, minTopicScore: root.topicScoreValues[minTopicScore.currentIndex],
                  journalWhitelistOnly: journalScope.currentIndex === 1,
                  minImpactFactor: minImpactFactor.text,
+                 includeUnknownImpactFactor: includeUnknownImpactFactor.checked,
+                 journalMetricSource: root.journalMetricSourceValues[journalMetricSource.currentIndex],
+                 journalMetricCsv: journalMetricCsv.text,
                  discoveryMode: filterStrategy.currentIndex === 1,
                  loop: loopJob.checked, loopSleep: loopSleep.text, maxRuntimeHours: runtimeHours.text,
                  resume: resume.checked, fastForwardExistingPages: fastForward.checked, oaOnly: oaOnly.checked,
@@ -430,6 +496,10 @@ Item {
     }
     function savedValue(settings, key, fallback) {
         return settings[key] !== undefined && settings[key] !== null ? settings[key] : fallback
+    }
+    function journalMetricSourceIndex(value) {
+        let index = root.journalMetricSourceValues.indexOf(String(value || "local_then_openalex"))
+        return index >= 0 ? index : 0
     }
     function isIsoDate(value) {
         return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ""))
@@ -563,6 +633,9 @@ Item {
         minTopicScore.currentIndex=topicScoreIndex(savedValue(settings, "minTopicScore", 0))
         journalScope.currentIndex=journalScopeIndex(savedValue(settings, "journalWhitelistOnly", false))
         minImpactFactor.text=savedValue(settings, "minImpactFactor", "")
+        includeUnknownImpactFactor.checked=savedValue(settings, "includeUnknownImpactFactor", true)
+        journalMetricSource.currentIndex=journalMetricSourceIndex(savedValue(settings, "journalMetricSource", "local_then_openalex"))
+        journalMetricCsv.text=savedValue(settings, "journalMetricCsv", "")
         loopJob.checked=savedValue(settings, "loop", false)
         loopSleep.text=savedValue(settings, "loopSleep", "3600")
         runtimeHours.text=savedValue(settings, "maxRuntimeHours", "")

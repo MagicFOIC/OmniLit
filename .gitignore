@@ -14,9 +14,14 @@ updates/
 apply_*_update.bat
 apply_*_update.log
 
+Download/library_previews/
+Download/library_thumbnails/
+Download/*.jsonl
+Download/*_preview_cache.json
+Download/crawl_state*.json
+Download/crawl_state/
+Download/pdf_cache/
 Download/pdfs/
-Download/metadata_battery.jsonl
-Download/crawl_state.json
 Download/gui_settings.json
 task_state/
 Translate/pdf/

@@ -243,6 +243,9 @@ def build_download_config(paths: AppPaths, raw: dict[str, Any], stop_callback, p
     min_keyword_match_ratio = as_float(raw.get("minKeywordMatchRatio"), 0.75)
     min_topic_score = as_int(raw.get("minTopicScore"), 0)
     journal_whitelist_only = as_bool(raw.get("journalWhitelistOnly"))
+    include_unknown_impact_factor = as_bool(raw.get("includeUnknownImpactFactor"), True)
+    journal_metric_source = str(raw.get("journalMetricSource") or "local_then_openalex").strip()
+    journal_metric_csv = Path(str(raw.get("journalMetricCsv"))).expanduser() if raw.get("journalMetricCsv") else None
     resume = as_bool(raw.get("resume"), True)
     fast_forward_existing_pages = as_bool(raw.get("fastForwardExistingPages"), True)
     if discovery_mode:
@@ -281,6 +284,9 @@ def build_download_config(paths: AppPaths, raw: dict[str, Any], stop_callback, p
         min_topic_score=min_topic_score,
         journal_whitelist_only=journal_whitelist_only,
         min_impact_factor=optional_float(raw.get("minImpactFactor")),
+        include_unknown_impact_factor=include_unknown_impact_factor,
+        journal_metric_source=journal_metric_source or "local_then_openalex",
+        journal_metric_csv=journal_metric_csv,
         loop=as_bool(raw.get("loop")),
         loop_sleep=as_float(raw.get("loopSleep"), 3600),
         max_runtime_hours=optional_float(raw.get("maxRuntimeHours")),

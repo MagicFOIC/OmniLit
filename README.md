@@ -218,3 +218,38 @@ The downloader supports `journal_pack=auto`, which recommends OA journals from O
 The downloader also supports minimum topic score filtering, whitelist-only OA journal filtering, and a legal Open Access PDF resolver. PDF resolution prioritizes OpenAlex `primary_location.pdf_url`, OpenAlex `open_access.oa_url`, Unpaywall OA PDF URLs, and DOAJ fulltext PDF links. It checks PDF candidates before download when possible and skips HTML pages, images, XML, login/subscription pages, and known shadow-library domains.
 
 OmniLit only downloads legal Open Access PDFs. It does not bypass paywalls and does not use Sci-Hub, LibGen, Z-Library, Anna's Archive, or other shadow libraries.
+
+### Journal Metrics and Impact-Factor Filtering / 期刊指标与影响因子筛选
+
+OmniLit supports filtering download results by a minimum journal metric before PDF resolution and PDF download. The default resolver checks the bundled local CSV first, then can fall back to OpenAlex Sources when the local CSV has no match.
+
+- Local CSV metrics have priority over OpenAlex.
+- OpenAlex fallback uses `summary_stats.2yr_mean_citedness` as an open approximate metric.
+- OpenAlex-derived values are displayed as `IF≈`, for example `IF≈4.3`.
+- `IF≈` is not the official Clarivate JCR Journal Impact Factor.
+- Users can maintain their own metrics in `Download/journal_metrics.csv` or select a custom CSV in the download page.
+- Records with unknown impact factor are kept by default.
+- Users can turn off “无影响因子记录仍保留” / “Keep records with unknown impact factor” to skip unknown-metric records.
+
+The CSV header is:
+
+```csv
+journal_title,issn,issn_l,impact_factor,metric_year,source,quartile
+```
+
+Supported source labels include local or user-defined values such as `local_csv`, and open fallback values such as `openalex`. OpenAlex values should be treated as open approximate indicators, not official JCR data.
+
+Manual acceptance checklist:
+
+1. Open the download page.
+2. Enter keywords such as `lithium-sulfur batteries, polysulfides`.
+3. Set the minimum impact factor to `>= 5`.
+4. Keep “无影响因子记录仍保留” checked.
+5. Start downloading.
+6. Confirm stats show `journal_metric_resolved`, `journal_metric_missing`, and `skipped_by_impact_factor`.
+7. Open the literature library.
+8. Confirm literature cards show publication time, journal, `IF` / `IF≈` / unknown, keywords, and content summary.
+9. Open keyword-group filtering.
+10. Select groups such as `polysulfide` or `separator`; the list should show matching papers only.
+11. Clear keyword-group filtering; the list should recover.
+12. Confirm old `metadata_battery.jsonl` files without the new fields still open in the literature library.

@@ -15,6 +15,10 @@ Item {
     property string previewState: "missing_pdf"
     property real previewZoom: 1.0
     property var selectedKeywordGroups: []
+    property bool readerOpen: false
+    property string readerRecordId: ""
+    property string readerPdfPath: ""
+    property string readerTitle: ""
 
     readonly property var relevanceValues: ["all", "keyword_only", "loose", "balanced", "strict", "very_strict"]
     readonly property var statusValues: ["all", "downloaded", "no_candidate", "failed", "not_open_access", "not_pdf", "request_error"]
@@ -59,6 +63,7 @@ Item {
         anchors.fill: parent
         anchors.margins: metrics.pageMargin
         spacing: metrics.sectionSpacing
+        visible: !root.readerOpen
 
         PageHeading {
             Layout.fillWidth: true
@@ -106,6 +111,12 @@ Item {
                     text: root.selectedKeywordGroupsText()
                     enabled: !literatureLibraryController.loading && literatureLibraryController.keywordGroupOptions.length > 0
                     onClicked: keywordGroupPopup.open()
+                    ModernToolTip {
+                        placement: "bottom"
+                        delay: 350
+                        shown: parent.hovered && literatureLibraryController.keywordGroupOptions.length === 0
+                        text: i18n.text("no_keyword_groups")
+                    }
                 }
                 PillButton {
                     text: literatureLibraryController.loading && literatureLibraryController.busyAction === "refresh" ? "刷新中..." : i18n.text("refresh")
@@ -197,7 +208,7 @@ Item {
                         }
                         delegate: Rectangle {
                             width: literatureList.width
-                            height: 132
+                            height: 164
                             radius: 8
                             color: ListView.isCurrentItem ? theme.navSelected : mouse.containsMouse ? theme.navHover : "transparent"
                             border.color: ListView.isCurrentItem ? theme.borderStrong : "transparent"
@@ -230,7 +241,7 @@ Item {
                                 }
                                 Text {
                                     Layout.fillWidth: true
-                                    text: (modelData.journalTitle || "Unknown journal") + "  ·  IF " + (modelData.impactFactorText || "未知")
+                                    text: (modelData.journalTitle || "Unknown journal") + "  ·  " + (modelData.impactFactorText || "未知")
                                     color: theme.textMuted
                                     elide: Text.ElideRight
                                 }
@@ -260,6 +271,23 @@ Item {
                                         text: modelData.source || ""
                                         color: theme.textMuted
                                         elide: Text.ElideRight
+                                    }
+                                }
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 6
+                                    PillButton {
+                                        text: "解析阅读"
+                                        visible: !!modelData.localPdfPath
+                                        enabled: !!modelData.localPdfPath
+                                        onClicked: root.openReader(modelData)
+                                    }
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: modelData.keywordsText || modelData.contentSummary || ""
+                                        color: theme.textMuted
+                                        elide: Text.ElideRight
+                                        font.pixelSize: 11
                                     }
                                 }
                             }
@@ -423,6 +451,16 @@ Item {
         }
     }
 
+    LiteratureReaderPage {
+        anchors.fill: parent
+        anchors.margins: metrics.pageMargin
+        visible: root.readerOpen
+        recordId: root.readerRecordId
+        pdfPath: root.readerPdfPath
+        title: root.readerTitle
+        onBackRequested: root.readerOpen = false
+    }
+
     function applyFilters() {
         literatureLibraryController.setFilters(root.relevanceValues[relevanceFilter.currentIndex],
                                                root.statusValues[pdfStatusFilter.currentIndex],
@@ -431,9 +469,19 @@ Item {
     }
 
     function selectedKeywordGroupsText() {
+        if(literatureLibraryController.keywordGroupOptions.length === 0)
+            return i18n.text("no_keyword_groups")
         if(root.selectedKeywordGroups.length === 0)
-            return "关键词组"
-        return "关键词组 " + root.selectedKeywordGroups.length
+            return i18n.text("keyword_groups")
+        return i18n.formatText("keyword_groups_selected", {"count": root.selectedKeywordGroups.length})
+    }
+
+    function selectAllKeywordGroups() {
+        let result = []
+        for(let i = 0; i < literatureLibraryController.keywordGroupOptions.length; i++)
+            result.push(literatureLibraryController.keywordGroupOptions[i].key)
+        root.selectedKeywordGroups = result
+        root.applyFilters()
     }
 
     function toggleKeywordGroup(key, enabled) {
@@ -528,6 +576,15 @@ Item {
         root.previewZoom = Math.max(0.5, Math.min(4.0, root.previewZoom + delta))
     }
 
+    function openReader(record) {
+        if(!record || !record.localPdfPath)
+            return
+        root.readerRecordId = record.recordId || ""
+        root.readerPdfPath = record.localPdfPath || ""
+        root.readerTitle = record.title || "解析阅读"
+        root.readerOpen = true
+    }
+
     Popup {
         id: keywordGroupPopup
         parent: Overlay.overlay
@@ -555,12 +612,26 @@ Item {
                 Layout.fillWidth: true
                 Text {
                     Layout.fillWidth: true
-                    text: "关键词组"
+                    text: i18n.text("keyword_groups")
                     color: theme.text
                     font.weight: Font.Bold
                 }
+                Text {
+                    text: i18n.formatText("keyword_groups_selected", {"count": root.selectedKeywordGroups.length})
+                    color: theme.textMuted
+                    font.pixelSize: Math.max(10, theme.baseFontSize - 2)
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
                 PillButton {
-                    text: "清空"
+                    text: i18n.text("select_all")
+                    enabled: literatureLibraryController.keywordGroupOptions.length > 0 && root.selectedKeywordGroups.length < literatureLibraryController.keywordGroupOptions.length
+                    onClicked: root.selectAllKeywordGroups()
+                }
+                PillButton {
+                    text: i18n.text("clear")
                     enabled: root.selectedKeywordGroups.length > 0
                     onClicked: {
                         root.selectedKeywordGroups = []
@@ -574,6 +645,7 @@ Item {
                 Layout.fillHeight: true
                 clip: true
                 model: literatureLibraryController.keywordGroupOptions
+                visible: literatureLibraryController.keywordGroupOptions.length > 0
                 ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
                 delegate: ModernCheckBox {
                     width: ListView.view.width
@@ -581,6 +653,15 @@ Item {
                     checked: root.selectedKeywordGroups.indexOf(modelData.key) >= 0
                     onToggled: root.toggleKeywordGroup(modelData.key, checked)
                 }
+            }
+            Text {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                visible: literatureLibraryController.keywordGroupOptions.length === 0
+                text: i18n.text("no_keyword_groups")
+                color: theme.textMuted
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
             }
         }
     }

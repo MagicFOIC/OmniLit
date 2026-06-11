@@ -1,0 +1,252 @@
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
+
+Item {
+    id: root
+    property string recordId: ""
+    property string pdfPath: ""
+    property string title: ""
+    property real zoom: 1.25
+    property bool showAnnotations: true
+    property int renderRevision: 0
+    property int currentPage: 0
+    property string operationStatus: ""
+    property string activeOpenKey: ""
+    signal backRequested()
+
+    Motion { id: motion }
+    Theme { id: theme }
+    LayoutMetrics { id: metrics; viewportWidth: root.width; viewportHeight: root.height }
+
+    Component.onCompleted: root.openRecord()
+    onRecordIdChanged: root.openRecord()
+    onPdfPathChanged: root.openRecord()
+    onVisibleChanged: if(visible) root.openRecord()
+
+    Connections {
+        target: pdfExtractionController
+        function onAnalysisReady(recordId) {
+            if(recordId === root.recordId) {
+                root.renderRevision += 1
+                root.operationStatus = "解析完成。"
+            }
+        }
+        function onElementFocused(elementId, page, bbox) {
+            root.currentPage = page
+            root.scrollToPage(page)
+        }
+    }
+
+    ColumnLayout {
+        anchors.fill: parent
+        spacing: 10
+
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 58
+            radius: theme.radiusMedium
+            color: theme.surface
+            border.color: theme.border
+
+            RowLayout {
+                anchors.fill: parent
+                anchors.margins: 10
+                spacing: 8
+
+                PillButton { text: "返回"; onClicked: root.backRequested() }
+                Text {
+                    Layout.fillWidth: true
+                    text: root.title || "解析阅读"
+                    color: theme.text
+                    font.weight: Font.Bold
+                    elide: Text.ElideRight
+                }
+                Switch {
+                    id: annotationSwitch
+                    checked: root.showAnnotations
+                    text: checked ? "标注版" : "原文"
+                    onToggled: root.showAnnotations = checked
+                }
+                PillButton { text: "-"; onClicked: root.adjustZoom(-0.15) }
+                Text { text: Math.round(root.zoom * 100) + "%"; color: theme.textMuted; Layout.preferredWidth: 48; horizontalAlignment: Text.AlignHCenter }
+                PillButton { text: "+"; onClicked: root.adjustZoom(0.15) }
+                PillButton { text: "重新解析"; enabled: !pdfExtractionController.loading; onClicked: root.reanalyze() }
+                PillButton { text: "导出全部"; onClicked: root.exportAll() }
+            }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            spacing: 10
+
+            PdfElementBookmarkBar {
+                Layout.preferredWidth: 220
+                Layout.fillHeight: true
+                elements: pdfExtractionController.elements
+                onElementSelected: elementId => pdfExtractionController.focusElement(elementId)
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                radius: theme.radiusMedium
+                color: theme.surfaceSoft
+                border.color: theme.border
+                clip: true
+
+                Flickable {
+                    id: pageFlick
+                    anchors.fill: parent
+                    anchors.margins: 10
+                    clip: true
+                    boundsBehavior: Flickable.StopAtBounds
+                    contentWidth: Math.max(width, pageColumn.width)
+                    contentHeight: pageColumn.height
+
+                    Column {
+                        id: pageColumn
+                        width: Math.max(pageFlick.width, root.pageWidth(root.currentPage) * root.zoom + 40)
+                        spacing: 18
+
+                        Repeater {
+                            model: Math.max(0, pdfExtractionController.pageCount)
+                            delegate: Rectangle {
+                                id: pageFrame
+                                property var sizeInfo: root.pageSize(index)
+                                width: root.pageWidth(index) * root.zoom + 20
+                                height: root.pageHeight(index) * root.zoom + 20
+                                radius: 4
+                                color: "#ffffff"
+                                border.color: index === root.currentPage ? theme.accent : theme.border
+                                anchors.horizontalCenter: parent.horizontalCenter
+
+                                Image {
+                                    id: pageImage
+                                    anchors.centerIn: parent
+                                    width: root.pageWidth(index) * root.zoom
+                                    height: root.pageHeight(index) * root.zoom
+                                    source: root.renderRevision >= 0 ? pdfExtractionController.renderPage(root.recordId, index, root.zoom) : ""
+                                    fillMode: Image.Stretch
+                                    asynchronous: true
+                                    cache: false
+                                }
+
+                                PdfElementOverlay {
+                                    visible: root.showAnnotations
+                                    anchors.fill: pageImage
+                                    pageSize: pageFrame.sizeInfo
+                                    renderedSize: Qt.size(pageImage.width, pageImage.height)
+                                    elements: root.elementsOnPage(index)
+                                    onElementClicked: elementId => pdfExtractionController.focusElement(elementId)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Text {
+                    anchors.centerIn: parent
+                    width: parent.width - 40
+                    text: pdfExtractionController.loading ? pdfExtractionController.progressText :
+                          pdfExtractionController.pageCount === 0 ? "尚未生成解析阅读页。" : ""
+                    color: theme.textMuted
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.WordWrap
+                    visible: text.length > 0
+                }
+
+                BusyIndicator {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.bottom: parent.verticalCenter
+                    anchors.bottomMargin: 18
+                    running: pdfExtractionController.loading
+                    visible: running
+                }
+            }
+
+            PdfExtractionPanel {
+                Layout.preferredWidth: 300
+                Layout.fillHeight: true
+                element: pdfExtractionController.selectedElement
+                statusText: root.operationStatus
+            }
+        }
+
+        Text {
+            Layout.fillWidth: true
+            text: pdfExtractionController.loading ? pdfExtractionController.progressText : (root.operationStatus || pdfExtractionController.statusText)
+            color: theme.textMuted
+            elide: Text.ElideRight
+        }
+    }
+
+    function openRecord() {
+        if(root.recordId === "" || root.pdfPath === "")
+            return
+        var openKey = root.recordId + "|" + root.pdfPath
+        if(root.activeOpenKey === openKey && (pdfExtractionController.pageCount > 0 || pdfExtractionController.loading))
+            return
+        root.activeOpenKey = openKey
+        root.currentPage = 0
+        root.operationStatus = ""
+        if(!pdfExtractionController.loadIndex(root.recordId))
+            pdfExtractionController.analyzeRecord(root.recordId, root.pdfPath)
+        root.renderRevision += 1
+    }
+
+    function reanalyze() {
+        root.operationStatus = ""
+        pdfExtractionController.analyzeRecord(root.recordId, root.pdfPath)
+    }
+
+    function exportAll() {
+        var path = pdfExtractionController.exportElement("__all__", "dir")
+        root.operationStatus = path ? ("已导出到：" + path) : pdfExtractionController.statusText
+    }
+
+    function adjustZoom(delta) {
+        root.zoom = Math.max(0.6, Math.min(3.2, root.zoom + delta))
+        root.renderRevision += 1
+    }
+
+    function elementsOnPage(page) {
+        var result = []
+        var items = pdfExtractionController.elements || []
+        for(var i = 0; i < items.length; i++) {
+            if(Number(items[i].page || 0) === page)
+                result.push(items[i])
+        }
+        return result
+    }
+
+    function pageSize(page) {
+        var pages = pdfExtractionController.pages || []
+        for(var p = 0; p < pages.length; p++) {
+            if(Number(pages[p].page || 0) === page)
+                return [Number(pages[p].width || 612), Number(pages[p].height || 792)]
+        }
+        var items = pdfExtractionController.elements || []
+        for(var i = 0; i < items.length; i++) {
+            if(Number(items[i].page || 0) === page && items[i].pageSize && items[i].pageSize.length >= 2)
+                return items[i].pageSize
+        }
+        return [612, 792]
+    }
+
+    function pageWidth(page) {
+        return Number(root.pageSize(page)[0] || 612)
+    }
+
+    function pageHeight(page) {
+        return Number(root.pageSize(page)[1] || 792)
+    }
+
+    function scrollToPage(page) {
+        var y = 0
+        for(var i = 0; i < page; i++)
+            y += root.pageHeight(i) * root.zoom + 38
+        pageFlick.contentY = Math.max(0, Math.min(y, pageFlick.contentHeight - pageFlick.height))
+    }
+}

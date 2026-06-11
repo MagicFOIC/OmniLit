@@ -14,7 +14,16 @@ ROOT = Path(__file__).resolve().parent.parent
 class DownloadConfigLisFieldsTests(unittest.TestCase):
     def test_qml_and_service_fields_enter_crawl_config(self) -> None:
         qml = (ROOT / "ui" / "qml" / "DownloadPage.qml").read_text(encoding="utf-8")
-        for field in ("topicPack", "journalPack", "selectedJournals", "minTopicScore", "journalWhitelistOnly"):
+        for field in (
+            "topicPack",
+            "journalPack",
+            "selectedJournals",
+            "minTopicScore",
+            "journalWhitelistOnly",
+            "includeUnknownImpactFactor",
+            "journalMetricSource",
+            "journalMetricCsv",
+        ):
             self.assertIn(field, qml)
         self.assertIn("function config()", qml)
         self.assertIn("function restoreSavedConfig()", qml)
@@ -30,6 +39,9 @@ class DownloadConfigLisFieldsTests(unittest.TestCase):
                     "selectedJournals": ["Batteries"],
                     "minTopicScore": "7",
                     "journalWhitelistOnly": True,
+                    "includeUnknownImpactFactor": False,
+                    "journalMetricSource": "local_only",
+                    "journalMetricCsv": str(Path(temp) / "metrics.csv"),
                 },
                 lambda: False,
                 lambda _stats, _message: None,
@@ -40,10 +52,22 @@ class DownloadConfigLisFieldsTests(unittest.TestCase):
         self.assertEqual(config.selected_journals, ["Batteries"])
         self.assertEqual(config.min_topic_score, 7)
         self.assertTrue(config.journal_whitelist_only)
+        self.assertFalse(config.include_unknown_impact_factor)
+        self.assertEqual(config.journal_metric_source, "local_only")
+        self.assertEqual(config.journal_metric_csv, Path(temp) / "metrics.csv")
 
     def test_download_controller_persists_lis_fields(self) -> None:
         controller = (ROOT / "omnilit_qt" / "download_controller.py").read_text(encoding="utf-8")
-        for field in ("topicPack", "journalPack", "selectedJournals", "minTopicScore", "journalWhitelistOnly"):
+        for field in (
+            "topicPack",
+            "journalPack",
+            "selectedJournals",
+            "minTopicScore",
+            "journalWhitelistOnly",
+            "includeUnknownImpactFactor",
+            "journalMetricSource",
+            "journalMetricCsv",
+        ):
             self.assertIn(f'"{field}"', controller)
 
 

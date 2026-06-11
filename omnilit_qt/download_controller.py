@@ -47,6 +47,9 @@ DOWNLOAD_FORM_FIELDS = (
     "minTopicScore",
     "journalWhitelistOnly",
     "minImpactFactor",
+    "includeUnknownImpactFactor",
+    "journalMetricSource",
+    "journalMetricCsv",
     "discoveryMode",
     "advancedVisible",
 )
@@ -93,6 +96,8 @@ class DownloadController(QObject):
             "skipped_by_topic_score",
             "skipped_by_keyword_match",
             "skipped_by_impact_factor",
+            "journal_metric_resolved",
+            "journal_metric_missing",
             "open_access_records",
             "downloaded_pdfs",
             "failed_pdfs",

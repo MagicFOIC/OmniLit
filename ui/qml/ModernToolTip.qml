@@ -8,10 +8,38 @@ Item {
     property bool shown: false
     property string placement: "right"
     property int gap: 10
+    property int delay: 0
+    property int timeout: 0
+    property int maxWidth: 320
+    property bool active: false
     Theme { id: theme }
 
     width: 0
     height: 0
+
+    onShownChanged: updateVisibilityRequest()
+    onTextChanged: updateVisibilityRequest()
+
+    Timer {
+        id: delayTimer
+        interval: root.delay
+        repeat: false
+        onTriggered: root.showBubble()
+    }
+
+    Timer {
+        id: timeoutTimer
+        interval: root.timeout
+        repeat: false
+        onTriggered: root.active = false
+    }
+
+    TextMetrics {
+        id: labelMetrics
+        text: root.text
+        font.pixelSize: 12
+        font.weight: Font.Medium
+    }
 
     Popup {
         id: bubble
@@ -21,11 +49,11 @@ Item {
         padding: 0
         margins: 8
         closePolicy: Popup.NoAutoClose
-        visible: root.shown && !!root.target && root.text.length > 0
+        visible: root.active && !!root.target && root.text.length > 0
         x: !root.target ? 0 : root.placement === "bottom" ? (root.target.width - width) / 2 : root.target.width + root.gap
         y: !root.target ? 0 : root.placement === "bottom" ? root.target.height + root.gap : (root.target.height - height) / 2
-        width: label.implicitWidth + 28
-        height: 36
+        width: Math.min(root.maxWidth, labelMetrics.advanceWidth + 28)
+        height: Math.max(34, label.paintedHeight + 18)
 
         enter: Transition {
             NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 120; easing.type: Easing.OutCubic }
@@ -49,17 +77,43 @@ Item {
                 height: 5
                 radius: 3
                 color: theme.accent
+                opacity: 0.72
             }
             Text {
                 id: label
                 anchors.left: parent.left
                 anchors.leftMargin: 23
+                anchors.right: parent.right
+                anchors.rightMargin: 12
                 anchors.verticalCenter: parent.verticalCenter
                 text: root.text
                 color: theme.tooltipText
                 font.pixelSize: 12
-                font.weight: Font.DemiBold
+                font.weight: Font.Medium
+                wrapMode: Text.Wrap
+                lineHeight: 1.18
             }
         }
+    }
+
+    function updateVisibilityRequest() {
+        delayTimer.stop()
+        timeoutTimer.stop()
+        if(!shown || text.length === 0) {
+            active = false
+            return
+        }
+        if(delay > 0)
+            delayTimer.restart()
+        else
+            showBubble()
+    }
+
+    function showBubble() {
+        if(!shown || text.length === 0)
+            return
+        active = true
+        if(timeout > 0)
+            timeoutTimer.restart()
     }
 }

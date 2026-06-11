@@ -83,6 +83,11 @@ class LiteratureLibraryControllerTests(unittest.TestCase):
             QCoreApplication.processEvents()
             preview = controller.previewFor(record_id)
             if preview:
+                deadline_done = time.monotonic() + timeout
+                while any(worker.is_alive() for worker in controller._preview_workers.values()) and time.monotonic() < deadline_done:
+                    QCoreApplication.processEvents()
+                    time.sleep(0.01)
+                QCoreApplication.processEvents()
                 return preview
             time.sleep(0.01)
         self.fail("preview was not generated in time")
@@ -107,9 +112,13 @@ class LiteratureLibraryControllerTests(unittest.TestCase):
                     "publication_date": "2024-05-06",
                     "publication_year": 2024,
                     "journal_title": "Batteries",
+                    "journal_issns": ["2313-0105"],
+                    "journal_issn_l": "2313-0105",
                     "impact_factor": 7.1,
                     "impact_factor_year": "2025",
-                    "impact_factor_source": "local",
+                    "impact_factor_source": "local_csv",
+                    "impact_factor_metric": "impact_factor",
+                    "impact_factor_quartile": "Q1",
                     "impact_factor_unknown": False,
                     "extracted_keywords": ["lithium-sulfur batteries", "polysulfide shuttle"],
                     "content_summary": "This paper discusses polysulfide shuttle control in rechargeable cells.",
@@ -192,7 +201,7 @@ class LiteratureLibraryControllerTests(unittest.TestCase):
         }
 
     def test_loads_and_filters_relevance_metadata(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:
             root = Path(temp)
             self.seed_metadata(root)
             controller = self.make_controller(root)
@@ -205,19 +214,27 @@ class LiteratureLibraryControllerTests(unittest.TestCase):
             self.assertEqual(controller.totalCount, 1)
             self.assertEqual(controller.filteredCount, 1)
             record = controller.records[0]
-            self.assertEqual(record["relevance_level"], "strict")
+            self.assertEqual(record["relevance_level"], "very_strict")
             details = controller.detailsFor(record["recordId"])
             self.assertNotIn("abstract", record)
             self.assertIn("lithium-sulfur batteries", details["matchedKeywordsText"])
             self.assertIn("polysulfide", details["abstract"].casefold())
             self.assertEqual(details["publicationDate"], "2024-05-06")
             self.assertEqual(details["journalTitle"], "Batteries")
-            self.assertEqual(details["impactFactorText"], "7.1")
+            self.assertEqual(details["impactFactorText"], "IF 7.1")
+            self.assertEqual(details["impactFactorSource"], "local_csv")
+            self.assertEqual(details["impactFactorMetric"], "impact_factor")
+            self.assertEqual(details["impactFactorYear"], "2025")
+            self.assertEqual(details["impactFactorQuartile"], "Q1")
+            self.assertEqual(details["journalIssnL"], "2313-0105")
+            self.assertEqual(details["journalIssnsText"], "2313-0105")
+            self.assertEqual(details["summaryText"], details["contentSummary"])
+            self.assertTrue(details["topicTagsText"])
             self.assertIn("polysulfide shuttle", details["keywordsText"])
             self.assertTrue(record["localPdfPath"].endswith("sample.pdf"))
 
             controller.setFilters("very_strict", "all", "")
-            self.assertEqual(controller.filteredCount, 0)
+            self.assertEqual(controller.filteredCount, 1)
             controller.setFilters("strict", "downloaded", "separator")
             self.assertEqual(controller.filteredCount, 1)
             keyword_options = controller.keywordGroupOptions
@@ -226,6 +243,107 @@ class LiteratureLibraryControllerTests(unittest.TestCase):
             self.assertEqual(controller.filteredCount, 1)
             controller.setFilters("strict", "downloaded", "", ["not present"])
             self.assertEqual(controller.filteredCount, 0)
+
+    def test_old_metadata_without_impact_factor_does_not_crash(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            download_root = root / "Download"
+            download_root.mkdir(parents=True)
+            metadata_path = download_root / "metadata_battery.jsonl"
+            metadata_path.write_text(
+                json.dumps(
+                    {
+                        "keyword": "lithium-sulfur batteries",
+                        "literature_source": "openalex",
+                        "source_record_id": "https://openalex.org/W-old",
+                        "title": "Lithium-sulfur batteries with legacy metadata",
+                        "abstract": "This paper discusses polysulfide conversion.",
+                        "publication_year": 2024,
+                        "journal_title": "Legacy Journal",
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            controller = self.make_controller(root)
+
+            self.assertTrue(controller.refresh())
+            self.wait_for_idle(controller)
+
+            self.assertEqual(controller.totalCount, 1)
+            details = controller.detailsFor(controller.records[0]["recordId"])
+            self.assertEqual(details["impactFactorText"], "未知")
+            self.assertEqual(details["impactFactorSource"], "")
+
+    def test_refresh_loads_manually_added_pdf_without_metadata(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:
+            root = Path(temp)
+            pdf_dir = root / "Download" / "pdfs"
+            pdf_dir.mkdir(parents=True)
+            manual_pdf = pdf_dir / "lithium-sulfur-manual.pdf"
+            write_sample_pdf(manual_pdf)
+            controller = self.make_controller(root)
+
+            self.assertTrue(controller.refresh())
+            self.wait_for_idle(controller)
+
+            self.assertEqual(controller.totalCount, 1)
+            record = controller.records[0]
+            self.assertEqual(record["source"], "local_pdf")
+            self.assertEqual(record["pdfStatus"], "downloaded")
+            self.assertTrue(record["localPdfPath"].endswith("lithium-sulfur-manual.pdf"))
+            self.assertIn("lithium sulfur manual", record["title"].casefold())
+            details = controller.detailsFor(record["recordId"])
+            self.assertEqual(details["localPdfPath"], record["localPdfPath"])
+            self.assertEqual(details["source"], "local_pdf")
+
+    def test_cleanup_preview_keeps_manually_added_pdf(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:
+            root = Path(temp)
+            pdf_dir = root / "Download" / "pdfs"
+            pdf_dir.mkdir(parents=True)
+            manual_pdf = pdf_dir / "manual-literature.pdf"
+            write_sample_pdf(manual_pdf)
+            controller = self.make_controller(root)
+
+            self.assertTrue(controller.previewCleanup())
+            self.wait_for_idle(controller)
+
+            paths = {Path(candidate["path"]) for candidate in controller.cleanupCandidates}
+            self.assertNotIn(manual_pdf, paths)
+            self.assertEqual(controller.cleanupSummary["orphanCount"], 0)
+
+    def test_openalex_impact_factor_text_uses_approximate_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            download_root = root / "Download"
+            download_root.mkdir(parents=True)
+            (download_root / "metadata_battery.jsonl").write_text(
+                json.dumps(
+                    {
+                        "keyword": "lithium-sulfur batteries",
+                        "literature_source": "openalex",
+                        "source_record_id": "https://openalex.org/W-openalex-if",
+                        "title": "Lithium-sulfur batteries in an OpenAlex source",
+                        "abstract": "This paper discusses polysulfide conversion.",
+                        "journal_title": "Open Journal",
+                        "impact_factor": 4.26,
+                        "impact_factor_source": "openalex",
+                        "impact_factor_metric": "openalex_2yr_mean_citedness",
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            controller = self.make_controller(root)
+
+            self.assertTrue(controller.refresh())
+            self.wait_for_idle(controller)
+
+            details = controller.detailsFor(controller.records[0]["recordId"])
+            self.assertEqual(details["impactFactorText"], "IF≈4.3")
 
     def test_recompute_writes_relevance_fields_to_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -237,7 +355,7 @@ class LiteratureLibraryControllerTests(unittest.TestCase):
             self.wait_for_idle(controller)
 
             record = json.loads(metadata_path.read_text(encoding="utf-8").splitlines()[0])
-            self.assertEqual(record["relevance_level"], "strict")
+            self.assertEqual(record["relevance_level"], "very_strict")
             self.assertGreaterEqual(record["relevance_score"], 9)
             self.assertEqual(record["matched_fields"], ["title", "abstract"])
 
@@ -272,10 +390,10 @@ class LiteratureLibraryControllerTests(unittest.TestCase):
             self.assertTrue(controller.organizeByRelevance())
             self.wait_for_idle(controller)
             self.assertTrue(pdf_path.exists())
-            organized = list((root / "Download" / "library" / "strict").glob("*.pdf"))
+            organized = list((root / "Download" / "library" / "very_strict").glob("*.pdf"))
             self.assertEqual(len(organized), 1)
             updated = json.loads(metadata_path.read_text(encoding="utf-8").splitlines()[0])
-            self.assertEqual(updated["organized_level"], "strict")
+            self.assertEqual(updated["organized_level"], "very_strict")
             self.assertTrue(Path(updated["organized_path"]).exists())
 
     def test_thumbnail_state_tracks_generating_ready_missing_and_failed(self) -> None:
@@ -325,7 +443,7 @@ class LiteratureLibraryControllerTests(unittest.TestCase):
             self.assertEqual(controller.thumbnailFor(failed_record_id), "")
 
     def test_preview_generates_high_resolution_cache_lazily(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:
             root = Path(temp)
             _metadata_path, pdf_path = self.seed_metadata(root)
             controller = self.make_controller(root)
@@ -344,6 +462,8 @@ class LiteratureLibraryControllerTests(unittest.TestCase):
             missing_record_id = "missing"
             controller._record_by_id[missing_record_id] = {"recordId": missing_record_id, "localPdfPath": str(pdf_path)}
             self.assertEqual(controller.previewFor(missing_record_id), "")
+            controller.shutdown()
+            QCoreApplication.processEvents()
 
     def test_cleanup_preview_and_confirm_delete_old_pdfs(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -358,18 +478,18 @@ class LiteratureLibraryControllerTests(unittest.TestCase):
             paths = {Path(candidate["path"]) for candidate in controller.cleanupCandidates}
             self.assertNotIn(seeded["valid_pdf"], paths)
             self.assertIn(seeded["invalid_pdf"], paths)
-            self.assertIn(seeded["orphan_pdf"], paths)
+            self.assertNotIn(seeded["orphan_pdf"], paths)
             self.assertIn(seeded["library_pdf"], paths)
             self.assertIn(seeded["thumbnail"], paths)
             self.assertIn(seeded["preview"], paths)
-            self.assertGreaterEqual(controller.cleanupSummary["count"], 4)
+            self.assertGreaterEqual(controller.cleanupSummary["count"], 3)
 
             self.assertTrue(controller.confirmCleanup())
             self.wait_for_idle(controller)
 
             self.assertTrue(seeded["valid_pdf"].exists())
             self.assertFalse(seeded["invalid_pdf"].exists())
-            self.assertFalse(seeded["orphan_pdf"].exists())
+            self.assertTrue(seeded["orphan_pdf"].exists())
             self.assertFalse(seeded["library_pdf"].exists())
             self.assertFalse(seeded["thumbnail"].exists())
             self.assertFalse(seeded["preview"].exists())

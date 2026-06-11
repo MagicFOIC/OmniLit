@@ -14,6 +14,7 @@ from .controllers import (
     AuthController,
     DownloadController,
     LiteratureLibraryController,
+    PdfExtractionController,
     PreferencesController,
     TranslationController,
     UpdateController,
@@ -84,11 +85,12 @@ def run() -> int:
     preferences = PreferencesController(paths, store, auth)
     download = DownloadController(shell, paths, store, locale)
     literature_library = LiteratureLibraryController(shell, paths, store, locale)
+    pdf_extraction = PdfExtractionController(shell, paths, store, locale)
     translation = TranslationController(shell, paths, store, locale)
     updater = UpdateController(shell, paths, store, locale)
     shell.set_migration_summary(copied)
     auth.authenticated.connect(updater.check)
-    app.aboutToQuit.connect(lambda: _shutdown_background_tasks(download, literature_library, translation, updater))
+    app.aboutToQuit.connect(lambda: _shutdown_background_tasks(download, literature_library, pdf_extraction, translation, updater))
 
     icon_path = paths.resource("assets", "omnilit_logo.ico")
     if icon_path.exists():
@@ -103,6 +105,7 @@ def run() -> int:
         "preferencesController": preferences,
         "downloadController": download,
         "literatureLibraryController": literature_library,
+        "pdfExtractionController": pdf_extraction,
         "translationController": translation,
         "updateController": updater,
         "localeController": locale,

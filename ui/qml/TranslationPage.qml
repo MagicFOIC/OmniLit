@@ -186,11 +186,14 @@ Item {
                                                 text: modelData.name
                                                 color: theme.text
                                                 elide: Text.ElideRight
-                                                ToolTip.delay: 350
-                                                ToolTip.timeout: 5000
-                                                ToolTip.visible: truncated && titleMouse.containsMouse
-                                                ToolTip.text: modelData.fileName ? modelData.name + "\n" + modelData.fileName : modelData.name
                                                 MouseArea { id: titleMouse; anchors.fill: parent; hoverEnabled: true }
+                                                ModernToolTip {
+                                                    placement: "bottom"
+                                                    delay: 350
+                                                    timeout: 5000
+                                                    shown: parent.truncated && titleMouse.containsMouse
+                                                    text: modelData.fileName ? modelData.name + "\n" + modelData.fileName : modelData.name
+                                                }
                                             }
                                             Text { text: modelData.sizeText; color: theme.textMuted }
                                             Text { text: modelData.modifiedText; color: theme.textMuted }

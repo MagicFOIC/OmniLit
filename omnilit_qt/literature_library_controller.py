@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import threading
 from datetime import datetime
@@ -34,6 +35,20 @@ LEVEL_DIRS: dict[str, str] = {
     "strict": "strict",
     "very_strict": "very_strict",
 }
+
+KEYWORD_GROUP_ALIASES: dict[str, str] = {
+    "li s battery": "lithium sulfur battery",
+    "li battery": "lithium sulfur battery",
+    "lithium s battery": "lithium sulfur battery",
+    "li-s battery": "lithium sulfur battery",
+    "li sulfur battery": "lithium sulfur battery",
+    "lithium sulfur batteries": "lithium sulfur battery",
+    "lithium-sulfur batteries": "lithium sulfur battery",
+    "polysulfides": "polysulfide",
+    "separators": "separator",
+}
+
+BROAD_KEYWORD_GROUPS = {"article", "study", "result", "method", "battery"}
 
 
 class LiteratureLibraryController(QObject):
@@ -208,12 +223,118 @@ class LiteratureLibraryController(QObject):
             return str(path.absolute()).casefold()
 
     @staticmethod
+    def _relative_pdf_text(output_root: Path, pdf_path: Path) -> str:
+        try:
+            return pdf_path.resolve().relative_to(output_root.resolve()).as_posix()
+        except (OSError, ValueError):
+            return str(pdf_path)
+
+    @staticmethod
+    def _manual_pdf_title(pdf_path: Path) -> str:
+        title = ""
+        try:
+            import fitz
+
+            with fitz.open(pdf_path) as document:
+                metadata = document.metadata or {}
+                title = str(metadata.get("title") or "").strip()
+        except Exception:
+            title = ""
+        if title and title.casefold() not in {"untitled", "none"}:
+            return re.sub(r"\s+", " ", title).strip()
+        stem = re.sub(r"[_\-]+", " ", pdf_path.stem).strip()
+        return re.sub(r"\s+", " ", stem).strip() or pdf_path.name
+
+    def _manual_pdf_records(
+        self,
+        *,
+        output_root: Path,
+        referenced_pdf_keys: set[str],
+    ) -> list[dict[str, Any]]:
+        pdf_root = output_root / "pdfs"
+        if not pdf_root.exists():
+            return []
+
+        records: list[dict[str, Any]] = []
+        for pdf_path in sorted(pdf_root.rglob("*.pdf"), key=lambda item: self._path_key(item)):
+            pdf_key = self._path_key(pdf_path)
+            if pdf_key in referenced_pdf_keys:
+                continue
+            try:
+                if not pdf_path.is_file() or pdf_path.stat().st_size <= 0:
+                    continue
+            except OSError:
+                continue
+            relative_path = self._relative_pdf_text(output_root, pdf_path)
+            records.append(
+                {
+                    "literature_source": "local_pdf",
+                    "source_record_id": f"local_pdf:{relative_path}",
+                    "title": self._manual_pdf_title(pdf_path),
+                    "download_status": "downloaded",
+                    "local_pdf_path": relative_path,
+                    "manual_pdf": True,
+                    "_synthetic_local_pdf_record": True,
+                }
+            )
+        return records
+
+    @staticmethod
     def _is_within(path: Path, root: Path) -> bool:
         try:
             path.resolve().relative_to(root.resolve())
             return True
         except (OSError, ValueError):
             return False
+
+    @staticmethod
+    def _list_values(value: Any) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, (list, tuple, set)):
+            values = value
+        else:
+            values = re.split(r"[,;|]", str(value))
+        return [str(item).strip() for item in values if str(item).strip()]
+
+    @staticmethod
+    def _format_metric_value(value: Any) -> str:
+        try:
+            return f"{float(value):.1f}"
+        except (TypeError, ValueError):
+            return ""
+
+    @classmethod
+    def _impact_factor_text(cls, record: dict[str, Any]) -> str:
+        value = record.get("impact_factor")
+        if value is None or str(value).strip() == "":
+            value = record.get("journal_impact_value")
+        formatted = cls._format_metric_value(value)
+        if not formatted:
+            return "未知"
+        source = str(record.get("impact_factor_source") or record.get("journal_metric_source") or "").casefold()
+        metric = str(record.get("impact_factor_metric") or record.get("journal_impact_metric") or "").casefold()
+        if source == "openalex" or metric == "openalex_2yr_mean_citedness":
+            return f"IF≈{formatted}"
+        if source == "jcr":
+            return f"JIF {formatted}"
+        if source == "sjr":
+            return f"SJR {formatted}"
+        return f"IF {formatted}"
+
+    @staticmethod
+    def _normalize_keyword_group_key(key: str) -> str:
+        text = re.sub(r"\s+", " ", str(key or "").casefold().replace("-", " ")).strip()
+        return KEYWORD_GROUP_ALIASES.get(text, text)
+
+    @classmethod
+    def _keyword_group_key(cls, core: Any, value: Any) -> str:
+        raw_key = core.keyword_group_key(value)
+        return cls._normalize_keyword_group_key(raw_key)
+
+    @staticmethod
+    def _is_broad_keyword_group(key: str) -> bool:
+        return key in BROAD_KEYWORD_GROUPS
 
     def _enrich_record(self, core: Any, record: dict[str, Any], config: Any, meta_path: Path) -> dict[str, Any]:
         enriched = dict(record)
@@ -223,7 +344,7 @@ class LiteratureLibraryController(QObject):
             enriched[key] = value
         record_id = self._record_identity(core, enriched)
         pdf_path = self._resolve_pdf_path(core, enriched, meta_path, validate=False)
-        if "impact_factor_unknown" not in enriched:
+        if "impact_factor_unknown" not in enriched and "impact_factor" not in enriched:
             core.enrich_record_with_journal_metrics(enriched)
         abstract = str(enriched.get("abstract") or enriched.get("extracted_abstract") or "")
         extracted_abstract = str(enriched.get("extracted_abstract") or "")
@@ -245,9 +366,15 @@ class LiteratureLibraryController(QObject):
         keyword_groups = self._keyword_groups_for_record(core, enriched, keyword, extracted_keywords)
         authors = enriched.get("authors") or []
         authors_text = ", ".join(str(author) for author in authors[:6]) if isinstance(authors, list) else str(authors or "")
-        impact_factor = enriched.get("impact_factor")
-        impact_factor_text = "未知" if impact_factor is None else str(impact_factor)
+        impact_factor_text = self._impact_factor_text(enriched)
         publication_date = str(enriched.get("publication_date") or "")
+        journal_issns = self._list_values(enriched.get("journal_issns") or enriched.get("journal_issn") or enriched.get("issn"))
+        journal_issns_text = ", ".join(journal_issns)
+        summary_text = str(enriched.get("summary_text") or enriched.get("content_summary") or core.summarize_content(abstract, str(enriched.get("title") or "")))
+        topic_tags = self._list_values(enriched.get("topic_tags") or enriched.get("keyword_groups"))
+        if not topic_tags:
+            topic_tags = [str(group.get("label") or "") for group in keyword_groups if str(group.get("label") or "")]
+        topic_tags_text = ", ".join(topic_tags)
         enriched.update(
             {
                 "recordId": record_id,
@@ -258,13 +385,21 @@ class LiteratureLibraryController(QObject):
                 "keywordsText": ", ".join(extracted_keywords),
                 "keywordGroups": keyword_groups,
                 "keywordGroupKeys": [group["key"] for group in keyword_groups],
-                "contentSummary": str(enriched.get("content_summary") or core.summarize_content(abstract, str(enriched.get("title") or ""))),
+                "contentSummary": summary_text,
+                "summaryText": summary_text,
+                "topicTagsText": topic_tags_text,
                 "authorsText": authors_text,
                 "source": str(enriched.get("literature_source") or ""),
                 "year": str(enriched.get("publication_year") or "") or str(enriched.get("publication_date") or "")[:4],
                 "publicationDate": publication_date,
                 "journalTitle": str(enriched.get("journal_title") or ""),
                 "impactFactorText": impact_factor_text,
+                "impactFactorSource": str(enriched.get("impact_factor_source") or enriched.get("journal_metric_source") or ""),
+                "impactFactorMetric": str(enriched.get("impact_factor_metric") or enriched.get("journal_impact_metric") or ""),
+                "impactFactorYear": str(enriched.get("impact_factor_year") or enriched.get("journal_impact_year") or ""),
+                "impactFactorQuartile": str(enriched.get("impact_factor_quartile") or ""),
+                "journalIssnL": str(enriched.get("journal_issn_l") or ""),
+                "journalIssnsText": journal_issns_text,
                 "pdfStatus": str(enriched.get("download_status") or ""),
                 "localPdfPath": str(pdf_path) if pdf_path else "",
                 "localPdfName": pdf_path.name if pdf_path else "",
@@ -277,48 +412,76 @@ class LiteratureLibraryController(QObject):
         return enriched
 
     @staticmethod
-    def _keyword_groups_for_record(core: Any, record: dict[str, Any], keyword: str, extracted_keywords: list[str]) -> list[dict[str, str]]:
-        values: list[Any] = [*extracted_keywords, *(record.get("matched_keywords") or []), keyword]
-        groups: list[dict[str, str]] = []
+    def _keyword_groups_for_record(core: Any, record: dict[str, Any], keyword: str, extracted_keywords: list[str]) -> list[dict[str, Any]]:
+        values: list[Any] = [
+            *extracted_keywords,
+            *LiteratureLibraryController._list_values(record.get("keyword_groups")),
+            *LiteratureLibraryController._list_values(record.get("topic_tags")),
+            *LiteratureLibraryController._list_values(record.get("matched_keywords")),
+            keyword,
+        ]
+        explicit_key = LiteratureLibraryController._keyword_group_key(core, keyword)
+        groups: list[dict[str, Any]] = []
         seen: set[str] = set()
         for value in values:
-            key = core.keyword_group_key(value)
+            key = LiteratureLibraryController._keyword_group_key(core, value)
             if not key or key in seen:
                 continue
             seen.add(key)
-            groups.append({"key": key, "label": core.keyword_group_label(value)})
+            groups.append({"key": key, "label": core.keyword_group_label(value), "explicit": key == explicit_key})
         return groups
 
     @staticmethod
     def _build_keyword_group_options(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        labels: dict[str, str] = {}
+        label_counts: dict[str, dict[str, int]] = {}
         counts: dict[str, int] = {}
+        explicit_keys: set[str] = set()
         for record in records:
             keys_seen: set[str] = set()
             for group in record.get("keywordGroups") or []:
-                key = str(group.get("key") or "")
+                key = LiteratureLibraryController._normalize_keyword_group_key(str(group.get("key") or ""))
                 if not key or key in keys_seen:
                     continue
                 keys_seen.add(key)
-                labels.setdefault(key, str(group.get("label") or key))
+                label = str(group.get("label") or key).strip() or key
+                label_counts.setdefault(key, {})
+                label_counts[key][label] = label_counts[key].get(label, 0) + 1
                 counts[key] = counts.get(key, 0) + 1
-        return [
-            {"key": key, "label": labels[key], "count": count}
-            for key, count in sorted(counts.items(), key=lambda item: (-item[1], labels[item[0]].casefold()))
+                if bool(group.get("explicit")):
+                    explicit_keys.add(key)
+
+        labels: dict[str, str] = {}
+        for key, options in label_counts.items():
+            labels[key] = sorted(options, key=lambda label: (-options[label], -len(label), label.casefold()))[0]
+
+        filtered_keys = [
+            key
+            for key in counts
+            if len(key) >= 3 and (key in explicit_keys or not LiteratureLibraryController._is_broad_keyword_group(key))
         ]
+        filtered_keys.sort(key=lambda key: (-counts[key], labels.get(key, key).casefold()))
+        return [{"key": key, "label": labels.get(key, key), "count": counts[key]} for key in filtered_keys[:30]]
 
     def _load_records(self, *, rewrite_metadata: bool, settings: dict[str, Any], output_root: Path) -> list[dict[str, Any]]:
         core = import_resource_module(self.paths, "Download", "literature_download_core")
         meta_path = output_root / "metadata_battery.jsonl"
         raw_records = self._read_metadata_records(meta_path)
-        config = self._core_config(raw_records, settings)
-        enriched_records = [self._enrich_record(core, record, config, meta_path) for record in raw_records]
+        referenced_pdf_keys: set[str] = set()
+        for record in raw_records:
+            for pdf_path in core.resolve_record_pdf_paths(record, meta_path):
+                referenced_pdf_keys.add(self._path_key(pdf_path))
+        manual_pdf_records = self._manual_pdf_records(output_root=output_root, referenced_pdf_keys=referenced_pdf_keys)
+        all_records = [*raw_records, *manual_pdf_records]
+        config = self._core_config(all_records, settings)
+        enriched_records = [self._enrich_record(core, record, config, meta_path) for record in all_records]
         if rewrite_metadata and meta_path.exists():
             backup = meta_path.with_suffix(".jsonl.bak")
             if not backup.exists():
                 shutil.copy2(meta_path, backup)
             with meta_path.open("w", encoding="utf-8") as fout:
                 for record in enriched_records:
+                    if record.get("_synthetic_local_pdf_record"):
+                        continue
                     serializable = {key: value for key, value in record.items() if key not in {"recordId"}}
                     fout.write(json.dumps(serializable, ensure_ascii=False) + "\n")
 
@@ -456,6 +619,10 @@ class LiteratureLibraryController(QObject):
                         title=title,
                     )
                 )
+
+        for manual_record in self._manual_pdf_records(output_root=output_root, referenced_pdf_keys=referenced_pdf_keys):
+            for path in core.resolve_record_pdf_paths(manual_record, meta_path):
+                referenced_pdf_keys.add(self._path_key(path))
 
         if pdf_root.exists():
             for path in pdf_root.rglob("*.pdf"):
@@ -656,9 +823,17 @@ class LiteratureLibraryController(QObject):
             "year": record.get("year", ""),
             "publicationDate": record.get("publicationDate", ""),
             "journalTitle": record.get("journalTitle", ""),
-            "impactFactorText": record.get("impactFactorText", ""),
+            "impactFactorText": record.get("impactFactorText", "未知"),
+            "impactFactorSource": record.get("impactFactorSource", ""),
+            "impactFactorMetric": record.get("impactFactorMetric", ""),
+            "impactFactorYear": record.get("impactFactorYear", ""),
+            "impactFactorQuartile": record.get("impactFactorQuartile", ""),
+            "journalIssnL": record.get("journalIssnL", ""),
+            "journalIssnsText": record.get("journalIssnsText", ""),
             "keywordsText": record.get("keywordsText", ""),
             "contentSummary": record.get("contentSummary", ""),
+            "summaryText": record.get("summaryText") or record.get("contentSummary", ""),
+            "topicTagsText": record.get("topicTagsText", ""),
             "pdfStatus": record.get("pdfStatus", ""),
             "localPdfPath": record.get("localPdfPath", ""),
             "localPdfName": record.get("localPdfName", ""),
@@ -965,9 +1140,17 @@ class LiteratureLibraryController(QObject):
             "year": record.get("year", ""),
             "publicationDate": record.get("publicationDate", ""),
             "journalTitle": record.get("journalTitle", ""),
-            "impactFactorText": record.get("impactFactorText", ""),
+            "impactFactorText": record.get("impactFactorText", "未知"),
+            "impactFactorSource": record.get("impactFactorSource", ""),
+            "impactFactorMetric": record.get("impactFactorMetric", ""),
+            "impactFactorYear": record.get("impactFactorYear", ""),
+            "impactFactorQuartile": record.get("impactFactorQuartile", ""),
+            "journalIssnL": record.get("journalIssnL", ""),
+            "journalIssnsText": record.get("journalIssnsText", ""),
             "keywordsText": record.get("keywordsText", ""),
             "contentSummary": record.get("contentSummary", ""),
+            "summaryText": record.get("summaryText") or record.get("contentSummary", ""),
+            "topicTagsText": record.get("topicTagsText", ""),
             "pdfStatus": record.get("pdfStatus", ""),
             "localPdfPath": record.get("localPdfPath", ""),
             "relevanceLabel": record.get("relevanceLabel", ""),

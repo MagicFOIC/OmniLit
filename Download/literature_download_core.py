@@ -21,12 +21,22 @@ from urllib3.util.retry import Retry
 
 try:
     from .journal_registry import is_whitelisted_journal
-    from .journal_metrics import match_journal_metric
+    from .journal_metrics import (
+        JournalMetricResolver,
+        attach_journal_metric,
+        match_journal_metric,
+        record_passes_impact_factor_filter as metric_passes_impact_factor_filter,
+    )
     from .pack_builder import journal_pack_match_score, resolve_journal_pack, resolve_topic_pack
     from .topic_packs import score_topic_relevance
 except ImportError:  # pragma: no cover - supports direct script execution.
     from journal_registry import is_whitelisted_journal
-    from journal_metrics import match_journal_metric
+    from journal_metrics import (
+        JournalMetricResolver,
+        attach_journal_metric,
+        match_journal_metric,
+        record_passes_impact_factor_filter as metric_passes_impact_factor_filter,
+    )
     from pack_builder import journal_pack_match_score, resolve_journal_pack, resolve_topic_pack
     from topic_packs import score_topic_relevance
 
@@ -139,6 +149,9 @@ class CrawlConfig:
     min_topic_score: int = 6
     journal_whitelist_only: bool = False
     min_impact_factor: float | None = None
+    include_unknown_impact_factor: bool = True
+    journal_metric_source: str = "local_then_openalex"
+    journal_metric_csv: Path | None = None
     loop: bool = False
     loop_sleep: float = 3600.0
     max_runtime_hours: float | None = None
@@ -179,6 +192,10 @@ class CrawlStats:
     skipped_by_topic_score: int = 0
     skipped_by_keyword_match: int = 0
     skipped_by_impact_factor: int = 0
+    impact_factor_known_records: int = 0
+    impact_factor_unknown_records: int = 0
+    journal_metric_resolved: int = 0
+    journal_metric_missing: int = 0
     open_access_records: int = 0
     downloaded_pdfs: int = 0
     failed_pdfs: int = 0
@@ -339,6 +356,10 @@ def state_key(keyword: str, config: CrawlConfig, source: str = SOURCE_OPENALEX) 
         "selected_journals": config.selected_journals,
         "min_topic_score": config.min_topic_score,
         "journal_whitelist_only": config.journal_whitelist_only,
+        "min_impact_factor": config.min_impact_factor,
+        "include_unknown_impact_factor": config.include_unknown_impact_factor,
+        "journal_metric_source": config.journal_metric_source,
+        "journal_metric_csv": str(config.journal_metric_csv or ""),
     }
     # Preserve historical OpenAlex state keys while isolating new source cursors.
     if source != SOURCE_OPENALEX:
@@ -714,9 +735,15 @@ def unique_urls(urls: list[str | None]) -> list[str]:
         if not url:
             continue
         normalized = url.strip()
-        if not normalized or normalized in seen:
+        if not normalized:
             continue
-        seen.add(normalized)
+        parsed = urlparse(normalized)
+        key = normalized
+        if parsed.scheme in {"http", "https"}:
+            key = parsed._replace(scheme="https", netloc=parsed.netloc.casefold()).geturl()
+        if key in seen:
+            continue
+        seen.add(key)
         result.append(normalized)
     return result
 
@@ -1560,30 +1587,52 @@ def record_passes_relevance_filters(
     return True, score, None
 
 
-def enrich_record_with_journal_metrics(item: dict[str, Any]) -> dict[str, Any]:
+def enrich_record_with_journal_metrics(
+    item: dict[str, Any],
+    resolver: JournalMetricResolver | None = None,
+) -> dict[str, Any]:
     """Attach normalized journal and local impact-factor fields to a search record."""
+    if resolver is not None:
+        attach_journal_metric(item, resolver.resolve(item))
+        return {
+            "journal_title": item.get("journal_title"),
+            "journal_issns": item.get("journal_issns") or [],
+            "journal_issn_l": item.get("journal_issn_l"),
+            "impact_factor": item.get("impact_factor"),
+            "impact_factor_year": item.get("impact_factor_year"),
+            "impact_factor_source": item.get("impact_factor_source"),
+            "impact_factor_metric": item.get("impact_factor_metric"),
+            "impact_factor_quartile": item.get("impact_factor_quartile"),
+            "impact_factor_unknown": bool(item.get("impact_factor_unknown")),
+        }
     match = match_journal_metric(item)
     fields = match.as_record_fields()
     item.update(fields)
+    item["journal_name"] = item.get("journal_title") or ""
+    item["journal_impact_value"] = item.get("impact_factor")
+    item["journal_impact_metric"] = item.get("impact_factor_metric") or ""
+    item["journal_impact_year"] = item.get("impact_factor_year")
+    item["journal_metric_source"] = item.get("impact_factor_source") or ""
     return fields
 
 
-def record_passes_impact_factor_filter(item: dict[str, Any], config: CrawlConfig) -> tuple[bool, dict[str, Any]]:
+def record_passes_impact_factor_filter(
+    item: dict[str, Any],
+    config: CrawlConfig,
+    resolver: JournalMetricResolver | None = None,
+) -> tuple[bool, dict[str, Any]]:
     """Return whether a record passes the configured minimum impact factor.
 
     Records with unknown impact factor are retained so an incomplete local metrics
     table does not silently hide relevant literature.
     """
-    fields = enrich_record_with_journal_metrics(item)
-    if config.min_impact_factor is None:
-        return True, fields
-    value = fields.get("impact_factor")
-    if value is None:
-        return True, fields
-    try:
-        return float(value) >= float(config.min_impact_factor), fields
-    except (TypeError, ValueError):
-        return True, fields
+    fields = enrich_record_with_journal_metrics(item, resolver)
+    passes = metric_passes_impact_factor_filter(
+        item,
+        config.min_impact_factor,
+        include_unknown=config.include_unknown_impact_factor,
+    )
+    return passes, fields
 
 
 def record_matches_resolved_journal_pack(
@@ -1828,14 +1877,49 @@ def generate_extracted_keywords(
     return result[:limit]
 
 
-def summarize_content(abstract: str, title: str = "") -> str:
+def make_content_summary(title: str, abstract: str, max_chars: int = 360) -> str:
+    """Build a lightweight summary from source metadata only."""
     text = _clean_extracted_text(abstract)
     if not text:
-        return _clean_extracted_text(title)
+        return _clean_extracted_text(title)[:max_chars]
     sentence = re.split(r"(?<=[.!?])\s+", text, maxsplit=1)[0]
     if len(sentence) < 80 and len(text) > len(sentence):
-        sentence = text[:360]
-    return sentence[:420].strip()
+        sentence = text[:max_chars]
+    return sentence[:max_chars].strip()
+
+
+def summarize_content(abstract: str, title: str = "") -> str:
+    return make_content_summary(title, abstract, max_chars=420)
+
+
+def generate_keyword_groups(
+    record: dict[str, Any],
+    extracted_keywords: list[str],
+    user_keywords: list[str] | str,
+    max_groups: int = 6,
+) -> list[str]:
+    """Return stable keyword group labels for metadata and library filters."""
+    values: list[Any] = [*extracted_keywords]
+    if isinstance(user_keywords, str):
+        values.append(user_keywords)
+    else:
+        values.extend(user_keywords)
+    record_keywords = record.get("keywords") or record.get("concepts") or []
+    if isinstance(record_keywords, str):
+        values.extend(re.split(r"[,;|]", record_keywords))
+    else:
+        values.extend(record_keywords)
+    groups: list[str] = []
+    seen: set[str] = set()
+    for value in _unique_keyword_labels(values):
+        key = keyword_group_key(value)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        groups.append(keyword_group_label(value))
+        if len(groups) >= max_groups:
+            break
+    return groups
 
 
 def content_fields_for_record(
@@ -1849,15 +1933,6 @@ def content_fields_for_record(
     source_abstract = _clean_extracted_text(item.get("abstract") or reconstruct_abstract(item.get("abstract_inverted_index")))
     extracted_abstract = ""
     explicit_keywords: list[str] = list(item.get("extracted_keywords") or [])
-    if download.path and (not source_abstract or not explicit_keywords):
-        pdf_path = Path(download.path)
-        if not pdf_path.is_absolute():
-            pdf_path = meta_path.parent / pdf_path
-        text = extract_pdf_text(pdf_path)
-        if not source_abstract:
-            extracted_abstract = extract_abstract_from_text(text)
-        if not explicit_keywords:
-            explicit_keywords = extract_keywords_from_text(text)
     abstract = source_abstract or extracted_abstract
     matched_keywords = list((relevance_info or {}).get("matched_keywords") or [])
     extracted_keywords = generate_extracted_keywords(
@@ -1867,11 +1942,16 @@ def content_fields_for_record(
         explicit_keywords,
         matched_keywords,
     )
+    content_summary = make_content_summary(str(item.get("title") or item.get("display_name") or ""), abstract)
+    keyword_groups = generate_keyword_groups(item, extracted_keywords, [keyword, *matched_keywords])
     return {
         "abstract": abstract,
         "extracted_abstract": extracted_abstract,
         "extracted_keywords": extracted_keywords,
-        "content_summary": summarize_content(abstract, str(item.get("title") or item.get("display_name") or "")),
+        "content_summary": content_summary,
+        "summary_text": content_summary,
+        "keyword_groups": keyword_groups,
+        "topic_tags": keyword_groups,
     }
 
 
@@ -2532,13 +2612,23 @@ def build_record(
         "extracted_abstract": content_fields["extracted_abstract"],
         "extracted_keywords": content_fields["extracted_keywords"],
         "content_summary": content_fields["content_summary"],
+        "summary_text": content_fields["summary_text"],
+        "keyword_groups": content_fields["keyword_groups"],
+        "topic_tags": content_fields["topic_tags"],
         "journal_title": item.get("journal_title"),
         "journal_issns": item.get("journal_issns") or [],
+        "journal_issn_l": item.get("journal_issn_l"),
         "impact_factor": item.get("impact_factor"),
         "impact_factor_year": item.get("impact_factor_year"),
         "impact_factor_source": item.get("impact_factor_source"),
+        "impact_factor_metric": item.get("impact_factor_metric"),
         "impact_factor_quartile": item.get("impact_factor_quartile"),
         "impact_factor_unknown": bool(item.get("impact_factor_unknown")),
+        "journal_name": item.get("journal_name") or item.get("journal_title"),
+        "journal_impact_value": item.get("journal_impact_value", item.get("impact_factor")),
+        "journal_impact_metric": item.get("journal_impact_metric") or item.get("impact_factor_metric"),
+        "journal_impact_year": item.get("journal_impact_year", item.get("impact_factor_year")),
+        "journal_metric_source": item.get("journal_metric_source") or item.get("impact_factor_source"),
         "open_access": item.get("open_access"),
         "unpaywall": unpaywall,
         "pdf_candidates": pdf_candidates,
@@ -2614,6 +2704,16 @@ def crawl_keyword(
 ) -> None:
     """Docstring."""
     topic_pack = resolve_topic_pack(config, config.effective_keywords)
+    configured_metric_source = str(config.journal_metric_source or "local_then_openalex").strip() or "local_then_openalex"
+    metric_source = configured_metric_source if config.min_impact_factor is not None else "local_csv"
+    if config.min_impact_factor is None and configured_metric_source in {"openalex", "local_then_openalex"}:
+        metric_source = configured_metric_source
+    journal_metric_resolver = JournalMetricResolver(
+        local_csv=config.journal_metric_csv,
+        source=metric_source,
+        session=session,
+        email=config.email,
+    )
     key = state_key(keyword, config, source)
     state_entry = crawl_state.get(key, CrawlStateEntry())
     if config.resume and state_entry.exhausted:
@@ -2765,7 +2865,13 @@ def crawl_keyword(
                     config.min_topic_score,
                 )
                 continue
-            passes_impact_factor, journal_fields = record_passes_impact_factor_filter(item, config)
+            passes_impact_factor, journal_fields = record_passes_impact_factor_filter(item, config, journal_metric_resolver)
+            if journal_fields.get("impact_factor") is None:
+                stats.impact_factor_unknown_records += 1
+                stats.journal_metric_missing += 1
+            else:
+                stats.impact_factor_known_records += 1
+                stats.journal_metric_resolved += 1
             if not passes_impact_factor:
                 stats.skipped_irrelevant += 1
                 stats.skipped_by_impact_factor += 1
@@ -2957,6 +3063,7 @@ def log_summary(stats: CrawlStats) -> None:
     logging.info(
         "Crawl summary: existing=%s fetched_total=%s fetched_by_source=%s added=%s "
         "duplicates=%s no_key=%s irrelevant=%s keyword_filtered=%s topic_filtered=%s impact_filtered=%s "
+        "journal_metric_resolved=%s journal_metric_missing=%s "
         "not_oa=%s oa=%s pdf_candidates=%s pdf_attempted=%s pdf_downloaded=%s "
         "pdf_failed=%s pdf_failure_reasons=%s retried_existing=%s request_failures=%s",
         stats.existing_records,
@@ -2969,6 +3076,8 @@ def log_summary(stats: CrawlStats) -> None:
         stats.skipped_by_keyword_match,
         stats.skipped_by_topic_score,
         stats.skipped_by_impact_factor,
+        stats.journal_metric_resolved,
+        stats.journal_metric_missing,
         stats.skipped_not_oa,
         stats.open_access_records,
         stats.pdf_candidates_found,
@@ -3041,6 +3150,7 @@ def format_round_finished_message(config: CrawlConfig, stats: CrawlStats) -> str
         f"Fetched total: {fetched_total}; by source: {stats.fetched_by_source}.",
         f"Metadata added: {stats.added_records}; duplicate skips: {stats.skipped_duplicates}; missing-key skips: {stats.skipped_without_key}.",
         f"Filter skips: total={stats.skipped_irrelevant}, keyword={stats.skipped_by_keyword_match}, topic_score={stats.skipped_by_topic_score}, impact_factor={stats.skipped_by_impact_factor}, not_oa={stats.skipped_not_oa}.",
+        f"Impact-factor metrics: known={stats.journal_metric_resolved}, unknown={stats.journal_metric_missing}.",
         f"PDF resolver: candidates={stats.pdf_candidates_found}, attempted={stats.pdf_download_attempted}, downloaded={pdf_downloaded}, failed={pdf_failed}.",
     ]
     if stats.pdf_failure_reasons:

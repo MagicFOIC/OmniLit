@@ -1410,12 +1410,12 @@ class QtOnlyTests(unittest.TestCase):
         app = (ROOT / "omnilit_qt" / "app.py").read_text(encoding="utf-8")
         active_sources = "\n".join(
             (ROOT / "omnilit_qt" / name).read_text(encoding="utf-8")
-            for name in ("download_controller.py", "translation_controller.py", "update_controller.py")
+            for name in ("download_controller.py", "literature_library_controller.py", "translation_controller.py", "update_controller.py")
         )
         self.assertIn("daemon=False", background)
         self.assertNotIn("daemon=True", active_sources)
         self.assertIn("app.aboutToQuit.connect", app)
-        self.assertIn("_shutdown_background_tasks(download, translation, updater)", app)
+        self.assertIn("_shutdown_background_tasks(download, literature_library, pdf_extraction, translation, updater)", app)
 
     def test_active_sources_do_not_reference_tkinter(self) -> None:
         files = [
@@ -1703,7 +1703,18 @@ class QtOnlyTests(unittest.TestCase):
         self.assertIn("color: theme.tooltipText", tooltip)
         self.assertIn("parent: root.target", tooltip)
         self.assertIn("margins: 8", tooltip)
+        self.assertIn("property int delay", tooltip)
+        self.assertIn("property int timeout", tooltip)
+        self.assertIn("wrapMode: Text.Wrap", tooltip)
         self.assertNotIn("target.mapToItem(Overlay.overlay", tooltip)
+
+    def test_pages_use_modern_tooltips_instead_of_native_attached_tooltips(self) -> None:
+        qml_dir = ROOT / "ui" / "qml"
+        for name in ("DownloadPage.qml", "DatePickerField.qml", "TranslationPage.qml", "LiteratureLibraryPage.qml"):
+            page = (qml_dir / name).read_text(encoding="utf-8")
+            self.assertNotIn("ToolTip.visible", page, name)
+            self.assertNotIn("ToolTip.text", page, name)
+            self.assertIn("ModernToolTip {", page, name)
 
     def test_native_checkboxes_are_replaced_with_the_shared_modern_checkbox(self) -> None:
         qml_dir = ROOT / "ui" / "qml"

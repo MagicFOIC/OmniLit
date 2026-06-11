@@ -67,10 +67,6 @@ RowLayout {
                     Layout.fillWidth: true
                     text: root.headerTitle()
                     hoverEnabled: true
-                    ToolTip.delay: 350
-                    ToolTip.timeout: 4000
-                    ToolTip.visible: hovered
-                    ToolTip.text: root.viewMode === 0 ? i18n.text("select_month") : i18n.text("select_year")
                     onClicked: root.promoteView()
                     background: Rectangle {
                         radius: 10
@@ -87,6 +83,13 @@ RowLayout {
                         verticalAlignment: Text.AlignVCenter
                     }
                     HoverHandler { cursorShape: Qt.PointingHandCursor }
+                    ModernToolTip {
+                        placement: "bottom"
+                        delay: 350
+                        timeout: 4000
+                        shown: parent.hovered
+                        text: root.viewMode === 0 ? i18n.text("select_month") : i18n.text("select_year")
+                    }
                 }
                 PillButton { iconName: "chevron-right"; onClicked: root.movePage(1) }
             }

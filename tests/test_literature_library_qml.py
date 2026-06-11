@@ -19,7 +19,20 @@ class LiteratureLibraryQmlTests(unittest.TestCase):
         self.assertIn("root.selectedDetails.keywordsText", qml)
         self.assertIn("root.selectedDetails.contentSummary", qml)
 
+    def test_qml_exposes_pdf_extraction_reader_entry(self) -> None:
+        qml_dir = ROOT / "ui" / "qml"
+        qml = (qml_dir / "LiteratureLibraryPage.qml").read_text(encoding="utf-8")
+
+        self.assertIn("解析阅读", qml)
+        self.assertIn("LiteratureReaderPage", qml)
+        reader = (qml_dir / "LiteratureReaderPage.qml").read_text(encoding="utf-8")
+        self.assertIn("pdfExtractionController", reader)
+        self.assertIn("pdfExtractionController.pages", reader)
+        self.assertIn("onPdfPathChanged", reader)
+        self.assertTrue((qml_dir / "PdfElementBookmarkBar.qml").exists())
+        self.assertTrue((qml_dir / "PdfElementOverlay.qml").exists())
+        self.assertTrue((qml_dir / "PdfExtractionPanel.qml").exists())
+
 
 if __name__ == "__main__":
     unittest.main()
-

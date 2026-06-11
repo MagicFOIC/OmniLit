@@ -53,9 +53,9 @@ QtObject {
     readonly property color workspaceOverlay: dark ? "#d90b1220" : "#b8f8fafc"
     readonly property color drawerScrim: dark ? "#78000000" : "#520f172a"
     readonly property color accentText: "#ffffff"
-    readonly property color tooltipSurface: dark ? "#e8f1fc" : "#172033"
-    readonly property color tooltipBorder: dark ? "#bfd0e4" : "#2b3a51"
-    readonly property color tooltipText: dark ? "#172033" : "#f8fbff"
+    readonly property color tooltipSurface: mix(accent, surfaceElevated, dark ? 0.08 : 0.035)
+    readonly property color tooltipBorder: mix(accent, border, dark ? 0.24 : 0.18)
+    readonly property color tooltipText: text
     readonly property real shadowOpacity: preset.shadowOpacity
 
     function mix(foreground, background, ratio) {
