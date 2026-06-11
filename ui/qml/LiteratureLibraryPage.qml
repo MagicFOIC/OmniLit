@@ -589,7 +589,7 @@ Item {
         root.previewZoom = Math.max(0.5, Math.min(4.0, root.previewZoom + delta))
     }
 
-    function openReader(record) {
+    function openReader(index, record) {
         if(!record || !record.localPdfPath)
             return
 

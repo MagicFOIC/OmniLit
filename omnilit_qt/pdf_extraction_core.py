@@ -13,6 +13,8 @@ from typing import Any, Iterable
 MATH_PATTERN = re.compile(r"(=|≈|≠|≤|≥|∑|∫|√|π|α|β|γ|Δ|λ|μ|σ|θ|×|÷|\^|\\frac|[A-Za-z]\s*[=+\-*/]\s*)")
 EQUATION_NUMBER_PATTERN = re.compile(r"(\(\s*\d+[A-Za-z]?\s*\)|（\s*\d+[A-Za-z]?\s*）)\s*$")
 CAPTION_PATTERN = re.compile(r"^\s*(fig(?:ure)?\.?|图|table|表)\s*\d+", re.IGNORECASE)
+ENABLE_VECTOR_FIGURE_DETECTION = False
+MAX_VECTOR_DRAWINGS_PER_PAGE = 500
 
 
 def sha256_file(path: str | Path) -> str:
@@ -150,7 +152,16 @@ def _extract_figures(
             if bbox:
                 candidates.append(bbox)
 
-    for drawing in page.get_drawings() or []:
+    drawings = []
+    if ENABLE_VECTOR_FIGURE_DETECTION:
+        try:
+            drawings = page.get_drawings() or []
+        except Exception:
+            drawings = []
+        if len(drawings) > MAX_VECTOR_DRAWINGS_PER_PAGE:
+            drawings = []
+
+    for drawing in drawings:
         rect = drawing.get("rect")
         bbox = _bbox_from_any(rect)
         if not bbox:

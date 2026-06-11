@@ -114,6 +114,8 @@ Item {
                     anchors.margins: 10
                     clip: true
                     boundsBehavior: Flickable.StopAtBounds
+                    ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                    ScrollBar.horizontal: ScrollBar { policy: ScrollBar.AsNeeded }
                     contentWidth: Math.max(width, pageColumn.width)
                     contentHeight: pageColumn.height
 
@@ -128,7 +130,7 @@ Item {
 
                     Column {
                         id: pageColumn
-                        width: Math.max(pageFlick.width, root.pageWidth(root.currentPage) * root.zoom + 40)
+                        width: Math.max(pageFlick.width, root.pageWidth(root.currentPage) * root.displayScale(root.currentPage) + 40)
                         spacing: 18
 
                         Repeater {
@@ -136,8 +138,11 @@ Item {
                             delegate: Rectangle {
                                 id: pageFrame
                                 property var sizeInfo: root.pageSize(index)
-                                width: root.pageWidth(index) * root.zoom + 20
-                                height: root.pageHeight(index) * root.zoom + 20
+                                property real scale: root.displayScale(index)
+                                property bool nearViewport: y + height > pageFlick.contentY - pageFlick.height
+                                    && y < pageFlick.contentY + pageFlick.height * 2.0
+                                width: root.pageWidth(index) * pageFrame.scale + 20
+                                height: root.pageHeight(index) * pageFrame.scale + 20
                                 radius: 4
                                 color: "#ffffff"
                                 border.color: index === root.currentPage ? theme.accent : theme.border
@@ -146,9 +151,11 @@ Item {
                                 Image {
                                     id: pageImage
                                     anchors.centerIn: parent
-                                    width: root.pageWidth(index) * root.zoom
-                                    height: root.pageHeight(index) * root.zoom
-                                    source: root.renderRevision >= 0 ? pdfExtractionController.renderPage(root.recordId, index, root.zoom) : ""
+                                    width: root.pageWidth(index) * pageFrame.scale
+                                    height: root.pageHeight(index) * pageFrame.scale
+                                    source: pageFrame.nearViewport && root.renderRevision >= 0
+                                        ? pdfExtractionController.renderPage(root.recordId, index, pageFrame.scale)
+                                        : ""
                                     fillMode: Image.Stretch
                                     asynchronous: true
                                     cache: false
@@ -277,6 +284,16 @@ Item {
         return [612, 792]
     }
 
+    function fitScale(page) {
+        var viewport = Math.max(1, pageFlick.width || root.width)
+        var raw = (viewport - 56) / Math.max(1, root.pageWidth(page))
+        return Math.max(0.35, Math.min(1.0, raw))
+    }
+
+    function displayScale(page) {
+        return root.zoom * root.fitScale(page)
+    }
+
     function pageWidth(page) {
         return Number(root.pageSize(page)[0] || 612)
     }
@@ -288,7 +305,7 @@ Item {
     function scrollToPage(page) {
         var y = 0
         for(var i = 0; i < page; i++)
-            y += root.pageHeight(i) * root.zoom + 38
+            y += root.pageHeight(i) * root.displayScale(i) + 38
         pageFlick.contentY = Math.max(0, Math.min(y, pageFlick.contentHeight - pageFlick.height))
     }
     function registerTourTargets() {

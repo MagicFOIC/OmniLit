@@ -7,8 +7,10 @@ Rectangle {
     property var element: ({})
     property string statusText: ""
     property string exportedPath: ""
-    onElementChanged: exportedPath = ""
-    property string lastExportPath: ""
+
+    onElementChanged: {
+        exportedPath = ""
+    }
 
     color: theme.surface
     border.color: theme.border
@@ -75,7 +77,7 @@ Rectangle {
 
                 PillButton {
                     text: "打开导出目录"
-                    enabled: root.lastExportPath !== ""
+                    enabled: root.exportedPath !== ""
                     onClicked: root.openLastExportDirectory()
                 }
             }
@@ -104,11 +106,19 @@ Rectangle {
                 Layout.fillWidth: true
                 PillButton { text: "复制图片"; onClicked: root.copyImageCurrent() }
                 PillButton { text: "导出 PNG"; onClicked: root.exportCurrent("png") }
-                PillButton { text: "打开 PNG 目录"; visible: root.exportedPath !== ""; onClicked: pdfExtractionController.openExportDirectory(root.exportedPath) }
+                PillButton {
+                    text: "打开文件夹"
+                    visible: root.exportedPath !== ""
+                    onClicked: {
+                        root.statusText = pdfExtractionController.openExportDirectory(root.exportedPath)
+                            ? "已打开导出文件夹。"
+                            : pdfExtractionController.statusText
+                    }
+                }
 
                 PillButton {
                     text: "打开导出目录"
-                    enabled: root.lastExportPath !== ""
+                    enabled: root.exportedPath !== ""
                     onClicked: root.openLastExportDirectory()
                 }
             }
@@ -142,6 +152,18 @@ Rectangle {
                 Layout.fillWidth: true
                 PillButton { text: "复制公式文本"; onClicked: root.copyCurrent() }
                 PillButton { text: "复制公式图片"; onClicked: root.copyImageCurrent() }
+            }
+        }
+
+        PillButton {
+            Layout.fillWidth: true
+            text: "打开文件夹"
+            visible: root.exportedPath.length > 0
+            enabled: visible
+            onClicked: {
+                root.statusText = pdfExtractionController.openExportDirectory(root.exportedPath)
+                    ? "已打开导出文件夹。"
+                    : pdfExtractionController.statusText
             }
         }
 
@@ -182,20 +204,15 @@ Rectangle {
             return
 
         var path = pdfExtractionController.exportElement(root.element.id, fmt)
-
-        if(path) {
-            root.lastExportPath = path
-            root.statusText = "已导出：" + path
-        } else {
-            root.statusText = pdfExtractionController.statusText
-        }
+        root.exportedPath = path || ""
+        root.statusText = path ? ("已导出：" + path) : pdfExtractionController.statusText
     }
 
     function openLastExportDirectory() {
-        if(root.lastExportPath === "")
+        if(root.exportedPath === "")
             return
 
-        root.statusText = pdfExtractionController.openExportDirectory(root.lastExportPath)
+        root.statusText = pdfExtractionController.openExportDirectory(root.exportedPath)
             ? "已打开导出目录。"
             : pdfExtractionController.statusText
     }

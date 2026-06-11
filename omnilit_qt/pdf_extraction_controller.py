@@ -320,21 +320,6 @@ class PdfExtractionController(QObject):
             return False
 
     @Slot(str, result=bool)
-    def openExportDirectory(self, path: str) -> bool:
-        try:
-            target = Path(str(path or "")).expanduser()
-            if not str(target):
-                self._status = "还没有可打开的导出目录。"
-                self.changed.emit()
-                return False
-            _open_path(target)
-            return True
-        except Exception as exc:
-            self._status = f"打开导出目录失败：{exc}"
-            self.changed.emit()
-            return False
-
-    @Slot(str, result=bool)
     def copyElement(self, element_id: str) -> bool:
         try:
             element = self._element_by_id(element_id)
