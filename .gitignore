@@ -1,4 +1,4 @@
-__pycache__/
+**pycache**/
 *.py[cod]
 *.sqlite3
 *.enc
@@ -11,19 +11,26 @@ dist/
 build/
 release/
 updates/
-apply_*_update.bat
-apply_*_update.log
+apply_**update.bat
+apply**_update.log
 
+Download/library/
 Download/library_previews/
 Download/library_thumbnails/
 Download/*.jsonl
+Download/*.jsonl.bak
 Download/*_preview_cache.json
 Download/crawl_state*.json
 Download/crawl_state/
 Download/pdf_cache/
+Download/**/*.part
+Download/**/*.tmp
 Download/pdfs/
 Download/gui_settings.json
+
 task_state/
+Literature/extractions/
+
 Translate/pdf/
 Translate/out/
 Translate/*.pdf
@@ -32,3 +39,4 @@ ui/avatar-*
 qml_preview_*.png
 smoke_exe/
 .omnilit-data-migrated-v2
+
