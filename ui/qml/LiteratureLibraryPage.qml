@@ -4,6 +4,7 @@ import QtQuick.Layouts
 
 Item {
     id: root
+    property var tourHost: null
 
     property int selectedIndex: literatureList.currentIndex
     property string selectedRecordId: ""
@@ -29,6 +30,9 @@ Item {
     I18n { id: i18n }
     Theme { id: theme }
     LayoutMetrics { id: metrics; viewportWidth: root.width; viewportHeight: root.height }
+
+    Component.onCompleted: root.registerTourTargets()
+    Component.onDestruction: root.unregisterTourTargets()
 
     onVisibleChanged: {
         if(visible && !literatureLibraryController.hasLoaded && !literatureLibraryController.loading)
@@ -152,6 +156,7 @@ Item {
             spacing: metrics.sectionSpacing
 
             Rectangle {
+                id: libraryListPanel
                 Layout.preferredWidth: Math.min(620, Math.max(460, root.width * 0.46))
                 Layout.fillHeight: true
                 radius: theme.radiusMedium
@@ -297,6 +302,7 @@ Item {
             }
 
             Rectangle {
+                id: detailPanel
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 radius: theme.radiusMedium
@@ -455,6 +461,7 @@ Item {
         anchors.fill: parent
         anchors.margins: metrics.pageMargin
         visible: root.readerOpen
+        tourHost: root.tourHost
         recordId: root.readerRecordId
         pdfPath: root.readerPdfPath
         title: root.readerTitle
@@ -583,6 +590,18 @@ Item {
         root.readerPdfPath = record.localPdfPath || ""
         root.readerTitle = record.title || "解析阅读"
         root.readerOpen = true
+    }
+    function registerTourTargets() {
+        if(root.tourHost) {
+            root.tourHost.registerTourTarget("nav.library", libraryListPanel)
+            root.tourHost.registerTourTarget("nav.extract", detailPanel)
+        }
+    }
+    function unregisterTourTargets() {
+        if(root.tourHost) {
+            root.tourHost.unregisterTourTarget("nav.library", libraryListPanel)
+            root.tourHost.unregisterTourTarget("nav.extract", detailPanel)
+        }
     }
 
     Popup {

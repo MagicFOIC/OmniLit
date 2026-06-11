@@ -360,6 +360,62 @@ TEXTS: dict[str, tuple[str, str]] = {
     "pdf_missing": ("输入目录中没有 PDF 文件。", "The input directory does not contain PDF files."),
 }
 
+TEXTS.update({
+    "onboarding_workdir_title": ("设置软件工作目录", "Set workspace folder"),
+    "onboarding_workdir_body": (
+        "OmniLit 会把下载、翻译、解析、文献库和缓存文件放在这个目录下。请选择一个长期可用且可写的位置。",
+        "OmniLit stores downloads, translations, extracted reading files, library data, and cache files under this folder. Choose a writable location you can keep using.",
+    ),
+    "onboarding_workdir_placeholder": ("选择或输入工作目录路径", "Choose or enter a workspace path"),
+    "onboarding_workdir_dirs": (
+        "保存后会自动创建 Download / Translate / Extract / Library / Cache 子目录。",
+        "OmniLit will create Download / Translate / Extract / Library / Cache automatically.",
+    ),
+    "onboarding_use_default_workdir": ("使用默认目录", "Use default folder"),
+    "onboarding_save_workdir": ("保存并继续", "Save and continue"),
+    "onboarding_workdir_invalid": ("目录不可写，或无法创建所需子目录。", "The folder is not writable, or required subfolders could not be created."),
+    "onboarding_download_title": ("文献下载", "Literature download"),
+    "onboarding_download_body": (
+        "在这里配置检索范围、关键词、PDF 下载和质量过滤，任务日志会显示当前下载进度。",
+        "Configure search scope, keywords, PDF downloads, and quality filters here. The task log shows download progress.",
+    ),
+    "onboarding_library_title": ("文献库", "Literature library"),
+    "onboarding_library_body": (
+        "文献库用于查看、筛选、预览和按相关性整理已下载文献。",
+        "Use the library to review, filter, preview, and organize downloaded literature by relevance.",
+    ),
+    "onboarding_translate_title": ("文献翻译", "Literature translation"),
+    "onboarding_translate_body": (
+        "在这里选择待翻译 PDF、模型配置、术语表和批处理参数，并查看实时预览。",
+        "Choose PDFs, model settings, glossaries, and batch options here, then monitor the live preview.",
+    ),
+    "onboarding_extract_title": ("解析阅读", "Extracted reading"),
+    "onboarding_extract_body": (
+        "解析阅读会从本地 PDF 生成可定位的阅读视图，并支持表格、图片和公式等元素操作。",
+        "Extracted reading builds a navigable view from local PDFs and supports tables, images, formulas, and other extracted elements.",
+    ),
+    "onboarding_account_title": ("账号入口", "Account entry"),
+    "onboarding_account_body": (
+        "从这里进入账号、头像、语言、外观和更新管理。",
+        "Open account, avatar, language, appearance, and update management from here.",
+    ),
+    "onboarding_appearance_title": ("外观设置", "Appearance settings"),
+    "onboarding_appearance_body": (
+        "这里可以调整主题、强调色、阅读舒适度、背景和动效偏好。",
+        "Adjust theme, accent color, reading comfort, workspace background, and motion preferences here.",
+    ),
+    "onboarding_update_title": ("更新管理", "Update management"),
+    "onboarding_update_body": (
+        "这里可以检查、下载和应用 OmniLit 更新，也能查看版本记录。",
+        "Check, download, and apply OmniLit updates here, and review version history.",
+    ),
+    "onboarding_show_every_login": ("每次登录后都显示引导", "Show this guide after every sign-in"),
+    "onboarding_skip": ("跳过", "Skip"),
+    "onboarding_previous": ("上一步", "Previous"),
+    "onboarding_next": ("下一步", "Next"),
+    "onboarding_finish": ("完成", "Finish"),
+})
+
 LANGUAGE_OPTIONS = (
     {"value": "zh", "label": "简体中文"},
     {"value": "en", "label": "English"},
@@ -519,6 +575,36 @@ RU_TEXTS.update({
     "discovery_mode_tip": "Временно ослабляет фильтры ключевых слов, темы, журналов и продолжения; при выключении возвращает прежние настройки.",
     "discovery_mode_active_tip": "Диагностика поиска управляет 6 настройками. Выключите её, чтобы вернуть прежнюю конфигурацию.",
     "discovery_managed_setting_tip": "Временно управляется диагностикой поиска; выключите её, чтобы восстановить.",
+})
+
+
+RU_TEXTS.update({
+    "onboarding_workdir_title": "Set workspace folder",
+    "onboarding_workdir_body": "OmniLit stores downloads, translations, extracted reading files, library data, and cache files under this folder. Choose a writable location you can keep using.",
+    "onboarding_workdir_placeholder": "Choose or enter a workspace path",
+    "onboarding_workdir_dirs": "OmniLit will create Download / Translate / Extract / Library / Cache automatically.",
+    "onboarding_use_default_workdir": "Use default folder",
+    "onboarding_save_workdir": "Save and continue",
+    "onboarding_workdir_invalid": "The folder is not writable, or required subfolders could not be created.",
+    "onboarding_download_title": "Literature download",
+    "onboarding_download_body": "Configure search scope, keywords, PDF downloads, and quality filters here. The task log shows download progress.",
+    "onboarding_library_title": "Literature library",
+    "onboarding_library_body": "Use the library to review, filter, preview, and organize downloaded literature by relevance.",
+    "onboarding_translate_title": "Literature translation",
+    "onboarding_translate_body": "Choose PDFs, model settings, glossaries, and batch options here, then monitor the live preview.",
+    "onboarding_extract_title": "Extracted reading",
+    "onboarding_extract_body": "Extracted reading builds a navigable view from local PDFs and supports tables, images, formulas, and other extracted elements.",
+    "onboarding_account_title": "Account entry",
+    "onboarding_account_body": "Open account, avatar, language, appearance, and update management from here.",
+    "onboarding_appearance_title": "Appearance settings",
+    "onboarding_appearance_body": "Adjust theme, accent color, reading comfort, workspace background, and motion preferences here.",
+    "onboarding_update_title": "Update management",
+    "onboarding_update_body": "Check, download, and apply OmniLit updates here, and review version history.",
+    "onboarding_show_every_login": "Show this guide after every sign-in",
+    "onboarding_skip": "Skip",
+    "onboarding_previous": "Previous",
+    "onboarding_next": "Next",
+    "onboarding_finish": "Finish",
 })
 
 

@@ -7,6 +7,7 @@ Item {
     property int pageIndex: 0
     property int drawerPage: 0
     property string draftAvatarStatus: ""
+    property var tourTargets: ({})
     readonly property bool sidebarExpanded: preferencesController.sidebarExpanded
     property int sidebarWidth: sidebarExpanded ? metrics.sidebarExpandedWidth : metrics.sidebarCollapsedWidth
     Motion { id: motion }
@@ -83,6 +84,8 @@ Item {
                         Layout.preferredHeight: 52
                         hoverEnabled: true
                         onClicked: root.pageIndex = index
+                        Component.onCompleted: root.registerTourTarget(root.tourTargetForNavLabel(modelData.label), navigationButton)
+                        Component.onDestruction: root.unregisterTourTarget(root.tourTargetForNavLabel(modelData.label), navigationButton)
                         HoverHandler { cursorShape: Qt.PointingHandCursor }
                         background: Rectangle {
                             radius: 15
@@ -178,6 +181,8 @@ Item {
                     Layout.preferredHeight: root.sidebarExpanded ? 62 : 52
                     hoverEnabled: true
                     onClicked: accountDrawer.open()
+                    Component.onCompleted: root.registerTourTarget("account.avatar", avatarButton)
+                    Component.onDestruction: root.unregisterTourTarget("account.avatar", avatarButton)
                     HoverHandler { cursorShape: Qt.PointingHandCursor }
                     background: Rectangle {
                         radius: 17
@@ -233,9 +238,9 @@ Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
             currentIndex: root.pageIndex
-            DownloadPage {}
-            LiteratureLibraryPage {}
-            TranslationPage {}
+            DownloadPage { tourHost: root }
+            LiteratureLibraryPage { tourHost: root }
+            TranslationPage { tourHost: root }
         }
     }
 
@@ -444,9 +449,12 @@ Item {
                         rowSpacing: 12
 
                         Card {
+                            id: appearancePanelCard
                             Layout.fillWidth: true
                             Layout.alignment: Qt.AlignTop
                             implicitHeight: appearanceSettings.implicitHeight + 28
+                            Component.onCompleted: root.registerTourTarget("appearance.panel", appearancePanelCard)
+                            Component.onDestruction: root.unregisterTourTarget("appearance.panel", appearancePanelCard)
                             ColumnLayout {
                                 id: appearanceSettings
                                 anchors.fill: parent
@@ -672,7 +680,7 @@ Item {
                     detail: i18n.text("update_page_detail")
                     onBack: root.drawerPage = 0
                 }
-                UpdatePage { Layout.fillWidth: true; Layout.fillHeight: true }
+                UpdatePage { Layout.fillWidth: true; Layout.fillHeight: true; tourHost: root }
             }
 
             ColumnLayout {
@@ -844,6 +852,28 @@ Item {
         }
     }
 
+    WorkdirSetupDialog {
+        parent: Overlay.overlay
+        controller: onboardingController
+    }
+
+    OnboardingOverlay {
+        parent: Overlay.overlay
+        width: root.width
+        height: root.height
+        controller: onboardingController
+        pageIndex: root.pageIndex
+        targetRectProvider: root.targetRect
+        onPageIndexRequested: index => root.pageIndex = index
+    }
+
+    Connections {
+        target: onboardingController
+        function onChanged() {
+            root.applyTourNavigation(onboardingController.currentStep || {})
+        }
+    }
+
     function navigationTooltip(index, fallbackLabel) {
         if(index === 0 && downloadController.running && downloadController.activeTaskText.length > 0)
             return downloadController.activeTaskText
@@ -856,5 +886,68 @@ Item {
     }
     function customStatuses() {
         return preferencesController.avatarStatusOptions.filter(item => item.custom)
+    }
+    function tourTargetForNavLabel(label) {
+        if(label === "nav_download")
+            return "nav.download"
+        if(label === "nav_library")
+            return "nav.library"
+        if(label === "nav_translate")
+            return "nav.translate"
+        return ""
+    }
+    function registerTourTarget(key, item) {
+        if(!key || !item)
+            return
+        let next = Object.assign({}, root.tourTargets)
+        next[key] = item
+        root.tourTargets = next
+    }
+    function unregisterTourTarget(key, item) {
+        if(!key || root.tourTargets[key] !== item)
+            return
+        let next = Object.assign({}, root.tourTargets)
+        delete next[key]
+        root.tourTargets = next
+    }
+    function targetVisible(item) {
+        let current = item
+        while(current) {
+            if(current.visible === false)
+                return false
+            if(current === root)
+                return true
+            current = current.parent
+        }
+        return true
+    }
+    function targetRect(key) {
+        const item = root.tourTargets[key]
+        if(!item || !root.targetVisible(item) || item.width <= 0 || item.height <= 0)
+            return { "x": 0, "y": 0, "width": 0, "height": 0, "valid": false }
+        const pos = item.mapToItem(root, 0, 0)
+        const x = Math.max(0, pos.x)
+        const y = Math.max(0, pos.y)
+        const right = Math.min(root.width, pos.x + item.width)
+        const bottom = Math.min(root.height, pos.y + item.height)
+        const w = Math.max(0, right - x)
+        const h = Math.max(0, bottom - y)
+        return { "x": x, "y": y, "width": w, "height": h, "valid": w > 0 && h > 0 }
+    }
+    function applyTourNavigation(step) {
+        if(!onboardingController.active || onboardingController.needsWorkdir)
+            return
+        if(step.pageIndex !== undefined && step.pageIndex >= 0) {
+            root.pageIndex = step.pageIndex
+            if(step.drawerPage === undefined && accountDrawer.opened)
+                accountDrawer.close()
+        }
+        if(step.drawerPage !== undefined && step.drawerPage >= 0) {
+            root.drawerPage = step.drawerPage
+            if(!accountDrawer.opened)
+                accountDrawer.open()
+        } else if(step.id === "account.avatar" && accountDrawer.opened) {
+            accountDrawer.close()
+        }
     }
 }

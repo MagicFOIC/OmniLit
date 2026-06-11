@@ -4,10 +4,14 @@ import QtQuick.Layouts
 
 ScrollView {
     id: scroll
+    property var tourHost: null
     contentWidth: availableWidth
     Motion { id: motion }
     I18n { id: i18n }
     Theme { id: theme }
+
+    Component.onCompleted: scroll.registerTourTargets()
+    Component.onDestruction: scroll.unregisterTourTargets()
 
     Dialog {
         id: downloadConfirm
@@ -100,5 +104,14 @@ ScrollView {
             }
         }
         Item { Layout.preferredHeight: 12 }
+    }
+
+    function registerTourTargets() {
+        if(scroll.tourHost)
+            scroll.tourHost.registerTourTarget("update.panel", updatePanel)
+    }
+    function unregisterTourTargets() {
+        if(scroll.tourHost)
+            scroll.tourHost.unregisterTourTarget("update.panel", updatePanel)
     }
 }

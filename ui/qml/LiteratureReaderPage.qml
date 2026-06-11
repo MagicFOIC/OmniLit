@@ -4,6 +4,7 @@ import QtQuick.Layouts
 
 Item {
     id: root
+    property var tourHost: null
     property string recordId: ""
     property string pdfPath: ""
     property string title: ""
@@ -19,7 +20,8 @@ Item {
     Theme { id: theme }
     LayoutMetrics { id: metrics; viewportWidth: root.width; viewportHeight: root.height }
 
-    Component.onCompleted: root.openRecord()
+    Component.onCompleted: { root.openRecord(); root.registerTourTargets() }
+    Component.onDestruction: root.unregisterTourTargets()
     onRecordIdChanged: root.openRecord()
     onPdfPathChanged: root.openRecord()
     onVisibleChanged: if(visible) root.openRecord()
@@ -248,5 +250,13 @@ Item {
         for(var i = 0; i < page; i++)
             y += root.pageHeight(i) * root.zoom + 38
         pageFlick.contentY = Math.max(0, Math.min(y, pageFlick.contentHeight - pageFlick.height))
+    }
+    function registerTourTargets() {
+        if(root.tourHost)
+            root.tourHost.registerTourTarget("reader.panel", root)
+    }
+    function unregisterTourTargets() {
+        if(root.tourHost)
+            root.tourHost.unregisterTourTarget("reader.panel", root)
     }
 }

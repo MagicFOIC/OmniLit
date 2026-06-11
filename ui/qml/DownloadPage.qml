@@ -4,6 +4,7 @@ import QtQuick.Layouts
 
 Item {
     id: root
+    property var tourHost: null
     property var sortValues: ["", "relevance_score:desc", "cited_by_count:desc", "publication_date:desc"]
     property var topicScoreValues: [0, 4, 6, 9, 12]
     property var topicScoreLabels: ["关键词提及即可 / 0", "宽松 / 4", "均衡 / 6", "严格 / 9", "极严格 / 12"]
@@ -30,7 +31,8 @@ Item {
     Theme { id: theme }
     LayoutMetrics { id: metrics; viewportWidth: root.width; viewportHeight: root.height }
     Timer { id: saveSettingsTimer; interval: 350; onTriggered: downloadController.saveConfig(config()) }
-    Component.onCompleted: { restoreSavedConfig(); restoringSettings = false }
+    Component.onCompleted: { restoreSavedConfig(); restoringSettings = false; root.registerTourTargets() }
+    Component.onDestruction: root.unregisterTourTargets()
     onSelectedSourcesChanged: scheduleSave()
     onSelectedJournalsChanged: scheduleSave()
     onAdvancedVisibleChanged: scheduleSave()
@@ -653,5 +655,13 @@ Item {
         if(enabled && index<0) result.push(source)
         if(!enabled && index>=0) result.splice(index,1)
         root.selectedSources=result
+    }
+    function registerTourTargets() {
+        if(root.tourHost)
+            root.tourHost.registerTourTarget("nav.download", functionCard)
+    }
+    function unregisterTourTargets() {
+        if(root.tourHost)
+            root.tourHost.unregisterTourTarget("nav.download", functionCard)
     }
 }

@@ -4,6 +4,7 @@ import QtQuick.Layouts
 
 Item {
     id: root
+    property var tourHost: null
     property var selectedGlossaries: []
     property bool restoringSettings: true
     readonly property int resultPaneMinimumHeight: metrics.compact ? 135 : 170
@@ -20,7 +21,8 @@ Item {
     LayoutMetrics { id: metrics; viewportWidth: root.width; viewportHeight: root.height }
 
     Timer { id: saveSettingsTimer; interval: 350; onTriggered: translationController.saveConfig(config()) }
-    Component.onCompleted: { restoreSavedConfig(); syncPreview(); restoringSettings = false }
+    Component.onCompleted: { restoreSavedConfig(); syncPreview(); restoringSettings = false; root.registerTourTargets() }
+    Component.onDestruction: root.unregisterTourTargets()
     onSelectedGlossariesChanged: scheduleSave()
 
     Dialog {
@@ -377,5 +379,13 @@ Item {
                  profileIndex:profile.currentIndex, targetLang:direction.currentValue || "zh", glossaryPaths:selectedGlossaries, batchSize:batchSize.value, maxBatchChars:batchChars.value, maxPages:maxPages.text,
                  layoutOnly:layoutOnly.checked, useCache:useCache.checked, summaryPage:summary.checked,
                  translateReferences:references.checked, translateHeaderFooter:headerFooter.checked }
+    }
+    function registerTourTargets() {
+        if(root.tourHost)
+            root.tourHost.registerTourTarget("nav.translate", functionCard)
+    }
+    function unregisterTourTargets() {
+        if(root.tourHost)
+            root.tourHost.unregisterTourTarget("nav.translate", functionCard)
     }
 }

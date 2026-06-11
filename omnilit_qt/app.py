@@ -14,6 +14,7 @@ from .controllers import (
     AuthController,
     DownloadController,
     LiteratureLibraryController,
+    OnboardingController,
     PdfExtractionController,
     PreferencesController,
     TranslationController,
@@ -88,8 +89,10 @@ def run() -> int:
     pdf_extraction = PdfExtractionController(shell, paths, store, locale)
     translation = TranslationController(shell, paths, store, locale)
     updater = UpdateController(shell, paths, store, locale)
+    onboarding = OnboardingController(shell, paths, store)
     shell.set_migration_summary(copied)
     auth.authenticated.connect(updater.check)
+    auth.authenticated.connect(lambda: onboarding.onAuthenticated(auth.username))
     app.aboutToQuit.connect(lambda: _shutdown_background_tasks(download, literature_library, pdf_extraction, translation, updater))
 
     icon_path = paths.resource("assets", "omnilit_logo.ico")
@@ -108,6 +111,7 @@ def run() -> int:
         "pdfExtractionController": pdf_extraction,
         "translationController": translation,
         "updateController": updater,
+        "onboardingController": onboarding,
         "localeController": locale,
     }.items():
         engine.rootContext().setContextProperty(name, value)
