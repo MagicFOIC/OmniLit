@@ -8,6 +8,7 @@ Rectangle {
     property string statusText: ""
     property string exportedPath: ""
     onElementChanged: exportedPath = ""
+    property string lastExportPath: ""
 
     color: theme.surface
     border.color: theme.border
@@ -71,6 +72,12 @@ Rectangle {
                 PillButton { text: "复制表格"; onClicked: root.copyCurrent() }
                 PillButton { text: "导出 CSV"; onClicked: root.exportCurrent("csv") }
                 PillButton { text: "导出 JSON"; onClicked: root.exportCurrent("json") }
+
+                PillButton {
+                    text: "打开导出目录"
+                    enabled: root.lastExportPath !== ""
+                    onClicked: root.openLastExportDirectory()
+                }
             }
         }
 
@@ -98,6 +105,12 @@ Rectangle {
                 PillButton { text: "复制图片"; onClicked: root.copyImageCurrent() }
                 PillButton { text: "导出 PNG"; onClicked: root.exportCurrent("png") }
                 PillButton { text: "打开 PNG 目录"; visible: root.exportedPath !== ""; onClicked: pdfExtractionController.openExportDirectory(root.exportedPath) }
+
+                PillButton {
+                    text: "打开导出目录"
+                    enabled: root.lastExportPath !== ""
+                    onClicked: root.openLastExportDirectory()
+                }
             }
             PillButton {
                 text: "图数据提取（实验）"
@@ -167,9 +180,24 @@ Rectangle {
     function exportCurrent(fmt) {
         if(!root.element || !root.element.id)
             return
+
         var path = pdfExtractionController.exportElement(root.element.id, fmt)
-        root.exportedPath = path || ""
-        root.statusText = path ? ("已导出：" + path) : pdfExtractionController.statusText
+
+        if(path) {
+            root.lastExportPath = path
+            root.statusText = "已导出：" + path
+        } else {
+            root.statusText = pdfExtractionController.statusText
+        }
+    }
+
+    function openLastExportDirectory() {
+        if(root.lastExportPath === "")
+            return
+
+        root.statusText = pdfExtractionController.openExportDirectory(root.lastExportPath)
+            ? "已打开导出目录。"
+            : pdfExtractionController.statusText
     }
 
     function copyImageCurrent() {

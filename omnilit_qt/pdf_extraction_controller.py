@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QObject, Property, QUrl, Signal, Slot
-from PySide6.QtGui import QImage
+from PySide6.QtGui import QDesktopServices, QImage
 from PySide6.QtWidgets import QApplication
 
 from ._controller_support import _open_path
@@ -173,6 +173,54 @@ class PdfExtractionController(QObject):
             self.changed.emit()
             return False
 
+    @Slot(str, str, result=bool)
+    def loadIndexForPdf(self, record_id: str, pdf_path: str) -> bool:
+        try:
+            key = str(record_id or "").strip()
+            source = Path(str(pdf_path or "")).expanduser()
+
+            if not key:
+                self._status = "无法加载解析索引：缺少文献 ID。"
+                self.changed.emit()
+                return False
+
+            index = self._load_index_file(key)
+            if not index:
+                self._status = "还没有解析索引，请先解析 PDF。"
+                self.changed.emit()
+                return False
+
+            indexed_source_value = str(index.get("sourcePath") or "").strip()
+            if indexed_source_value:
+                indexed_source = Path(indexed_source_value).expanduser()
+
+                try:
+                    if source.exists() and indexed_source.exists():
+                        if source.resolve() != indexed_source.resolve():
+                            self._status = "解析索引对应的 PDF 与当前文献不一致，请重新解析。"
+                            self.changed.emit()
+                            return False
+                    elif str(source) != str(indexed_source):
+                        self._status = "解析索引对应的 PDF 与当前文献不一致，请重新解析。"
+                        self.changed.emit()
+                        return False
+                except OSError:
+                    if str(source) != str(indexed_source):
+                        self._status = "解析索引对应的 PDF 与当前文献不一致，请重新解析。"
+                        self.changed.emit()
+                        return False
+
+            self._pdf_paths[key] = str(source)
+            self._set_index(key, index)
+            self._status = "已加载解析索引。"
+            self.changed.emit()
+            return True
+
+        except Exception as exc:
+            self._status = f"加载解析索引失败：{exc}"
+            self.changed.emit()
+            return False
+
     @Slot(str, result="QVariantList")
     def elementsFor(self, record_id: str) -> list[dict[str, Any]]:
         key = str(record_id)
@@ -239,6 +287,37 @@ class PdfExtractionController(QObject):
             self._status = f"导出失败：{exc}"
             self.changed.emit()
             return ""
+
+    @Slot(str, result=bool)
+    def openExportDirectory(self, path: str) -> bool:
+        try:
+            target = Path(str(path or "")).expanduser()
+
+            if not str(target):
+                self._status = "还没有可打开的导出目录。"
+                self.changed.emit()
+                return False
+
+            # 如果传进来的是文件路径，例如 xxx.csv / xxx.json / xxx.png，则打开它所在目录
+            if target.exists() and target.is_file():
+                target = target.parent
+            elif target.suffix:
+                target = target.parent
+
+            if not target.exists():
+                self._status = "导出目录不存在。"
+                self.changed.emit()
+                return False
+
+            ok = QDesktopServices.openUrl(QUrl.fromLocalFile(str(target)))
+            self._status = f"已打开目录：{target}" if ok else f"无法打开目录：{target}"
+            self.changed.emit()
+            return bool(ok)
+
+        except Exception as exc:
+            self._status = f"打开导出目录失败：{exc}"
+            self.changed.emit()
+            return False
 
     @Slot(str, result=bool)
     def openExportDirectory(self, path: str) -> bool:

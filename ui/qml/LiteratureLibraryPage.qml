@@ -20,6 +20,7 @@ Item {
     property string readerRecordId: ""
     property string readerPdfPath: ""
     property string readerTitle: ""
+    property real readerLastZoom: 1.0
 
     readonly property var relevanceValues: ["all", "keyword_only", "loose", "balanced", "strict", "very_strict"]
     readonly property var statusValues: ["all", "downloaded", "no_candidate", "failed", "not_open_access", "not_pdf", "request_error"]
@@ -285,7 +286,7 @@ Item {
                                         text: "解析阅读"
                                         visible: !!modelData.localPdfPath
                                         enabled: !!modelData.localPdfPath
-                                        onClicked: root.openReader(modelData)
+                                        onClicked: root.openReader(index,modelData)
                                     }
                                     Text {
                                         Layout.fillWidth: true
@@ -461,11 +462,16 @@ Item {
         anchors.fill: parent
         anchors.margins: metrics.pageMargin
         visible: root.readerOpen
-        tourHost: root.tourHost
         recordId: root.readerRecordId
         pdfPath: root.readerPdfPath
         title: root.readerTitle
+        initialZoom: root.readerLastZoom
+
         onBackRequested: root.readerOpen = false
+
+        onZoomPersistRequested: function(value) {
+            root.readerLastZoom = value
+        }
     }
 
     function applyFilters() {
@@ -586,9 +592,16 @@ Item {
     function openReader(record) {
         if(!record || !record.localPdfPath)
             return
-        root.readerRecordId = record.recordId || ""
-        root.readerPdfPath = record.localPdfPath || ""
-        root.readerTitle = record.title || "解析阅读"
+
+        // 先同步左侧列表与详情状态，避免“按钮所在文献”和“当前选中文献”脱节
+        root.selectRecord(index, record)
+
+        var recordId = String(record.recordId || "")
+        var pdfPath = String(record.localPdfPath || "")
+
+        root.readerRecordId = recordId
+        root.readerPdfPath = pdfPath
+        root.readerTitle = String(record.title || "解析阅读")
         root.readerOpen = true
     }
     function registerTourTargets() {

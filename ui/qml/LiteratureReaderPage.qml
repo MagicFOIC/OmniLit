@@ -8,6 +8,7 @@ Item {
     property string recordId: ""
     property string pdfPath: ""
     property string title: ""
+    property real initialZoom: 1.0
     property real zoom: 1.0
     property bool showAnnotations: true
     property int renderRevision: 0
@@ -15,7 +16,9 @@ Item {
     property string operationStatus: ""
     property string activeOpenKey: ""
     property string exportedPath: ""
+
     signal backRequested()
+    signal zoomPersistRequested(real value)
 
     Motion { id: motion }
     Theme { id: theme }
@@ -28,7 +31,6 @@ Item {
     onPdfPathChanged: root.scheduleOpenRecord()
     onVisibleChanged: {
         if(visible) {
-            root.zoom = 1.0
             root.scheduleOpenRecord()
         }
     }
@@ -211,16 +213,21 @@ Item {
     function openRecordNow() {
         if(root.recordId === "" || root.pdfPath === "")
             return
+
         var openKey = root.recordId + "|" + root.pdfPath
+
         if(root.activeOpenKey === openKey && (pdfExtractionController.pageCount > 0 || pdfExtractionController.loading))
             return
+
         root.activeOpenKey = openKey
         root.currentPage = 0
-        root.zoom = 1.0
+        root.restoreZoom()
         root.exportedPath = ""
         root.operationStatus = ""
-        if(!pdfExtractionController.loadIndex(root.recordId))
+
+        if(!pdfExtractionController.loadIndexForPdf(root.recordId, root.pdfPath))
             pdfExtractionController.analyzeRecord(root.recordId, root.pdfPath)
+
         root.renderRevision += 1
     }
 
@@ -235,8 +242,14 @@ Item {
         root.operationStatus = path ? ("已导出到：" + path) : pdfExtractionController.statusText
     }
 
+    function restoreZoom() {
+        var value = Number(root.initialZoom || 1.25)
+        root.zoom = Math.max(0.6, Math.min(3.2, value))
+    }
+
     function adjustZoom(delta) {
         root.zoom = Math.max(0.6, Math.min(3.2, root.zoom + delta))
+        root.zoomPersistRequested(root.zoom)
         root.renderRevision += 1
     }
 
