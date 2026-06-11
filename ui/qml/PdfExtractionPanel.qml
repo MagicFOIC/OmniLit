@@ -6,12 +6,15 @@ Rectangle {
     id: root
 
     property var element: ({})
+    property string statusText: ""
+    property string allExportedPath: ""
+    property var exportedPathsByElement: ({})
     property string documentKey: ""
     property string feedbackText: ""
     property string lastExportPath: ""
 
     onDocumentKeyChanged: {
-        lastExportPath = ""
+        exportedPathsByElement = ({})
         feedbackText = ""
     }
 
@@ -230,6 +233,47 @@ Rectangle {
         return root.element.table.slice(0, 8)
     }
 
+    function currentElementId() {
+        return root.element && root.element.id ? String(root.element.id) : ""
+    }
+
+    function currentExportPath() {
+        var elementId = root.currentElementId()
+
+        if(elementId !== "" && root.exportedPathsByElement[elementId])
+            return root.exportedPathsByElement[elementId]
+
+        return root.allExportedPath || ""
+    }
+
+    function rememberCurrentExport(path) {
+        var elementId = root.currentElementId()
+
+        if(elementId === "" || !path)
+            return
+
+        var next = {}
+
+        for(var key in root.exportedPathsByElement)
+            next[key] = root.exportedPathsByElement[key]
+
+        next[elementId] = path
+        root.exportedPathsByElement = next
+    }
+
+    function openCurrentExportDirectory() {
+        var path = root.currentExportPath()
+
+        if(path === "") {
+            root.statusText = "还没有可打开的导出目录。"
+            return
+        }
+
+        root.statusText = pdfExtractionController.openExportDirectory(path)
+            ? "已打开导出目录。"
+            : pdfExtractionController.statusText
+    }
+
     function copyCurrent() {
         if (!root.element || !root.element.id)
             return
@@ -239,15 +283,16 @@ Rectangle {
     }
 
     function exportCurrent(fmt) {
-        if (!root.element || !root.element.id)
+        if(!root.element || !root.element.id)
             return
 
         var path = pdfExtractionController.exportElement(root.element.id, fmt)
-        if (path) {
-            root.lastExportPath = path
-            root.feedbackText = "已导出：" + path
+
+        if(path) {
+            root.rememberCurrentExport(path)
+            root.statusText = "已导出：" + path
         } else {
-            root.feedbackText = pdfExtractionController.statusText
+            root.statusText = pdfExtractionController.statusText
         }
     }
 

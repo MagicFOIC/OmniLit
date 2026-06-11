@@ -291,26 +291,33 @@ class PdfExtractionController(QObject):
     @Slot(str, result=bool)
     def openExportDirectory(self, path: str) -> bool:
         try:
-            raw = str(path or "").strip()
-            if not raw:
+            value = str(path or "").strip()
+
+            if not value:
                 self._status = "还没有可打开的导出目录。"
                 self.changed.emit()
                 return False
 
-            target = Path(raw).expanduser()
+            target = Path(value).expanduser()
 
-            # 传入可能是 csv/json/png 文件，也可能是导出目录。
-            directory = target if target.is_dir() else target.parent
+            # 如果传进来的是文件路径，例如 xxx.csv / xxx.json / xxx.png，则打开它所在目录。
+            if target.exists():
+                if target.is_file():
+                    target = target.parent
+            elif target.suffix:
+                target = target.parent
 
-            if not directory.exists():
+            if not target.exists():
                 self._status = "导出目录不存在。"
                 self.changed.emit()
                 return False
 
-            _open_path(directory)
-            self._status = f"已打开目录：{directory}"
+            _open_path(target)
+
+            self._status = f"已打开目录：{target}"
             self.changed.emit()
             return True
+
         except Exception as exc:
             self._status = f"打开导出目录失败：{exc}"
             self.changed.emit()

@@ -14,8 +14,8 @@ Item {
     property int renderRevision: 0
     property int currentPage: 0
     property string operationStatus: ""
+    property string allExportedPath: ""
     property string activeOpenKey: ""
-    property string exportedPath: ""
 
     signal backRequested()
     signal zoomPersistRequested(real value)
@@ -82,12 +82,6 @@ Item {
                 PillButton { text: "-"; onClicked: root.adjustZoom(-0.15) }
                 Text { text: Math.round(root.zoom * 100) + "%"; color: theme.textMuted; Layout.preferredWidth: 48; horizontalAlignment: Text.AlignHCenter }
                 PillButton { text: "+"; onClicked: root.adjustZoom(0.15) }
-                PillButton {
-                    text: "打开 PNG 目录"
-                    visible: root.exportedPath !== ""
-                    enabled: visible
-                    onClicked: pdfExtractionController.openExportDirectory(root.exportedPath)
-                }
                 PillButton { text: "重新解析"; enabled: !pdfExtractionController.loading; onClicked: root.reanalyze() }
                 PillButton { text: "导出全部"; onClicked: root.exportAll() }
             }
@@ -204,13 +198,11 @@ Item {
                 Layout.minimumWidth: 260
                 Layout.maximumWidth: 340
                 Layout.fillHeight: true
+
                 element: pdfExtractionController.selectedElement
                 documentKey: root.recordId + "|" + root.pdfPath
 
-                onLastExportPathChanged: {
-                    if (lastExportPath.length > 0)
-                        root.exportedPath = lastExportPath
-                }
+                allExportedPath: root.allExportedPath
             }
         }
 
@@ -235,6 +227,7 @@ Item {
         root.restoreZoom()
         root.exportedPath = ""
         root.operationStatus = ""
+        root.allExportedPath = ""
 
         if(!pdfExtractionController.loadIndexForPdf(root.recordId, root.pdfPath))
             pdfExtractionController.analyzeRecord(root.recordId, root.pdfPath)
@@ -244,12 +237,13 @@ Item {
 
     function reanalyze() {
         root.operationStatus = ""
+        root.allExportedPath = ""
         pdfExtractionController.analyzeRecord(root.recordId, root.pdfPath)
     }
 
     function exportAll() {
         var path = pdfExtractionController.exportElement("__all__", "dir")
-        root.exportedPath = path || ""
+        root.allExportedPath = path || ""
         root.operationStatus = path ? ("已导出到：" + path) : pdfExtractionController.statusText
     }
 
