@@ -155,8 +155,12 @@ class PreferencesController(QObject):
         if not value or not path.is_file():
             return ""
         stat = path.stat()
+        try:
+            digest = hashlib.sha1(path.read_bytes()).hexdigest()[:12]
+        except OSError:
+            digest = "unreadable"
         url = QUrl.fromLocalFile(str(path))
-        url.setQuery(f"v={stat.st_mtime_ns}-{stat.st_size}")
+        url.setQuery(f"v={stat.st_mtime_ns}-{stat.st_size}-{digest}")
         return url.toString()
 
     def _avatar_key(self) -> str:

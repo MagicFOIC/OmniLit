@@ -5,6 +5,7 @@ import QtQuick.Layouts
 Rectangle {
     id: root
     property var elements: []
+    property string selectedElementId: ""
     signal elementSelected(string elementId)
 
     color: theme.surface
@@ -35,14 +36,15 @@ Rectangle {
 
             delegate: Button {
                 id: itemButton
+                property bool selected: String(modelData.id || "") === root.selectedElementId
                 width: ListView.view.width
                 height: 42
                 hoverEnabled: true
                 onClicked: root.elementSelected(String(modelData.id || ""))
                 background: Rectangle {
                     radius: 7
-                    color: itemButton.hovered ? theme.navHover : "transparent"
-                    border.color: itemButton.hovered ? theme.borderStrong : "transparent"
+                    color: itemButton.selected ? theme.navSelected : itemButton.hovered ? theme.navHover : "transparent"
+                    border.color: itemButton.selected ? theme.accent : itemButton.hovered ? theme.borderStrong : "transparent"
                 }
                 contentItem: RowLayout {
                     spacing: 8
@@ -57,9 +59,10 @@ Rectangle {
                         Text {
                             Layout.fillWidth: true
                             text: (modelData.label || modelData.id || "Element") + " · p." + (Number(modelData.page || 0) + 1)
-                            color: theme.text
+                            color: itemButton.selected ? theme.accentStrong : theme.text
                             elide: Text.ElideRight
                             font.pixelSize: 12
+                            font.weight: itemButton.selected ? Font.DemiBold : Font.Normal
                         }
                         Text {
                             Layout.fillWidth: true

@@ -16,7 +16,7 @@ from .app_controller import AppController
 from .background_tasks import ManagedWorker, shutdown_workers
 from .i18n import LocaleController
 from .paths import AppPaths
-from .services import AccountStore, as_float, import_resource_module
+from .services import AccountStore, as_float, default_download_dir, import_resource_module, normalize_download_form_config
 
 
 LEVEL_ORDER: dict[str, int] = {
@@ -105,7 +105,7 @@ class LiteratureLibraryController(QObject):
         }
 
     def _output_root_from_settings(self, settings: dict[str, Any]) -> Path:
-        output_root = Path(str(settings.get("outputDir") or self.paths.data("Download"))).expanduser()
+        output_root = Path(str(settings.get("outputDir") or default_download_dir(self.paths, self.store))).expanduser()
         if not output_root.is_absolute():
             output_root = self.paths.data(output_root)
         return output_root
@@ -216,9 +216,10 @@ class LiteratureLibraryController(QObject):
     def _download_settings(self) -> dict[str, Any]:
         raw = self.store.setting("download_form_config", "")
         try:
-            return json.loads(raw) if raw else {}
+            settings = json.loads(raw) if raw else {}
         except json.JSONDecodeError:
             return {}
+        return normalize_download_form_config(self.paths, self.store, settings if isinstance(settings, dict) else {})
 
     def _current_keywords(self, settings: dict[str, Any], fallback_records: list[dict[str, Any]]) -> list[str]:
         text = str(settings.get("keywords") or "").strip()
@@ -439,7 +440,12 @@ class LiteratureLibraryController(QObject):
         record_id = self._record_identity(core, enriched)
         pdf_path = self._resolve_pdf_path(core, enriched, meta_path, validate=False)
         if "impact_factor_unknown" not in enriched and "impact_factor" not in enriched:
-            core.enrich_record_with_journal_metrics(enriched)
+            resolver = (
+                core.JournalMetricResolver(local_csv=config.journal_metric_csv, source="local_only")
+                if getattr(config, "journal_metric_csv", None)
+                else None
+            )
+            core.enrich_record_with_journal_metrics(enriched, resolver)
         abstract = str(enriched.get("abstract") or enriched.get("extracted_abstract") or "")
         extracted_abstract = str(enriched.get("extracted_abstract") or "")
         explicit_keywords = list(enriched.get("extracted_keywords") or [])
@@ -598,7 +604,7 @@ class LiteratureLibraryController(QObject):
     ) -> dict[str, Any]:
         size = self._file_size(path)
         return {
-            "path": str(path),
+            "path": self._display_path_text(path),
             "name": path.name,
             "size": size,
             "sizeText": self._format_bytes(size),
@@ -608,6 +614,26 @@ class LiteratureLibraryController(QObject):
             "recordId": record_id,
             "title": title,
         }
+
+    @staticmethod
+    def _display_path_text(path: Path) -> str:
+        if os.name != "nt":
+            return str(path)
+        text = str(path)
+        try:
+            import ctypes
+
+            get_short_path_name = ctypes.windll.kernel32.GetShortPathNameW
+            home = str(Path.home())
+            size = get_short_path_name(home, None, 0)
+            if size <= 0 or not text.casefold().startswith(home.casefold()):
+                return text
+            buffer = ctypes.create_unicode_buffer(size)
+            get_short_path_name(home, buffer, size)
+            short_home = buffer.value
+            return f"{short_home}{text[len(home):]}" if short_home else text
+        except Exception:
+            return text
 
     def _cleanup_summary_from_candidates(self, candidates: list[dict[str, Any]]) -> dict[str, Any]:
         reason_counts: dict[str, int] = {}

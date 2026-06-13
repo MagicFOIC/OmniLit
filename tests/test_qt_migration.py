@@ -10,7 +10,7 @@ import sys
 import tempfile
 import threading
 import unittest
-from contextlib import closing
+from contextlib import closing, redirect_stderr, redirect_stdout
 from datetime import date
 from pathlib import Path
 from unittest.mock import patch
@@ -37,7 +37,7 @@ from omnilit_qt.app import _center_window_frame_on_current_screen, _center_windo
 from omnilit_qt.background_tasks import ManagedWorker
 from omnilit_qt.date_utils import month_grid, parse_iso_date, shift_month
 from omnilit_qt.i18n import LocaleController, tr
-from omnilit_qt.paths import AppPaths, MIGRATION_MARKER, _macos_bundle_sibling
+from omnilit_qt.paths import AppPaths, _macos_bundle_sibling
 from omnilit_qt.secrets import PLAIN_PREFIX, protect_secret, unprotect_secret
 from omnilit_qt.services import AccountStore, PASSWORD_SCHEME, build_download_config, import_resource_module
 from omnilit_qt.support import DEFAULT_KEY_AUTO_PASSWORD, decrypt_api_key, encrypt_api_key, glossary_catalog, load_encrypted_key, write_encrypted_key
@@ -54,12 +54,25 @@ class AppPathsTests(unittest.TestCase):
             data = base / "data"
             resource = base / "resource"
             (legacy / "Download").mkdir(parents=True)
+            (legacy / "Download" / "library").mkdir(parents=True)
             (legacy / "Download" / "pdfs").mkdir(parents=True)
+            (legacy / "Download" / "library_previews").mkdir(parents=True)
             (legacy / "Translate").mkdir(parents=True)
+            (legacy / "Translate" / "glossary").mkdir(parents=True)
+            (legacy / "task_state").mkdir(parents=True)
+            (legacy / "ui").mkdir(parents=True)
             (legacy / "accounts.sqlite3").write_text("legacy-db", encoding="utf-8")
             (legacy / "Download" / "crawl_state.json").write_text("legacy-state", encoding="utf-8")
+            (legacy / "Download" / "metadata_battery.jsonl.bak").write_text("legacy-jsonl", encoding="utf-8")
+            (legacy / "Download" / "library_cache.json").write_text("legacy-cache", encoding="utf-8")
+            (legacy / "Download" / "journal_metrics.csv").write_text("journal_title,issn\nBatteries,2313-0105\n", encoding="utf-8")
+            (legacy / "Download" / "library" / "legacy.pdf").write_text("legacy-library", encoding="utf-8")
             (legacy / "Download" / "pdfs" / "legacy.pdf").write_text("legacy-pdf", encoding="utf-8")
+            (legacy / "Download" / "library_previews" / "legacy.png").write_text("legacy-preview", encoding="utf-8")
             (legacy / "Translate" / "APIKey.enc").write_text("legacy-key", encoding="utf-8")
+            (legacy / "Translate" / "glossary" / "custom.csv").write_text("source,target\nalpha,beta\n", encoding="utf-8")
+            (legacy / "task_state" / "download.json").write_text("legacy-task", encoding="utf-8")
+            (legacy / "ui" / "avatar-alice.jpg").write_text("legacy-avatar", encoding="utf-8")
             data.mkdir()
             (data / "accounts.sqlite3").write_text("existing-db", encoding="utf-8")
             (data / "Download" / "pdfs").mkdir(parents=True)
@@ -70,11 +83,32 @@ class AppPathsTests(unittest.TestCase):
 
             self.assertEqual((data / "accounts.sqlite3").read_text(encoding="utf-8"), "existing-db")
             self.assertEqual((data / "Download" / "crawl_state.json").read_text(encoding="utf-8"), "legacy-state")
+            self.assertEqual((data / "Download" / "metadata_battery.jsonl.bak").read_text(encoding="utf-8"), "legacy-jsonl")
+            self.assertEqual((data / "Download" / "library_cache.json").read_text(encoding="utf-8"), "legacy-cache")
+            self.assertEqual((data / "Download" / "journal_metrics.csv").read_text(encoding="utf-8"), "journal_title,issn\nBatteries,2313-0105\n")
+            self.assertEqual((data / "Download" / "library" / "legacy.pdf").read_text(encoding="utf-8"), "legacy-library")
             self.assertEqual((data / "Download" / "pdfs" / "legacy.pdf").read_text(encoding="utf-8"), "legacy-pdf")
             self.assertEqual((data / "Download" / "pdfs" / "keep.pdf").read_text(encoding="utf-8"), "existing-pdf")
+            self.assertEqual((data / "Download" / "library_previews" / "legacy.png").read_text(encoding="utf-8"), "legacy-preview")
+            self.assertEqual((data / "Translate" / "glossary" / "custom.csv").read_text(encoding="utf-8"), "source,target\nalpha,beta\n")
+            self.assertEqual((data / "task_state" / "download.json").read_text(encoding="utf-8"), "legacy-task")
+            self.assertEqual((data / "ui" / "avatar-alice.jpg").read_text(encoding="utf-8"), "legacy-avatar")
             self.assertIn("Download/crawl_state.json", copied)
-            self.assertTrue((data / MIGRATION_MARKER).exists())
+            self.assertIn("Download/metadata_battery.jsonl.bak", copied)
+            self.assertIn("Download/library_cache.json", copied)
+            self.assertIn("Download/journal_metrics.csv", copied)
+            self.assertIn("Download/library", copied)
+            self.assertIn("Translate/glossary", copied)
+            self.assertIn("task_state", copied)
+            self.assertIn("ui/avatar-alice.jpg", copied)
             self.assertEqual(paths.migrate_legacy_data(), [])
+
+    def test_source_run_uses_workspace_data_root_by_default(self) -> None:
+        with patch.dict("os.environ", {"OMNILIT_DATA_DIR": ""}):
+            paths = AppPaths.discover()
+            self.assertEqual(paths.resource_root, ROOT.resolve())
+            self.assertEqual(paths.data_root, (ROOT / "Workspace").resolve())
+            self.assertIn(ROOT.resolve(), paths.legacy_roots)
 
     def test_environment_override_has_priority(self) -> None:
         with tempfile.TemporaryDirectory() as temp, patch.dict("os.environ", {"OMNILIT_DATA_DIR": temp}):
@@ -86,6 +120,11 @@ class AppPathsTests(unittest.TestCase):
             paths = AppPaths(root / "resource", root / "data", ())
             paths.ensure_data_dirs()
             self.assertTrue(paths.data("Translate", "pdf").is_dir())
+            self.assertTrue(paths.data("Download", "library_previews").is_dir())
+            self.assertTrue(paths.data("Download", "library").is_dir())
+            self.assertTrue(paths.data("Literature", "extractions").is_dir())
+            self.assertTrue(paths.data("task_state").is_dir())
+            self.assertTrue(paths.data("ui").is_dir())
             self.assertFalse(paths.data("Translate", "out").exists())
 
     def test_macos_bundle_uses_app_sibling(self) -> None:
@@ -94,7 +133,11 @@ class AppPathsTests(unittest.TestCase):
 
     def test_writable_glossary_directory_keeps_custom_files(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
-            paths = AppPaths(ROOT, Path(temp), ())
+            root = Path(temp)
+            resource_glossary = root / "resource" / "Translate" / "glossary"
+            resource_glossary.mkdir(parents=True)
+            (resource_glossary / "00_general_academic.csv").write_text("source,target\npaper,论文\n", encoding="utf-8")
+            paths = AppPaths(root / "resource", root / "data", ())
             paths.ensure_data_dirs()
             custom = paths.glossary_dir / "custom.csv"
             custom.write_text("source,target\nalpha,阿尔法\n", encoding="utf-8")
@@ -1019,17 +1062,18 @@ class TranslationCoreTests(unittest.TestCase):
         segment = core.Segment("s1", 0, "body", "Preview source paragraph.", [], True)
         previews: list[dict[str, str]] = []
         with tempfile.TemporaryDirectory() as temp:
-            translations = core.translate_segments(
-                [segment],
-                core.CopyTranslator(),
-                core.TranslationCache(Path(temp) / "cache.json"),
-                context="",
-                target_lang="zh",
-                glossary_text="",
-                batch_size=1,
-                max_batch_chars=1000,
-                preview_callback=previews.append,
-            )
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                translations = core.translate_segments(
+                    [segment],
+                    core.CopyTranslator(),
+                    core.TranslationCache(Path(temp) / "cache.json"),
+                    context="",
+                    target_lang="zh",
+                    glossary_text="",
+                    batch_size=1,
+                    max_batch_chars=1000,
+                    preview_callback=previews.append,
+                )
         self.assertGreaterEqual(len(previews), 2)
         self.assertEqual(previews[-1], translations)
         self.assertIn("Preview source paragraph.", core.translation_preview_text([segment], translations))
@@ -1075,22 +1119,23 @@ class TranslationCoreTests(unittest.TestCase):
             page.insert_text((72, 72), "A compact layout-only translation check.")
             document.save(input_dir / "SAMPLE.PDF")
             document.close()
-            self.assertEqual(
-                core.main(
-                    [
-                        "--input",
-                        str(input_dir),
-                        "--output",
-                        str(output_dir),
-                        "--translator",
-                        "copy",
-                        "--max-pages",
-                        "1",
-                        "--no-summary-page",
-                    ]
-                ),
-                0,
-            )
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                self.assertEqual(
+                    core.main(
+                        [
+                            "--input",
+                            str(input_dir),
+                            "--output",
+                            str(output_dir),
+                            "--translator",
+                            "copy",
+                            "--max-pages",
+                            "1",
+                            "--no-summary-page",
+                        ]
+                    ),
+                    0,
+                )
             outputs = list((output_dir / "SAMPLE").glob("*.pdf"))
             self.assertEqual(len(outputs), 1)
             self.assertTrue(outputs[0].with_suffix(".report.json").exists())
@@ -1745,6 +1790,44 @@ class QtOnlyTests(unittest.TestCase):
         self.assertGreaterEqual(workspace.count("visible: updateController.available"), 1)
         self.assertIn("attention: updateController.available", drawer_home)
 
+    def test_system_settings_drawer_manages_login_guide_preferences(self) -> None:
+        workspace = (ROOT / "ui" / "qml" / "Workspace.qml").read_text(encoding="utf-8")
+        vector_icon = (ROOT / "ui" / "qml" / "VectorIcon.qml").read_text(encoding="utf-8")
+        self.assertIn("id: systemSettingsEntry", workspace)
+        self.assertIn('iconName: "settings"', workspace)
+        self.assertIn('label: i18n.text("system_settings")', workspace)
+        self.assertIn("onClicked: root.openSystemSettings()", workspace)
+        self.assertIn("function openSystemSettings()", workspace)
+        self.assertIn("root.drawerPage = 6", workspace)
+        self.assertIn("id: systemPromptSettingsCard", workspace)
+        self.assertIn('root.registerTourTarget("system.prompt_settings", systemPromptSettingsCard)', workspace)
+        self.assertIn("onboardingController.chooseWorkdir()", workspace)
+        self.assertIn("onboardingController.saveWorkdirPreference(root.systemSettingsWorkdirDraft)", workspace)
+        self.assertIn("onboardingController.setShowEveryLogin(checked)", workspace)
+        self.assertIn("onboardingController.startTour()", workspace)
+        self.assertIn('text: i18n.text("show_guide_every_open")', workspace)
+        self.assertIn('if (iconName === "settings")', vector_icon)
+
+    def test_onboarding_targets_exist_for_extension_drawer_order(self) -> None:
+        workspace = (ROOT / "ui" / "qml" / "Workspace.qml").read_text(encoding="utf-8")
+        controller = (ROOT / "omnilit_qt" / "onboarding_controller.py").read_text(encoding="utf-8")
+        self.assertIn('root.registerTourTarget("account.language", languageEntry)', workspace)
+        self.assertIn('root.registerTourTarget("account.appearance", appearanceEntry)', workspace)
+        self.assertIn('root.registerTourTarget("account.update", updateEntry)', workspace)
+        self.assertIn('root.registerTourTarget("system.prompt_settings", systemPromptSettingsCard)', workspace)
+        for target_id in (
+            '"targetId": "nav.download"',
+            '"targetId": "nav.library"',
+            '"targetId": "nav.extract"',
+            '"targetId": "nav.translate"',
+            '"targetId": "account.avatar"',
+            '"targetId": "account.language"',
+            '"targetId": "account.appearance"',
+            '"targetId": "account.update"',
+            '"targetId": "system.prompt_settings"',
+        ):
+            self.assertIn(target_id, controller)
+
     def test_drawer_menu_icons_are_crisp_and_language_icon_is_distinct(self) -> None:
         qml_dir = ROOT / "ui" / "qml"
         menu_item = (qml_dir / "DrawerMenuItem.qml").read_text(encoding="utf-8")
@@ -1804,7 +1887,7 @@ class QtOnlyTests(unittest.TestCase):
         self.assertGreaterEqual(workspace.count("cache: false") + avatar.count("cache: false") + background.count("cache: false"), 2)
         self.assertGreaterEqual(workspace.count("smooth: true") + avatar.count("smooth: true") + background.count("smooth: true"), 2)
         self.assertGreaterEqual(workspace.count("mipmap: true") + avatar.count("mipmap: true") + background.count("mipmap: true"), 2)
-        self.assertIn('url.setQuery(f"v={stat.st_mtime_ns}-{stat.st_size}")', controller)
+        self.assertIn('url.setQuery(f"v={stat.st_mtime_ns}-{stat.st_size}-{digest}")', controller)
 
     def test_night_theme_palette_and_rounded_avatar_status_are_wired(self) -> None:
         qml_dir = ROOT / "ui" / "qml"

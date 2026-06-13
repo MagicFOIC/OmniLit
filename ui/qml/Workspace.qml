@@ -7,7 +7,17 @@ Item {
     property int pageIndex: 0
     property int drawerPage: 0
     property string draftAvatarStatus: ""
+    property string systemSettingsWorkdirDraft: ""
+    property string systemSettingsMessage: ""
+    property bool systemSettingsMessageIsError: false
     property var tourTargets: ({})
+    onDrawerPageChanged: {
+        if(drawerPage === 6) {
+            root.systemSettingsWorkdirDraft = onboardingController.workdir
+            root.systemSettingsMessage = ""
+            root.systemSettingsMessageIsError = false
+        }
+    }
     readonly property bool sidebarExpanded: preferencesController.sidebarExpanded
     property int sidebarWidth: sidebarExpanded ? metrics.sidebarExpandedWidth : metrics.sidebarCollapsedWidth
     Motion { id: motion }
@@ -249,7 +259,7 @@ Item {
         parent: Overlay.overlay
         x: root.sidebarWidth
         y: 0
-        width: Math.min(root.drawerPage === 1 ? 920 : 380, root.width - root.sidebarWidth)
+        width: Math.min(root.drawerPage === 1 ? 920 : (root.drawerPage === 6 ? 560 : 380), root.width - root.sidebarWidth)
         height: root.height
         modal: true
         focus: true
@@ -356,6 +366,8 @@ Item {
                         iconName: "language"
                         label: i18n.text("interface_language")
                         detail: i18n.text("language_detail")
+                        Component.onCompleted: root.registerTourTarget("account.language", languageEntry)
+                        Component.onDestruction: root.unregisterTourTarget("account.language", languageEntry)
                         onClicked: root.drawerPage = 5
                     }
 
@@ -367,6 +379,8 @@ Item {
                         iconName: "appearance"
                         label: i18n.text("appearance")
                         detail: i18n.text("appearance_detail")
+                        Component.onCompleted: root.registerTourTarget("account.appearance", appearanceEntry)
+                        Component.onDestruction: root.unregisterTourTarget("account.appearance", appearanceEntry)
                         onClicked: root.drawerPage = 1
                     }
 
@@ -379,7 +393,20 @@ Item {
                         label: i18n.text("update_management")
                         detail: updateController.hasCheckStatus ? updateController.statusText : i18n.text("update_detail")
                         attention: updateController.available
+                        Component.onCompleted: root.registerTourTarget("account.update", updateEntry)
+                        Component.onDestruction: root.unregisterTourTarget("account.update", updateEntry)
                         onClicked: root.drawerPage = 2
+                    }
+
+                    DrawerMenuItem {
+                        id: systemSettingsEntry
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 14
+                        Layout.rightMargin: 14
+                        iconName: "settings"
+                        label: i18n.text("system_settings")
+                        detail: i18n.text("system_settings_detail")
+                        onClicked: root.openSystemSettings()
                     }
 
                     Item { Layout.preferredHeight: 2 }
@@ -849,6 +876,126 @@ Item {
                 }
                 Item { Layout.fillHeight: true }
             }
+
+            ScrollView {
+                contentWidth: availableWidth
+                ColumnLayout {
+                    width: accountDrawer.availableWidth
+                    spacing: 12
+
+                    DrawerPageHeader {
+                        title: i18n.text("system_settings")
+                        detail: i18n.text("system_settings_detail")
+                        onBack: root.drawerPage = 0
+                    }
+
+                    Card {
+                        id: systemPromptSettingsCard
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 14
+                        Layout.rightMargin: 14
+                        implicitHeight: systemPromptSettingsContent.implicitHeight + 32
+                        Component.onCompleted: root.registerTourTarget("system.prompt_settings", systemPromptSettingsCard)
+                        Component.onDestruction: root.unregisterTourTarget("system.prompt_settings", systemPromptSettingsCard)
+                        ColumnLayout {
+                            id: systemPromptSettingsContent
+                            anchors.fill: parent
+                            anchors.margins: 16
+                            spacing: 12
+
+                            Text {
+                                Layout.fillWidth: true
+                                text: i18n.text("login_prompt_settings")
+                                color: theme.text
+                                font.pixelSize: theme.baseFontSize + 3
+                                font.weight: Font.Bold
+                            }
+                            Text {
+                                Layout.fillWidth: true
+                                text: i18n.text("login_prompt_settings_detail")
+                                color: theme.textMuted
+                                font.pixelSize: Math.max(11, theme.baseFontSize - 1)
+                                wrapMode: Text.WordWrap
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                text: i18n.text("workspace_folder")
+                                color: theme.text
+                                font.pixelSize: theme.baseFontSize
+                                font.weight: Font.DemiBold
+                            }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 8
+                                TextField {
+                                    id: systemWorkdirField
+                                    Layout.fillWidth: true
+                                    text: root.systemSettingsWorkdirDraft
+                                    placeholderText: i18n.text("onboarding_workdir_placeholder")
+                                    onTextChanged: {
+                                        root.systemSettingsWorkdirDraft = text
+                                        root.systemSettingsMessage = ""
+                                    }
+                                }
+                                PillButton {
+                                    text: i18n.text("choose")
+                                    onClicked: {
+                                        const selected = onboardingController.chooseWorkdir()
+                                        if(selected)
+                                            root.systemSettingsWorkdirDraft = selected
+                                    }
+                                }
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 8
+                                ModernCheckBox {
+                                    text: i18n.text("show_guide_every_open")
+                                    checked: onboardingController.showEveryLogin
+                                    onToggled: onboardingController.setShowEveryLogin(checked)
+                                }
+                                Item { Layout.fillWidth: true }
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                visible: root.systemSettingsMessage.length > 0
+                                text: root.systemSettingsMessage
+                                color: root.systemSettingsMessageIsError ? theme.error : theme.success
+                                font.pixelSize: Math.max(11, theme.baseFontSize - 1)
+                                wrapMode: Text.WordWrap
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 8
+                                PillButton {
+                                    text: i18n.text("restart_onboarding")
+                                    onClicked: onboardingController.startTour()
+                                }
+                                Item { Layout.fillWidth: true }
+                                PillButton {
+                                    text: i18n.text("save_workspace_folder")
+                                    primary: true
+                                    onClicked: {
+                                        if(onboardingController.saveWorkdirPreference(root.systemSettingsWorkdirDraft)) {
+                                            root.systemSettingsWorkdirDraft = onboardingController.workdir
+                                            root.systemSettingsMessage = i18n.text("workspace_folder_saved")
+                                            root.systemSettingsMessageIsError = false
+                                        } else {
+                                            root.systemSettingsMessage = i18n.text("onboarding_workdir_invalid")
+                                            root.systemSettingsMessageIsError = true
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Item { Layout.fillHeight: true }
+                }
+            }
         }
     }
 
@@ -886,6 +1033,12 @@ Item {
     }
     function customStatuses() {
         return preferencesController.avatarStatusOptions.filter(item => item.custom)
+    }
+    function openSystemSettings() {
+        root.systemSettingsWorkdirDraft = onboardingController.workdir
+        root.systemSettingsMessage = ""
+        root.systemSettingsMessageIsError = false
+        root.drawerPage = 6
     }
     function tourTargetForNavLabel(label) {
         if(label === "nav_download")

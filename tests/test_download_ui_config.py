@@ -58,6 +58,22 @@ class DownloadUiConfigTests(unittest.TestCase):
             self.assertEqual(config.journal_metric_source, "local_then_openalex")
             self.assertIsNone(config.journal_metric_csv)
 
+    def test_build_download_config_uses_metrics_csv_from_output_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            output_dir = Path(temp) / "data" / "Download"
+            output_dir.mkdir(parents=True)
+            metrics = output_dir / "journal_metrics.csv"
+            metrics.write_text("journal_title,issn\nBatteries,2313-0105\n", encoding="utf-8")
+            paths = AppPaths(ROOT, Path(temp) / "data", ROOT)
+            _core, config = build_download_config(
+                paths,
+                {},
+                lambda: False,
+                lambda _stats, _message: None,
+            )
+
+            self.assertEqual(config.journal_metric_csv.resolve(), metrics.resolve())
+
     def test_build_download_config_treats_empty_selected_journals_as_none(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             paths = AppPaths(ROOT, Path(temp) / "data", ROOT)
@@ -171,7 +187,7 @@ class DownloadUiConfigTests(unittest.TestCase):
         self.assertIn("enabled: !root.discoveryModeActive", qml)
         self.assertIn("readonly property bool discoveryModeActive: filterStrategy.currentIndex === 1", qml)
         self.assertIn('text: i18n.text("discovery_mode_active_tip")', qml)
-        self.assertIn('ToolTip.text: i18n.text("discovery_mode_tip")', qml)
+        self.assertIn('text: i18n.text("discovery_mode_tip")', qml)
 
     def test_download_controller_tracks_impact_metric_fields_and_stats(self) -> None:
         for field in ("includeUnknownImpactFactor", "journalMetricSource", "journalMetricCsv"):

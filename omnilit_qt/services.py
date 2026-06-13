@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib
+import json
 import secrets
 import sqlite3
 import sys
@@ -16,6 +17,8 @@ from datetime import date
 PASSWORD_SCHEME = "pbkdf2_sha256"
 PASSWORD_ITERATIONS = 310_000
 LEGACY_TK_PASSWORD_ITERATIONS = 260_000
+WORKDIR_SETTING = "onboarding/workdir"
+DOWNLOAD_FORM_SETTING = "download_form_config"
 
 
 def as_bool(value: Any, default: bool = False) -> bool:
@@ -61,6 +64,64 @@ def import_resource_module(paths: AppPaths, folder: str, module_name: str):
     if str(module_dir) not in sys.path:
         sys.path.insert(0, str(module_dir))
     return importlib.import_module(module_name)
+
+
+def configured_workdir(paths: AppPaths, store: "AccountStore") -> Path:
+    raw = store.setting(WORKDIR_SETTING, "").strip()
+    if not raw:
+        return paths.data_root
+    candidate = Path(raw).expanduser()
+    if not candidate.is_absolute():
+        candidate = paths.data_root / candidate
+    return candidate.resolve()
+
+
+def workdir_data(paths: AppPaths, store: "AccountStore", *parts: str) -> Path:
+    return configured_workdir(paths, store).joinpath(*parts)
+
+
+def default_download_dir(paths: AppPaths, store: "AccountStore") -> Path:
+    return workdir_data(paths, store, "Download")
+
+
+def _resolved_config_path(paths: AppPaths, value: Any) -> Path:
+    path = Path(str(value or "")).expanduser()
+    if not path.is_absolute():
+        path = paths.data(path)
+    return path.resolve()
+
+
+def is_legacy_default_download_dir(paths: AppPaths, value: Any) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return True
+    try:
+        candidate = _resolved_config_path(paths, text)
+    except OSError:
+        return False
+    defaults = {
+        paths.resource("Download").resolve(),
+        paths.data("Download").resolve(),
+    }
+    return candidate in defaults
+
+
+def normalize_download_form_config(paths: AppPaths, store: "AccountStore", settings: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(settings or {})
+    if is_legacy_default_download_dir(paths, normalized.get("outputDir")):
+        normalized["outputDir"] = str(default_download_dir(paths, store))
+    return normalized
+
+
+def update_download_form_output_dir(paths: AppPaths, store: "AccountStore") -> None:
+    try:
+        settings = json.loads(store.setting(DOWNLOAD_FORM_SETTING, "{}"))
+    except (TypeError, json.JSONDecodeError):
+        settings = {}
+    if not isinstance(settings, dict):
+        settings = {}
+    settings["outputDir"] = str(default_download_dir(paths, store))
+    store.set_setting(DOWNLOAD_FORM_SETTING, json.dumps(settings, ensure_ascii=False, sort_keys=True))
 
 
 class AccountStore:
@@ -245,7 +306,11 @@ def build_download_config(paths: AppPaths, raw: dict[str, Any], stop_callback, p
     journal_whitelist_only = as_bool(raw.get("journalWhitelistOnly"))
     include_unknown_impact_factor = as_bool(raw.get("includeUnknownImpactFactor"), True)
     journal_metric_source = str(raw.get("journalMetricSource") or "local_then_openalex").strip()
-    journal_metric_csv = Path(str(raw.get("journalMetricCsv"))).expanduser() if raw.get("journalMetricCsv") else None
+    if raw.get("journalMetricCsv"):
+        journal_metric_csv = Path(str(raw.get("journalMetricCsv"))).expanduser()
+    else:
+        default_metric_csv = output_root / "journal_metrics.csv"
+        journal_metric_csv = default_metric_csv if default_metric_csv.exists() else None
     resume = as_bool(raw.get("resume"), True)
     fast_forward_existing_pages = as_bool(raw.get("fastForwardExistingPages"), True)
     if discovery_mode:

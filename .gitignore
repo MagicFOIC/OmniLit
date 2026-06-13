@@ -15,6 +15,8 @@ apply_**update.bat
 apply**_update.log
 
 Download/library/
+Download/library_cache.json
+Download/journal_metrics.csv
 Download/library_previews/
 Download/library_thumbnails/
 Download/*.jsonl
@@ -33,10 +35,39 @@ Literature/extractions/
 
 Translate/pdf/
 Translate/out/
+Translate/glossary/
 Translate/*.pdf
 ui/avatar-*
 
+Workspace/accounts.sqlite3
+Workspace/Download/library/
+Workspace/Download/library_cache.json
+Workspace/Download/library_cache.json.legacy-*
+Workspace/Download/journal_metrics.csv
+Workspace/Download/journal_metrics.csv.legacy-*
+Workspace/Download/library_previews/
+Workspace/Download/library_thumbnails/
+Workspace/Download/*.jsonl
+Workspace/Download/*.jsonl.bak
+Workspace/Download/*_preview_cache.json
+Workspace/Download/crawl_state*.json
+Workspace/Download/crawl_state/
+Workspace/Download/pdf_cache/
+Workspace/Download/**/*.part
+Workspace/Download/**/*.tmp
+Workspace/Download/pdfs/
+Workspace/Download/gui_settings.json
+Workspace/Literature/extractions/
+Workspace/task_state/
+Workspace/Translate/APIKey.enc
+Workspace/Translate/UserAPIKey.enc
+Workspace/Translate/glossary/
+Workspace/Translate/glossary.legacy-*/
+Workspace/Translate/pdf/
+Workspace/Translate/out/
+Workspace/Translate/*.pdf
+Workspace/ui/avatar-*
+Workspace/updates/
+
 qml_preview_*.png
 smoke_exe/
-.omnilit-data-migrated-v2
-

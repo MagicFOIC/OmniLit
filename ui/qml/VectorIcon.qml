@@ -35,6 +35,7 @@ Item {
         if (iconName === "appearance") return "M12 3 C7 3 3 7 3 12 C3 17 7 21 12 21 C14 21 15 19 13 18 C12 17 13 15 15 15 L17 15 C19 15 21 13 21 11 C21 7 17 3 12 3 M7 11 L7 11 M9 7 L9 7 M13 6 L13 6 M17 9 L17 9"
         if (iconName === "language") return "M12 3 A9 9 0 1 0 12 21 A9 9 0 1 0 12 3 M3 12 L21 12 M12 3 C15 7 15 17 12 21 M12 3 C9 7 9 17 12 21"
         if (iconName === "update") return "M19 8 L19 4 M19 8 L15 8 M19 8 A8 8 0 1 0 20 13"
+        if (iconName === "settings") return "M12 8 A4 4 0 1 0 12 16 A4 4 0 1 0 12 8 M12 3 L12 5 M12 19 L12 21 M4.2 7.5 L5.9 8.5 M18.1 15.5 L19.8 16.5 M4.2 16.5 L5.9 15.5 M18.1 8.5 L19.8 7.5 M3 12 L5 12 M19 12 L21 12"
         if (iconName === "sidebar-expand") return "M5 4 L19 4 L19 20 L5 20 Z M10 4 L10 20 M13 9 L16 12 L13 15"
         if (iconName === "sidebar-collapse") return "M5 4 L19 4 L19 20 L5 20 Z M10 4 L10 20 M16 9 L13 12 L16 15"
         if (iconName === "calendar") return "M5 4 L19 4 L19 20 L5 20 Z M8 2 L8 6 M16 2 L16 6 M5 9 L19 9"

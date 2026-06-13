@@ -7,10 +7,7 @@ from PySide6.QtWidgets import QFileDialog
 
 from .app_controller import AppController
 from .paths import AppPaths
-from .services import AccountStore, as_bool
-
-
-WORKDIR_SETTING = "onboarding/workdir"
+from .services import AccountStore, WORKDIR_SETTING, as_bool, update_download_form_output_dir
 SHOW_EVERY_LOGIN_SETTING = "onboarding/show_every_login"
 WORKDIR_SUBDIRS = ("Download", "Translate", "Extract", "Library", "Cache")
 
@@ -55,20 +52,20 @@ class OnboardingController(QObject):
                 "preferPlacement": "right",
             },
             {
-                "id": "nav.translate",
-                "titleKey": "onboarding_translate_title",
-                "bodyKey": "onboarding_translate_body",
-                "targetId": "nav.translate",
-                "pageIndex": 2,
-                "preferPlacement": "right",
-            },
-            {
                 "id": "nav.extract",
                 "titleKey": "onboarding_extract_title",
                 "bodyKey": "onboarding_extract_body",
                 "targetId": "nav.extract",
                 "pageIndex": 1,
                 "preferPlacement": "left",
+            },
+            {
+                "id": "nav.translate",
+                "titleKey": "onboarding_translate_title",
+                "bodyKey": "onboarding_translate_body",
+                "targetId": "nav.translate",
+                "pageIndex": 2,
+                "preferPlacement": "right",
             },
             {
                 "id": "account.avatar",
@@ -79,21 +76,39 @@ class OnboardingController(QObject):
                 "preferPlacement": "right",
             },
             {
-                "id": "appearance.panel",
-                "titleKey": "onboarding_appearance_title",
-                "bodyKey": "onboarding_appearance_body",
-                "targetId": "appearance.panel",
+                "id": "account.language",
+                "titleKey": "onboarding_language_title",
+                "bodyKey": "onboarding_language_body",
+                "targetId": "account.language",
                 "pageIndex": -1,
-                "drawerPage": 1,
+                "drawerPage": 0,
                 "preferPlacement": "left",
             },
             {
-                "id": "update.panel",
+                "id": "account.appearance",
+                "titleKey": "onboarding_appearance_title",
+                "bodyKey": "onboarding_appearance_body",
+                "targetId": "account.appearance",
+                "pageIndex": -1,
+                "drawerPage": 0,
+                "preferPlacement": "left",
+            },
+            {
+                "id": "account.update",
                 "titleKey": "onboarding_update_title",
                 "bodyKey": "onboarding_update_body",
-                "targetId": "update.panel",
+                "targetId": "account.update",
                 "pageIndex": -1,
-                "drawerPage": 2,
+                "drawerPage": 0,
+                "preferPlacement": "left",
+            },
+            {
+                "id": "system.settings",
+                "titleKey": "onboarding_system_settings_title",
+                "bodyKey": "onboarding_system_settings_body",
+                "targetId": "system.prompt_settings",
+                "pageIndex": -1,
+                "drawerPage": 6,
                 "preferPlacement": "left",
             },
         ]
@@ -105,7 +120,7 @@ class OnboardingController(QObject):
         return f"onboarding/last_version/{username or self._username}"
 
     def _default_workdir(self) -> Path:
-        return self.paths.data_root / "Workspace"
+        return self.paths.data_root
 
     def _normalize_workdir(self, path: str) -> Path:
         candidate = Path(str(path or "").strip()).expanduser()
@@ -192,8 +207,7 @@ class OnboardingController(QObject):
         initial_dir = self._workdir or str(self._default_workdir())
         return str(QFileDialog.getExistingDirectory(None, "OmniLit Workspace", initial_dir) or "")
 
-    @Slot(str, result=bool)
-    def setWorkdir(self, path: str) -> bool:
+    def _save_workdir(self, path: str, *, continue_tour: bool) -> bool:
         if not str(path or "").strip():
             return False
         resolved = self._normalize_workdir(path)
@@ -202,11 +216,20 @@ class OnboardingController(QObject):
         self._workdir = str(resolved)
         self._needs_workdir = False
         self.store.set_setting(WORKDIR_SETTING, self._workdir)
-        if self._should_show_for(self._username):
+        update_download_form_output_dir(self.paths, self.store)
+        if continue_tour and self._should_show_for(self._username):
             self.startTour()
         else:
             self._emit()
         return True
+
+    @Slot(str, result=bool)
+    def setWorkdir(self, path: str) -> bool:
+        return self._save_workdir(path, continue_tour=True)
+
+    @Slot(str, result=bool)
+    def saveWorkdirPreference(self, path: str) -> bool:
+        return self._save_workdir(path, continue_tour=False)
 
     @Slot(result=bool)
     def useDefaultWorkdir(self) -> bool:

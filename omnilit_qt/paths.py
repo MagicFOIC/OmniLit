@@ -8,18 +8,29 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-MIGRATION_MARKER = ".omnilit-data-migrated-v2"
 MIGRATION_ITEMS = (
     "accounts.sqlite3",
     "Download/crawl_state.json",
     "Download/gui_settings.json",
-    "Download/metadata_battery.jsonl",
+    "Download/metadata_*.jsonl",
+    "Download/metadata_*.jsonl.bak",
+    "Download/library_cache.json",
+    "Download/journal_metrics.csv",
+    "Download/library",
     "Download/pdfs",
+    "Download/library_previews",
+    "Download/library_thumbnails",
+    "Download/pdf_cache",
+    "Download/crawl_state",
     "Translate/pdf",
     "Translate/out",
     "Translate/APIKey.enc",
     "Translate/UserAPIKey.enc",
     "Translate/glossary",
+    "Literature/extractions",
+    "task_state",
+    "updates",
+    "ui/avatar-*",
 )
 
 
@@ -42,9 +53,10 @@ def _program_data_root() -> Path:
     if override:
         return Path(override).expanduser().resolve()
     if not getattr(sys, "frozen", False):
-        return _source_root()
+        return _source_root() / "Workspace"
     executable = Path(sys.executable).resolve()
-    return _macos_bundle_sibling(executable) if sys.platform == "darwin" else executable.parent
+    app_root = _macos_bundle_sibling(executable) if sys.platform == "darwin" else executable.parent
+    return app_root / "Workspace"
 
 
 def _old_qt_data_root() -> Path | None:
@@ -105,6 +117,20 @@ def _sync_glossary_defaults(resource_glossary: Path, writable_glossary: Path) ->
                 writer.writerow([source, target])
 
 
+def _migration_sources(legacy_root: Path) -> tuple[Path, ...]:
+    sources: list[Path] = []
+    seen: set[Path] = set()
+    for relative in MIGRATION_ITEMS:
+        matches = sorted(legacy_root.glob(relative)) if any(char in relative for char in "*?[") else [legacy_root / relative]
+        for source in matches:
+            key = source.resolve()
+            if key in seen:
+                continue
+            seen.add(key)
+            sources.append(source)
+    return tuple(sources)
+
+
 @dataclass(frozen=True)
 class AppPaths:
     """集中管理只读资源、可写数据和旧版迁移来源。"""
@@ -145,7 +171,21 @@ class AppPaths:
 
     def ensure_data_dirs(self) -> None:
         """创建运行目录并补齐内置术语表。参数：无。返回值：无。"""
-        for relative in ("Download", "Download/pdfs", "Translate", "Translate/pdf", "Translate/glossary", "updates"):
+        for relative in (
+            "Download",
+            "Download/library",
+            "Download/pdfs",
+            "Download/library_previews",
+            "Download/library_thumbnails",
+            "Literature",
+            "Literature/extractions",
+            "Translate",
+            "Translate/pdf",
+            "Translate/glossary",
+            "task_state",
+            "updates",
+            "ui",
+        ):
             self.data(relative).mkdir(parents=True, exist_ok=True)
         resource_glossary = self.resource("Translate", "glossary")
         if resource_glossary != self.glossary_dir and resource_glossary.exists():
@@ -155,16 +195,12 @@ class AppPaths:
     def migrate_legacy_data(self) -> list[str]:
         """从旧目录补齐缺失数据。参数：无。返回值：已复制的相对路径列表。"""
         self.data_root.mkdir(parents=True, exist_ok=True)
-        marker = self.data(MIGRATION_MARKER)
-        if marker.exists():
-            self.ensure_data_dirs()
-            return []
         copied: list[str] = []
         skipped: list[str] = []
         # 新目录拥有优先级；旧目录只补缺，不覆盖用户已经在项目目录保存的数据。
         for legacy_root in self.legacy_roots:
-            for relative in MIGRATION_ITEMS:
-                source = legacy_root / relative
+            for source in _migration_sources(legacy_root):
+                relative = source.relative_to(legacy_root).as_posix()
                 target = self.data(relative)
                 if not source.exists():
                     continue
@@ -182,10 +218,6 @@ class AppPaths:
                     copied.append(relative)
                 else:
                     skipped.append(relative)
-        marker.write_text(
-            "\n".join([*[f"copied:{item}" for item in copied], *[f"kept:{item}" for item in skipped]]) + "\n",
-            encoding="utf-8",
-        )
         self.ensure_data_dirs()
         return list(dict.fromkeys(copied))
 

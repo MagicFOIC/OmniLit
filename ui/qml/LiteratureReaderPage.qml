@@ -4,48 +4,85 @@ import QtQuick.Layouts
 
 Item {
     id: root
-    property var tourHost: null
+
     property string recordId: ""
     property string pdfPath: ""
     property string title: ""
-    property real initialZoom: 1.0
     property real zoom: 1.0
+    property real initialZoom: 1.0
+    property real fitWidthZoom: 1.0
+    property real effectiveZoom: Math.max(0.1, root.fitWidthZoom * root.zoom)
     property bool showAnnotations: true
     property int renderRevision: 0
     property int currentPage: 0
     property string operationStatus: ""
-    property string allExportedPath: ""
     property string activeOpenKey: ""
+    property string lastExportPath: ""
+    property string allExportedPath: ""
+    property var elementExportPaths: ({})
+    property var elementFeedbackTexts: ({})
+    property string selectedEngine: "auto"
+    property bool deferPageRendering: false
+    readonly property var analysisModes: [
+        { engine: "auto", label: "自动解析（推荐）" },
+        { engine: "fast", label: "快速解析（PyMuPDF）" },
+        { engine: "mineru", label: "深度解析（MinerU）" },
+        { engine: "paddleocr_vl", label: "高精度解析（PaddleOCR-VL）" },
+        { engine: "hybrid", label: "混合解析（PaddleOCR-VL + MinerU fallback）" }
+    ]
 
     signal backRequested()
-    signal zoomPersistRequested(real value)
+    signal zoomPersistRequested(real zoom)
 
     Motion { id: motion }
     Theme { id: theme }
     LayoutMetrics { id: metrics; viewportWidth: root.width; viewportHeight: root.height }
-    Timer { id: openRecordTimer; interval: 0; repeat: false; onTriggered: root.openRecordNow() }
 
-    Component.onCompleted: { root.scheduleOpenRecord(); root.registerTourTargets() }
-    Component.onDestruction: root.unregisterTourTargets()
-    onRecordIdChanged: root.scheduleOpenRecord()
-    onPdfPathChanged: root.scheduleOpenRecord()
-    onVisibleChanged: {
-        if(visible) {
-            root.scheduleOpenRecord()
+    Timer {
+        id: openRecordTimer
+        interval: 0
+        repeat: false
+        onTriggered: root.openRecordNow()
+    }
+
+    Timer {
+        id: renderResumeTimer
+        interval: 120
+        repeat: false
+        onTriggered: {
+            root.deferPageRendering = false
+            root.renderRevision += 1
         }
+    }
+
+    Component.onCompleted: {
+        root.applyInitialZoom()
+        root.scheduleOpenRecord()
+    }
+    onInitialZoomChanged: root.applyInitialZoom()
+    onVisibleChanged: {
+        if (visible)
+            root.scheduleOpenRecord()
     }
 
     Connections {
         target: pdfExtractionController
+
         function onAnalysisReady(recordId) {
-            if(recordId === root.recordId) {
+            if (recordId === root.recordId) {
+                root.recalculateFitWidthZoom()
                 root.renderRevision += 1
-                root.operationStatus = "解析完成。"
+                root.operationStatus = pdfExtractionController.currentEngine === "pymupdf" ? "快速解析已完成。可点击自动解析提取公式、表格和图表结构。" : "解析完成。"
             }
         }
+
+        function onRuntimeInstallProgress(engine, percent, message) {
+            root.operationStatus = message || ("正在初始化解析组件..." + percent + "%")
+        }
+
         function onElementFocused(elementId, page, bbox) {
             root.currentPage = page
-            root.scrollToPage(page)
+            root.scrollToElement(page, bbox)
         }
     }
 
@@ -55,7 +92,7 @@ Item {
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 58
+            Layout.preferredHeight: 72
             radius: theme.radiusMedium
             color: theme.surface
             border.color: theme.border
@@ -66,6 +103,7 @@ Item {
                 spacing: 8
 
                 PillButton { text: "返回"; onClicked: root.backRequested() }
+
                 Text {
                     Layout.fillWidth: true
                     text: root.title || "解析阅读"
@@ -73,17 +111,44 @@ Item {
                     font.weight: Font.Bold
                     elide: Text.ElideRight
                 }
+
                 Switch {
                     id: annotationSwitch
                     checked: root.showAnnotations
                     text: checked ? "标注版" : "原文"
                     onToggled: root.showAnnotations = checked
                 }
+
                 PillButton { text: "-"; onClicked: root.adjustZoom(-0.15) }
-                Text { text: Math.round(root.zoom * 100) + "%"; color: theme.textMuted; Layout.preferredWidth: 48; horizontalAlignment: Text.AlignHCenter }
+
+                Text {
+                    text: Math.round(root.zoom * 100) + "%"
+                    color: theme.textMuted
+                    Layout.preferredWidth: 48
+                    horizontalAlignment: Text.AlignHCenter
+                }
+
                 PillButton { text: "+"; onClicked: root.adjustZoom(0.15) }
-                PillButton { text: "重新解析"; enabled: !pdfExtractionController.loading; onClicked: root.reanalyze() }
-                PillButton { text: "导出全部"; onClicked: root.exportAll() }
+
+                ComboBox {
+                    id: analysisMode
+                    Layout.preferredWidth: 250
+                    model: root.analysisModes
+                    textRole: "label"
+                    currentIndex: 0
+                    enabled: !pdfExtractionController.loading
+                    onActivated: {
+                        var item = root.analysisModes[currentIndex]
+                        root.selectedEngine = item ? item.engine : "auto"
+                        root.selectEngine(root.selectedEngine)
+                    }
+                }
+
+                PillButton {
+                    text: "导出全部"
+                    enabled: !pdfExtractionController.loading && pdfExtractionController.pageCount > 0
+                    onClicked: root.exportAll()
+                }
             }
         }
 
@@ -96,6 +161,7 @@ Item {
                 Layout.preferredWidth: 220
                 Layout.fillHeight: true
                 elements: pdfExtractionController.elements
+                selectedElementId: pdfExtractionController.selectedElement && pdfExtractionController.selectedElement.id ? String(pdfExtractionController.selectedElement.id) : ""
                 onElementSelected: elementId => pdfExtractionController.focusElement(elementId)
             }
 
@@ -111,10 +177,24 @@ Item {
                     id: pageFlick
                     anchors.fill: parent
                     anchors.margins: 10
+
+                    onWidthChanged: root.recalculateFitWidthZoom()
+
                     clip: true
                     boundsBehavior: Flickable.StopAtBounds
+                    flickDeceleration: 4800
+                    maximumFlickVelocity: 2800
+                    pixelAligned: true
+
+                    onMovementStarted: {
+                        root.deferPageRendering = true
+                        renderResumeTimer.stop()
+                    }
+                    onMovementEnded: renderResumeTimer.restart()
+
                     ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
                     ScrollBar.horizontal: ScrollBar { policy: ScrollBar.AsNeeded }
+
                     contentWidth: Math.max(width, pageColumn.width)
                     contentHeight: pageColumn.height
 
@@ -122,39 +202,56 @@ Item {
                         acceptedModifiers: Qt.ControlModifier
                         target: null
                         onWheel: function(event) {
-                            root.adjustZoom(event.angleDelta.y > 0 ? 0.1 : -0.1)
+                            var point = event.point && event.point.position ? event.point.position : Qt.point(pageFlick.width / 2, pageFlick.height / 2)
+                            root.adjustZoomAt(event.angleDelta.y > 0 ? 0.10 : -0.10, point.x, point.y)
                             event.accepted = true
                         }
                     }
 
                     Column {
                         id: pageColumn
-                        width: Math.max(pageFlick.width, root.pageWidth(root.currentPage) * root.displayScale(root.currentPage) + 40)
+                        width: Math.max(pageFlick.width, root.pageWidth(root.currentPage) * root.effectiveZoom + 40)
                         spacing: 18
 
                         Repeater {
                             model: Math.max(0, pdfExtractionController.pageCount)
+
                             delegate: Rectangle {
                                 id: pageFrame
                                 property var sizeInfo: root.pageSize(index)
-                                property real scale: root.displayScale(index)
-                                property bool nearViewport: y + height > pageFlick.contentY - pageFlick.height
-                                    && y < pageFlick.contentY + pageFlick.height * 2.0
-                                width: root.pageWidth(index) * pageFrame.scale + 20
-                                height: root.pageHeight(index) * pageFrame.scale + 20
+                                property bool nearViewport: y + height > pageFlick.contentY - pageFlick.height && y < pageFlick.contentY + pageFlick.height * 2.0
+                                property string pageSource: ""
+
+                                width: root.pageWidth(index) * root.effectiveZoom + 20
+                                height: root.pageHeight(index) * root.effectiveZoom + 20
                                 radius: 4
                                 color: "#ffffff"
                                 border.color: index === root.currentPage ? theme.accent : theme.border
                                 anchors.horizontalCenter: parent.horizontalCenter
 
+                                Component.onCompleted: refreshSource()
+                                onNearViewportChanged: refreshSource()
+
+                                Connections {
+                                    target: root
+                                    function onRenderRevisionChanged() { pageFrame.refreshSource() }
+                                    function onDeferPageRenderingChanged() {
+                                        if (!root.deferPageRendering)
+                                            pageFrame.refreshSource()
+                                    }
+                                }
+
+                                function refreshSource() {
+                                    if (pageFrame.nearViewport && !root.deferPageRendering && root.renderRevision >= 0)
+                                        pageFrame.pageSource = pdfExtractionController.renderPage(root.recordId, index, root.effectiveZoom)
+                                }
+
                                 Image {
                                     id: pageImage
                                     anchors.centerIn: parent
-                                    width: root.pageWidth(index) * pageFrame.scale
-                                    height: root.pageHeight(index) * pageFrame.scale
-                                    source: pageFrame.nearViewport && root.renderRevision >= 0
-                                        ? pdfExtractionController.renderPage(root.recordId, index, pageFrame.scale)
-                                        : ""
+                                    width: root.pageWidth(index) * root.effectiveZoom
+                                    height: root.pageHeight(index) * root.effectiveZoom
+                                    source: pageFrame.pageSource
                                     fillMode: Image.Stretch
                                     asynchronous: true
                                     cache: false
@@ -196,73 +293,178 @@ Item {
             PdfExtractionPanel {
                 Layout.preferredWidth: 300
                 Layout.minimumWidth: 260
-                Layout.maximumWidth: 340
+                Layout.maximumWidth: 360
                 Layout.fillHeight: true
-
                 element: pdfExtractionController.selectedElement
+                index: pdfExtractionController.currentIndex
+                recordId: root.recordId
+                statusText: root.operationStatus
                 documentKey: root.recordId + "|" + root.pdfPath
+                elementExportPaths: root.elementExportPaths
+                elementFeedbackTexts: root.elementFeedbackTexts
 
-                allExportedPath: root.allExportedPath
+                onExportCompleted: function(elementKey, path) {
+                    root.rememberElementExport(elementKey, path)
+                    root.lastExportPath = path || ""
+                }
+
+                onElementFeedbackChanged: function(elementKey, text) {
+                    root.rememberElementFeedback(elementKey, text)
+                }
             }
         }
-
     }
 
     function scheduleOpenRecord() {
-        if(root.visible)
+        if (root.visible)
             openRecordTimer.restart()
     }
 
     function openRecordNow() {
-        if(root.recordId === "" || root.pdfPath === "")
+        if (root.recordId === "" || root.pdfPath === "")
             return
 
         var openKey = root.recordId + "|" + root.pdfPath
-
-        if(root.activeOpenKey === openKey && (pdfExtractionController.pageCount > 0 || pdfExtractionController.loading))
+        if (root.activeOpenKey === openKey && (pdfExtractionController.pageCount > 0 || pdfExtractionController.loading))
             return
 
         root.activeOpenKey = openKey
         root.currentPage = 0
-        root.restoreZoom()
-        root.exportedPath = ""
+        root.recalculateFitWidthZoom()
+        root.applyInitialZoom()
         root.operationStatus = ""
+        root.lastExportPath = ""
         root.allExportedPath = ""
+        root.elementExportPaths = ({})
+        root.elementFeedbackTexts = ({})
 
-        if(!pdfExtractionController.loadIndexForPdf(root.recordId, root.pdfPath))
-            pdfExtractionController.analyzeRecord(root.recordId, root.pdfPath)
+        if (!pdfExtractionController.loadIndexForPdf(root.recordId, root.pdfPath)) {
+            root.operationStatus = "正在生成快速解析阅读视图..."
+            pdfExtractionController.analyzeRecordWithEngine(root.recordId, root.pdfPath, "fast")
+        }
 
         root.renderRevision += 1
     }
 
-    function reanalyze() {
-        root.operationStatus = ""
+    function selectEngine(engine) {
+        if (root.recordId === "" || root.pdfPath === "")
+            return
+        root.operationStatus = root.selectedEngine === "auto" ? "正在自动解析..." : ""
+        root.lastExportPath = ""
         root.allExportedPath = ""
-        pdfExtractionController.analyzeRecord(root.recordId, root.pdfPath)
+        root.elementExportPaths = ({})
+        root.elementFeedbackTexts = ({})
+        pdfExtractionController.selectExtractionEngine(root.recordId, root.pdfPath, engine || root.selectedEngine)
     }
 
     function exportAll() {
         var path = pdfExtractionController.exportElement("__all__", "dir")
         root.allExportedPath = path || ""
+        root.lastExportPath = path || ""
         root.operationStatus = path ? ("已导出到：" + path) : pdfExtractionController.statusText
     }
 
-    function restoreZoom() {
-        var value = Number(root.initialZoom || 1.25)
-        root.zoom = Math.max(0.6, Math.min(3.2, value))
+    function rememberElementExport(elementKey, path) {
+        if (!elementKey || !path)
+            return
+
+        var next = {}
+        for (var existingKey in root.elementExportPaths)
+            next[existingKey] = root.elementExportPaths[existingKey]
+
+        next[String(elementKey)] = String(path)
+        root.elementExportPaths = next
+    }
+
+    function rememberElementFeedback(elementKey, text) {
+        if (!elementKey)
+            return
+
+        var next = {}
+        for (var existingKey in root.elementFeedbackTexts)
+            next[existingKey] = root.elementFeedbackTexts[existingKey]
+
+        next[String(elementKey)] = String(text || "")
+        root.elementFeedbackTexts = next
+    }
+
+    function openLastExportDirectory() {
+        if (root.lastExportPath.length === 0)
+            return
+        root.operationStatus = pdfExtractionController.openExportDirectory(root.lastExportPath) ? "导出目录已在文件管理器中打开。" : pdfExtractionController.statusText
     }
 
     function adjustZoom(delta) {
+        root.adjustZoomAt(delta, pageFlick.width / 2, pageFlick.height / 2)
+    }
+
+    function adjustZoomAt(delta, viewportX, viewportY) {
+        var oldScale = root.effectiveZoom
+        var oldZoom = root.zoom
+        var anchorX = Number(viewportX || 0)
+        var anchorY = Number(viewportY || 0)
+        var contentAnchorX = pageFlick.contentX + anchorX
+        var contentAnchorY = pageFlick.contentY + anchorY
+
         root.zoom = Math.max(0.6, Math.min(3.2, root.zoom + delta))
+        if (root.zoom === oldZoom)
+            return
+
+        root.renderRevision += 1
         root.zoomPersistRequested(root.zoom)
+
+        var ratio = oldScale > 0 ? root.effectiveZoom / oldScale : 1
+        var targetX = contentAnchorX * ratio - anchorX
+        var targetY = contentAnchorY * ratio - anchorY
+        Qt.callLater(function() {
+            pageFlick.contentX = root.clampContentX(targetX)
+            pageFlick.contentY = root.clampContentY(targetY)
+        })
+    }
+
+    function clampContentX(value) {
+        var maxX = Math.max(0, pageFlick.contentWidth - pageFlick.width)
+        return Math.max(0, Math.min(Number(value || 0), maxX))
+    }
+
+    function clampContentY(value) {
+        var maxY = Math.max(0, pageFlick.contentHeight - pageFlick.height)
+        return Math.max(0, Math.min(Number(value || 0), maxY))
+    }
+
+    function resetFitWidthZoom() {
+        root.zoom = 1.0
+        root.recalculateFitWidthZoom()
+        root.renderRevision += 1
+        root.zoomPersistRequested(root.zoom)
+    }
+
+    function recalculateFitWidthZoom() {
+        if (!pageFlick || pageFlick.width <= 0)
+            return
+
+        var pageW = root.pageWidth(root.currentPage)
+        if (!isFinite(pageW) || pageW <= 0)
+            pageW = 612
+
+        var availableW = Math.max(120, pageFlick.width - 40)
+        root.fitWidthZoom = Math.max(0.1, Math.min(3.0, availableW / pageW))
+    }
+
+    function applyInitialZoom() {
+        var z = Number(root.initialZoom || 1.25)
+        if (!isFinite(z) || z <= 0)
+            z = 1.25
+        root.zoom = Math.max(0.6, Math.min(3.2, z))
         root.renderRevision += 1
     }
 
     function elementsOnPage(page) {
         var result = []
         var items = pdfExtractionController.elements || []
-        for(var i = 0; i < items.length; i++) {
-            if(Number(items[i].page || 0) === page)
+        for (var i = 0; i < items.length; i++) {
+            var bbox = items[i].bbox || []
+            if (Number(items[i].page || 0) === page && bbox.length >= 4)
                 result.push(items[i])
         }
         return result
@@ -270,26 +472,18 @@ Item {
 
     function pageSize(page) {
         var pages = pdfExtractionController.pages || []
-        for(var p = 0; p < pages.length; p++) {
-            if(Number(pages[p].page || 0) === page)
+        for (var p = 0; p < pages.length; p++) {
+            if (Number(pages[p].page || 0) === page)
                 return [Number(pages[p].width || 612), Number(pages[p].height || 792)]
         }
+
         var items = pdfExtractionController.elements || []
-        for(var i = 0; i < items.length; i++) {
-            if(Number(items[i].page || 0) === page && items[i].pageSize && items[i].pageSize.length >= 2)
+        for (var i = 0; i < items.length; i++) {
+            if (Number(items[i].page || 0) === page && items[i].pageSize && items[i].pageSize.length >= 2)
                 return items[i].pageSize
         }
+
         return [612, 792]
-    }
-
-    function fitScale(page) {
-        var viewport = Math.max(1, pageFlick.width || root.width)
-        var raw = (viewport - 56) / Math.max(1, root.pageWidth(page))
-        return Math.max(0.35, Math.min(1.0, raw))
-    }
-
-    function displayScale(page) {
-        return root.zoom * root.fitScale(page)
     }
 
     function pageWidth(page) {
@@ -302,16 +496,33 @@ Item {
 
     function scrollToPage(page) {
         var y = 0
-        for(var i = 0; i < page; i++)
-            y += root.pageHeight(i) * root.displayScale(i) + 38
+        for (var i = 0; i < page; i++)
+            y += root.pageHeight(i) * root.effectiveZoom + 38
         pageFlick.contentY = Math.max(0, Math.min(y, pageFlick.contentHeight - pageFlick.height))
     }
-    function registerTourTargets() {
-        if(root.tourHost)
-            root.tourHost.registerTourTarget("reader.panel", root)
-    }
-    function unregisterTourTargets() {
-        if(root.tourHost)
-            root.tourHost.unregisterTourTarget("reader.panel", root)
+
+    function scrollToElement(page, bbox) {
+        var pageIndex = Math.max(0, Number(page || 0))
+        var pageTop = 0
+        for (var i = 0; i < pageIndex; i++)
+            pageTop += root.pageHeight(i) * root.effectiveZoom + 38
+
+        var targetY = pageTop
+        var targetX = 0
+        var box = bbox || []
+        if (box.length >= 4) {
+            var pageW = root.pageWidth(pageIndex)
+            var frameW = pageW * root.effectiveZoom + 20
+            var frameLeft = Math.max(0, (pageColumn.width - frameW) / 2)
+            var centerX = (Number(box[0] || 0) + Number(box[2] || 0)) / 2
+            var centerY = (Number(box[1] || 0) + Number(box[3] || 0)) / 2
+            targetX = frameLeft + 10 + centerX * root.effectiveZoom - pageFlick.width / 2
+            targetY = pageTop + 10 + centerY * root.effectiveZoom - pageFlick.height / 2
+        }
+
+        Qt.callLater(function() {
+            pageFlick.contentX = root.clampContentX(targetX)
+            pageFlick.contentY = root.clampContentY(targetY)
+        })
     }
 }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -38,6 +39,61 @@ class OnboardingControllerTests(unittest.TestCase):
             self.assertEqual(store.setting("onboarding/workdir"), str(workdir.resolve()))
             for name in WORKDIR_SUBDIRS:
                 self.assertTrue((workdir / name).is_dir())
+
+    def test_tour_steps_follow_workspace_layout_order(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            controller, _store = self.make_controller(Path(temp))
+
+            step_ids = [step["id"] for step in controller.steps]
+
+            self.assertEqual(
+                step_ids,
+                [
+                    "workdir.setup",
+                    "nav.download",
+                    "nav.library",
+                    "nav.extract",
+                    "nav.translate",
+                    "account.avatar",
+                    "account.language",
+                    "account.appearance",
+                    "account.update",
+                    "system.settings",
+                ],
+            )
+            self.assertEqual(controller.steps[0]["targetId"], "workdir.setup")
+            self.assertEqual(controller.steps[-1]["targetId"], "system.prompt_settings")
+            self.assertEqual(controller.steps[-1]["drawerPage"], 6)
+
+    def test_settings_workdir_save_does_not_start_tour(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            controller, store = self.make_controller(root)
+
+            controller.onAuthenticated("alice")
+            self.assertTrue(controller.needsWorkdir)
+            self.assertFalse(controller.active)
+
+            workdir = root / "workspace"
+            self.assertTrue(controller.saveWorkdirPreference(str(workdir)))
+
+            self.assertFalse(controller.needsWorkdir)
+            self.assertFalse(controller.active)
+            self.assertEqual(controller.currentStep["id"], "workdir.setup")
+            self.assertEqual(store.setting("onboarding/workdir"), str(workdir.resolve()))
+
+    def test_saving_workdir_rebases_download_output_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            controller, store = self.make_controller(root)
+            store.set_setting("download_form_config", json.dumps({"outputDir": str(root / "Download"), "keywords": "battery"}))
+
+            workdir = root / "workspace"
+            self.assertTrue(controller.saveWorkdirPreference(str(workdir)))
+
+            settings = json.loads(store.setting("download_form_config"))
+            self.assertEqual(settings["outputDir"], str((workdir / "Download").resolve()))
+            self.assertEqual(settings["keywords"], "battery")
 
     def test_finish_persists_completion_and_last_version(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

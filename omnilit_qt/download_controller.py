@@ -13,7 +13,7 @@ from .app_controller import AppController
 from .background_tasks import ManagedWorker, shutdown_workers
 from .i18n import LocaleController, tr
 from .paths import AppPaths
-from .services import AccountStore, build_download_config, import_resource_module
+from .services import AccountStore, build_download_config, default_download_dir, import_resource_module, normalize_download_form_config
 
 DOWNLOAD_FORM_SETTING = "download_form_config"
 DOWNLOAD_FORM_FIELDS = (
@@ -66,7 +66,7 @@ class DownloadController(QObject):
         """初始化下载控制器。参数：应用、路径和语言控制器。返回值：无。"""
         super().__init__()
         self.app, self.paths, self.store, self.locale = app, paths, store, locale
-        self._saved_config = _load_form_setting(store, DOWNLOAD_FORM_SETTING)
+        self._saved_config = normalize_download_form_config(paths, store, _load_form_setting(store, DOWNLOAD_FORM_SETTING))
         self._running = False
         self._active_task_text = ""
         self._status = locale.textf("not_started")
@@ -237,12 +237,12 @@ class DownloadController(QObject):
     @Property(str, constant=True)
     def defaultOutputDir(self) -> str:
         """返回默认输出目录。参数：无。返回值：目录文本。"""
-        return str(self.paths.data("Download"))
+        return str(default_download_dir(self.paths, self.store))
 
     @Property("QVariantMap", constant=True)
     def savedConfig(self) -> dict[str, Any]:
         """Return the saved non-sensitive download form fields."""
-        return dict(self._saved_config)
+        return normalize_download_form_config(self.paths, self.store, self._saved_config)
 
     @Slot("QVariantMap")
     def saveConfig(self, config_map: dict[str, Any]) -> None:
