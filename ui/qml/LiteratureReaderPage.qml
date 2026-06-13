@@ -23,6 +23,7 @@ Item {
     property var elementFeedbackTexts: ({})
     property string selectedEngine: "auto"
     property bool deferPageRendering: false
+    property var engineStatusInfo: ({})
     readonly property var analysisModes: [
         { engine: "auto", label: "自动解析（推荐）" },
         { engine: "fast", label: "快速解析（PyMuPDF）" },
@@ -91,6 +92,7 @@ Item {
         spacing: 10
 
         Rectangle {
+            id: headerCard
             Layout.fillWidth: true
             Layout.preferredHeight: 72
             radius: theme.radiusMedium
@@ -145,9 +147,88 @@ Item {
                 }
 
                 PillButton {
+                    id: engineStatusButton
+                    text: "解析引擎状态"
+                    onClicked: {
+                        root.engineStatusInfo = pdfExtractionController.engineStatus()
+
+                        var pos = engineStatusButton.mapToItem(headerCard, 0, engineStatusButton.height + 8)
+                        engineStatusPopup.x = Math.max(8, Math.min(pos.x, headerCard.width - engineStatusPopup.width - 8))
+                        engineStatusPopup.y = pos.y
+                        engineStatusPopup.open()
+                    }
+                }
+
+                PillButton {
                     text: "导出全部"
                     enabled: !pdfExtractionController.loading && pdfExtractionController.pageCount > 0
                     onClicked: root.exportAll()
+                }
+            }
+
+            Popup {
+                id: engineStatusPopup
+                width: 380
+                modal: false
+                focus: true
+                closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+                padding: 12
+
+                background: Rectangle {
+                    radius: theme.radiusMedium
+                    color: theme.surface
+                    border.color: theme.border
+                }
+
+                contentItem: ColumnLayout {
+                    spacing: 8
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: "解析引擎状态"
+                        color: theme.text
+                        font.weight: Font.Bold
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 1
+                        color: theme.border
+                    }
+
+                    Repeater {
+                        model: root.engineStatusRows()
+
+                        delegate: RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            Text {
+                                Layout.preferredWidth: 96
+                                text: modelData.label
+                                color: theme.text
+                                font.weight: Font.DemiBold
+                                elide: Text.ElideRight
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                text: modelData.state + " · " + modelData.message
+                                color: modelData.available
+                                    ? theme.success
+                                    : (modelData.installable ? theme.warning : theme.textMuted)
+                                wrapMode: Text.WrapAnywhere
+                                maximumLineCount: 3
+                                elide: Text.ElideRight
+                            }
+
+                            PillButton {
+                                visible: !modelData.available && modelData.installable
+                                text: modelData.key === "mineru" ? "一键初始化" : "初始化"
+                                onClicked: pdfExtractionController.bootstrapEngine(modelData.key)
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -161,7 +242,9 @@ Item {
                 Layout.preferredWidth: 220
                 Layout.fillHeight: true
                 elements: pdfExtractionController.elements
-                selectedElementId: pdfExtractionController.selectedElement && pdfExtractionController.selectedElement.id ? String(pdfExtractionController.selectedElement.id) : ""
+                selectedElementId: pdfExtractionController.selectedElement && pdfExtractionController.selectedElement.id
+                    ? String(pdfExtractionController.selectedElement.id)
+                    : ""
                 onElementSelected: elementId => pdfExtractionController.focusElement(elementId)
             }
 
@@ -525,4 +608,59 @@ Item {
             pageFlick.contentY = root.clampContentY(targetY)
         })
     }
+
+    function engineLabel(engine) {
+        var value = String(engine || "")
+        if (value === "pymupdf" || value === "fast")
+            return "PyMuPDF"
+        if (value === "paddleocr_vl")
+            return "PaddleOCR-VL"
+        if (value === "mineru")
+            return "MinerU"
+        if (value === "hybrid")
+            return "Hybrid"
+        return value || "unknown"
+    }
+
+    function engineStatusName(value) {
+        if (value === "not_initialized")
+            return "未初始化"
+        if (value === "failed")
+            return "初始化失败"
+        if (value === "off")
+            return "已禁用"
+        if (value === "docker_installable")
+            return "可通过 Docker 启用"
+        return "不可用"
+    }
+
+    function engineStatusRows() {
+        var status = root.engineStatusInfo || ({})
+        var order = ["pymupdf", "mineru", "paddleocr_vl"]
+        var rows = []
+
+        for (var i = 0; i < order.length; i++) {
+            var key = order[i]
+            var item = status[key] || ({
+                available: false,
+                installable: false,
+                status: "unknown",
+                message: "未知"
+            })
+
+            rows.push({
+                key: key,
+                label: root.engineLabel(key),
+                available: !!item.available,
+                installable: !!item.installable,
+                state: item.available
+                    ? "可用"
+                    : (item.installable ? "可初始化" : root.engineStatusName(item.status)),
+                message: String(item.message || "")
+            })
+        }
+
+        return rows
+    }
+
 }

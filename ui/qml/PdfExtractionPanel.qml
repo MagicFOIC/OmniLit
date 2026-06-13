@@ -16,8 +16,9 @@ Rectangle {
     property string activeElementKey: root.element && root.element.id ? (String(root.element.type || "") + "|" + String(root.element.id || "")) : ""
     property string exportedPath: root.resolvedExportPath()
     property string currentFeedbackText: root.resolvedFeedbackText()
-    property bool engineStatusOpen: false
-    property var engineStatusMap: ({})
+    property var captionTranslationsByElement: ({})
+    property bool captionTranslating: false
+    property string captionTranslatingKey: ""
 
     signal exportCompleted(string elementKey, string path)
     signal elementFeedbackChanged(string elementKey, string text)
@@ -31,6 +32,34 @@ Rectangle {
     radius: theme.radiusMedium
 
     Theme { id: theme }
+
+    Connections {
+        target: translationController
+
+        function onSnippetTranslationFinished(elementKey, translatedText, success, message) {
+            var key = String(elementKey || "")
+
+            if (key === root.captionTranslatingKey) {
+                root.captionTranslating = false
+                root.captionTranslatingKey = ""
+            }
+
+            if (success && translatedText && String(translatedText).trim().length > 0) {
+                var next = {}
+                for (var existingKey in root.captionTranslationsByElement)
+                    next[existingKey] = root.captionTranslationsByElement[existingKey]
+
+                next[key] = String(translatedText).trim()
+                root.captionTranslationsByElement = next
+
+                if (key === root.activeElementKey)
+                    root.setCurrentFeedback("图例翻译完成。")
+            } else {
+                if (key === root.activeElementKey)
+                    root.setCurrentFeedback(message || "图例翻译失败。")
+            }
+        }
+    }
 
     ScrollView {
         id: panelScroll
@@ -54,7 +83,9 @@ Rectangle {
 
         Text {
             Layout.fillWidth: true
-            text: root.element && root.element.id ? ((root.element.label || root.element.id) + " · Page " + (Number(root.element.page || 0) + 1)) : "请选择页面上的框或左侧书签。"
+            text: root.element && root.element.id
+                ? (root.elementDisplayLabel(root.element) + " · " + root.pageText(root.element.page))
+                : "请选择页面上的框或左侧书签。"
             color: theme.textMuted
             wrapMode: Text.WrapAnywhere
         }
@@ -63,67 +94,6 @@ Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 1
             color: theme.border
-        }
-
-        Flow {
-            Layout.fillWidth: true
-            spacing: 8
-            clip: true
-
-            PillButton {
-                text: "解析引擎状态"
-                onClicked: root.toggleEngineStatus()
-            }
-        }
-
-        Rectangle {
-            Layout.fillWidth: true
-            visible: root.engineStatusOpen
-            color: theme.surfaceSoft
-            border.color: theme.border
-            radius: 6
-            implicitHeight: statusPopupColumn.implicitHeight + 16
-            clip: true
-
-            ColumnLayout {
-                id: statusPopupColumn
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.top: parent.top
-                anchors.margins: 8
-                spacing: 6
-
-                Repeater {
-                    model: root.engineStatusRows()
-                    delegate: RowLayout {
-                        width: statusPopupColumn.width
-                        spacing: 6
-
-                        Text {
-                            Layout.preferredWidth: 86
-                            text: modelData.label
-                            color: theme.text
-                            font.weight: Font.DemiBold
-                            elide: Text.ElideRight
-                        }
-
-                        Text {
-                            Layout.fillWidth: true
-                            text: modelData.state + " · " + modelData.message
-                            color: modelData.available ? theme.success : (modelData.installable ? theme.warning : theme.textMuted)
-                            wrapMode: Text.WrapAnywhere
-                            maximumLineCount: 3
-                            elide: Text.ElideRight
-                        }
-
-                        PillButton {
-                            visible: !modelData.available && modelData.installable
-                            text: modelData.key === "mineru" ? "一键初始化" : "初始化"
-                            onClicked: pdfExtractionController.bootstrapEngine(modelData.key)
-                        }
-                    }
-                }
-            }
         }
 
         ColumnLayout {
@@ -148,7 +118,10 @@ Rectangle {
 
             Text {
                 Layout.fillWidth: true
-                visible: root.element && root.element.caption && String(root.element.caption).length > 0
+                visible: root.element
+                    && root.element.type !== "figure"
+                    && root.element.caption
+                    && String(root.element.caption).length > 0
                 text: "Caption: " + String(root.element.caption)
                 color: theme.textSecondary
                 wrapMode: Text.WordWrap
@@ -247,45 +220,115 @@ Rectangle {
         }
 
         ColumnLayout {
-            Layout.fillWidth: true
-            visible: root.element && root.element.type === "figure"
-            spacing: 8
-
-            Image {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 220
-                source: root.element && root.element.id ? pdfExtractionController.cropElement(root.element.id) : ""
-                fillMode: Image.PreserveAspectFit
-                asynchronous: true
-                cache: false
-            }
+                visible: root.element && root.element.type === "figure"
+                spacing: 10
 
-            Text {
-                Layout.fillWidth: true
-                text: root.element && root.element.caption ? root.element.caption : "暂无图注。"
-                color: theme.textSecondary
-                wrapMode: Text.WordWrap
-            }
-
-            Flow {
-                Layout.fillWidth: true
-                spacing: 8
-                clip: true
-
-                PillButton { text: "复制图片"; onClicked: root.copyImageCurrent() }
-                PillButton { text: "导出图片"; onClicked: root.exportCurrent("png") }
-                PillButton {
-                    text: "打开图片导出目录"
-                    visible: root.exportedPath.length > 0
-                    enabled: visible
-                    onClicked: root.openLastExportDirectory()
+                Text {
+                    Layout.fillWidth: true
+                    text: "图像"
+                    color: theme.text
+                    font.weight: Font.DemiBold
                 }
-                PillButton {
-                    text: "图数据提取（实验）"
-                    onClicked: root.setCurrentFeedback("需要手动坐标轴标定，后续 PR 实现。")
+
+                Image {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 220
+                    source: root.element && root.element.id ? pdfExtractionController.cropElement(root.element.id) : ""
+                    fillMode: Image.PreserveAspectFit
+                    asynchronous: true
+                    cache: false
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 1
+                    color: theme.border
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    text: "图例原文"
+                    color: theme.text
+                    font.weight: Font.DemiBold
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    visible: root.figureCaptionLabel().length > 0
+                    text: root.figureCaptionLabel()
+                    color: theme.accentStrong
+                    font.weight: Font.DemiBold
+                    wrapMode: Text.WordWrap
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    text: root.figureCaptionBodyText() || "暂无图例文字。"
+                    color: theme.textSecondary
+                    wrapMode: Text.WordWrap
+                }
+
+                Canvas {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 1
+                    visible: root.figureCaptionTranslation().length > 0
+                    onWidthChanged: requestPaint()
+                    onPaint: {
+                        var ctx = getContext("2d")
+                        ctx.clearRect(0, 0, width, height)
+                        ctx.setLineDash([4, 4])
+                        ctx.strokeStyle = theme.border
+                        ctx.beginPath()
+                        ctx.moveTo(0, 0.5)
+                        ctx.lineTo(width, 0.5)
+                        ctx.stroke()
+                    }
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    visible: root.figureCaptionTranslation().length > 0
+                    text: root.figureCaptionTranslation()
+                    color: theme.text
+                    wrapMode: Text.WordWrap
+                }
+
+                Flow {
+                    Layout.fillWidth: true
+                    spacing: 8
+                    clip: true
+
+                    PillButton {
+                        text: "复制图片"
+                        onClicked: root.copyImageCurrent()
+                    }
+
+                    PillButton {
+                        text: "导出图片"
+                        onClicked: root.exportCurrent("png")
+                    }
+
+                    PillButton {
+                        text: root.captionTranslating && root.captionTranslatingKey === root.activeElementKey ? "翻译中..." : "翻译图例"
+                        enabled: root.figureCaptionText().length > 0
+                            && !(root.captionTranslating && root.captionTranslatingKey === root.activeElementKey)
+                        onClicked: root.translateFigureCaption()
+                    }
+
+                    PillButton {
+                        text: "打开图片导出目录"
+                        visible: root.exportedPath.length > 0
+                        enabled: visible
+                        onClicked: root.openLastExportDirectory()
+                    }
+
+                    PillButton {
+                        text: "图数据提取（实验）"
+                        onClicked: root.feedbackText = "需要手动坐标轴标定，后续 PR 实现。"
+                    }
                 }
             }
-        }
 
         ColumnLayout {
             Layout.fillWidth: true
@@ -386,72 +429,6 @@ Rectangle {
         return "行数 " + rowCount + " · 列数 " + colCount + " · 非空 " + ratio + "%"
     }
 
-    function engineErrors() {
-        if (!root.index || !root.index.engineErrors)
-            return []
-        return root.index.engineErrors
-    }
-
-    function showEngineStatus() {
-        var status = pdfExtractionController.engineStatus()
-        root.setCurrentFeedback(root.formatEngineStatus(status))
-    }
-
-    function toggleEngineStatus() {
-        root.engineStatusMap = pdfExtractionController.engineStatus()
-        root.engineStatusOpen = !root.engineStatusOpen
-    }
-
-    function engineStatusRows() {
-        var status = root.engineStatusMap || ({})
-        var order = ["pymupdf", "mineru", "paddleocr_vl"]
-        var rows = []
-        for (var i = 0; i < order.length; i++) {
-            var key = order[i]
-            var item = status[key] || ({ available: false, installable: false, status: "unknown", message: "未知" })
-            rows.push({
-                key: key,
-                label: root.engineLabel(key),
-                available: !!item.available,
-                installable: !!item.installable,
-                state: item.available ? "可用" : (item.installable ? "可初始化" : root.statusName(item.status)),
-                message: String(item.message || "")
-            })
-        }
-        return rows
-    }
-
-    function formatEngineStatus(status) {
-        var lines = []
-        var order = ["pymupdf", "paddleocr_vl", "mineru"]
-        for (var i = 0; i < order.length; i++) {
-            var key = order[i]
-            var item = status && status[key] ? status[key] : ({ available: false, installable: false, status: "unknown", message: "未知" })
-            var state = item.available ? "可用" : (item.installable ? "可自动安装" : root.statusName(item.status))
-            lines.push(root.engineLabel(key) + "：" + state + "，" + String(item.message || ""))
-        }
-        return lines.join("\n")
-    }
-
-    function errorPrefix(item) {
-        var level = String(item && item.level ? item.level : "warning")
-        if (level === "info")
-            return root.engineLabel(item.engine) + " 提示："
-        return root.engineLabel(item.engine) + " 注意："
-    }
-
-    function statusName(value) {
-        if (value === "not_initialized")
-            return "未初始化"
-        if (value === "failed")
-            return "初始化失败"
-        if (value === "off")
-            return "已禁用"
-        if (value === "docker_installable")
-            return "可通过 Docker 启用"
-        return "不可用"
-    }
-
     function tablePreviewRows() {
         if (!root.element || !root.element.table)
             return []
@@ -460,6 +437,9 @@ Rectangle {
 
     function resetLocalExportState() {
         root.feedbackText = ""
+        root.captionTranslationsByElement = ({})
+        root.captionTranslating = false
+        root.captionTranslatingKey = ""
     }
 
     function resolvedExportPath() {
@@ -527,4 +507,109 @@ Rectangle {
             return
         root.setCurrentFeedback(pdfExtractionController.copyElementImage(root.element.id) ? "操作成功。" : pdfExtractionController.statusText)
     }
+
+    function figureCaptionText() {
+        if (!root.element)
+            return ""
+
+        return String(root.element.caption || root.element.text || "").trim()
+    }
+
+    function figureCaptionLabel() {
+        var text = root.figureCaptionText()
+        var match = /^\s*((?:fig(?:ure)?\.?|图)\s*[0-9]+[A-Za-z]?)/i.exec(text)
+
+        if (match && match.length >= 2)
+            return match[1]
+
+        return ""
+    }
+
+    function figureCaptionBodyText() {
+        var text = root.figureCaptionText()
+
+        return text.replace(/^\s*(fig(?:ure)?\.?|图)\s*[0-9]+[A-Za-z]?\s*[\.:：\-–—]?\s*/i, "").trim()
+    }
+
+    function figureCaptionTranslation() {
+        var elementKey = root.activeElementKey
+
+        if (!elementKey || elementKey === "")
+            return ""
+
+        return String(root.captionTranslationsByElement[elementKey] || "")
+    }
+
+    function rememberFigureCaptionTranslation(text) {
+        var elementKey = root.activeElementKey
+
+        if (!elementKey || elementKey === "")
+            return
+
+        var next = {}
+        for (var key in root.captionTranslationsByElement)
+            next[key] = root.captionTranslationsByElement[key]
+
+        next[elementKey] = String(text || "")
+        root.captionTranslationsByElement = next
+    }
+
+    function translateFigureCaption() {
+        var text = root.figureCaptionText()
+
+        if (text.length === 0) {
+            root.setCurrentFeedback("暂无可翻译图例。")
+            return
+        }
+
+        if (typeof translationController === "undefined") {
+            root.setCurrentFeedback("图例翻译失败：translationController 未注册。")
+            return
+        }
+
+        var key = root.activeElementKey
+        if (!key || key === "") {
+            root.setCurrentFeedback("图例翻译失败：当前元素无有效 ID。")
+            return
+        }
+
+        root.captionTranslating = true
+        root.captionTranslatingKey = key
+        root.setCurrentFeedback("正在翻译图例...")
+
+        try {
+            translationController.translateSnippetAsync(key, text, "zh")
+        } catch (error) {
+            root.captionTranslating = false
+            root.captionTranslatingKey = ""
+            root.setCurrentFeedback("图例翻译失败：" + error)
+        }
+    }
+
+    function pageText(page) {
+        return "第 " + (Number(page || 0) + 1) + " 页"
+    }
+
+    function elementDisplayLabel(element) {
+        if (!element)
+            return "Element"
+
+        var kind = String(element.type || "")
+        var caption = String(element.caption || element.text || "").trim()
+
+        if (kind === "figure") {
+            var match = /^\s*(fig(?:ure)?\.?|图)\s*([0-9]+[A-Za-z]?)/i.exec(caption)
+            if (match && match.length >= 3)
+                return "Figure " + match[2]
+        }
+
+        if (kind === "table") {
+            var tableMatch = /^\s*(table|表)\s*([0-9]+[A-Za-z]?)/i.exec(caption)
+            if (tableMatch && tableMatch.length >= 3)
+                return "Table " + tableMatch[2]
+        }
+
+        return String(element.label || element.id || "Element")
+    }
+
 }

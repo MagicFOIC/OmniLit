@@ -58,7 +58,7 @@ Rectangle {
                         spacing: 1
                         Text {
                             Layout.fillWidth: true
-                            text: (modelData.label || modelData.id || "Element") + " · p." + (Number(modelData.page || 0) + 1)
+                            text: root.elementDisplayLabel(modelData) + " · " + root.pageText(modelData.page)
                             color: itemButton.selected ? theme.accentStrong : theme.text
                             elide: Text.ElideRight
                             font.pixelSize: 12
@@ -87,4 +87,34 @@ Rectangle {
             wrapMode: Text.WordWrap
         }
     }
+
+    function pageText(page) {
+        var pageNumber = Number(page)
+        if (isNaN(pageNumber))
+            pageNumber = 0
+        return "第 " + (pageNumber + 1) + " 页"
+    }
+
+    function elementDisplayLabel(element) {
+        if (!element)
+            return "Element"
+
+        var kind = String(element.type || "")
+        var caption = String(element.caption || element.text || element.label || "").trim()
+
+        if (kind === "figure") {
+            var match = /^\s*(fig(?:ure)?\.?|图)\s*([0-9]+[A-Za-z]?)/i.exec(caption)
+            if (match && match.length >= 3)
+                return "Figure " + match[2]
+        }
+
+        if (kind === "table") {
+            var tableMatch = /^\s*(table|表)\s*([0-9]+[A-Za-z]?)/i.exec(caption)
+            if (tableMatch && tableMatch.length >= 3)
+                return "Table " + tableMatch[2]
+        }
+
+        return String(element.label || element.id || "Element")
+    }
+
 }

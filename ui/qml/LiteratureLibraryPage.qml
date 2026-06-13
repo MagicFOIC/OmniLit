@@ -91,8 +91,11 @@ Item {
 
                 TextField {
                     id: query
-                    Layout.fillWidth: true
+                    Layout.preferredWidth: 320
+                    Layout.minimumWidth: 320
+                    Layout.maximumWidth: 320
                     placeholderText: "搜索标题、摘要、作者或 DOI"
+                    selectByMouse: true
                     onTextChanged: root.applyFilters()
                 }
                 ComboBox {

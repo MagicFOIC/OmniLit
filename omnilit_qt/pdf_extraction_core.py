@@ -16,8 +16,38 @@ from .pdf_extraction_schema import normalize_element
 MATH_PATTERN = re.compile(r"(=|≈|≠|≤|≥|∑|∫|√|π|α|β|γ|Δ|λ|μ|σ|θ|×|÷|\^|\\frac|[A-Za-z]\s*[=+\-*/]\s*)")
 EQUATION_NUMBER_PATTERN = re.compile(r"(\(\s*\d+[A-Za-z]?\s*\)|（\s*\d+[A-Za-z]?\s*）)\s*$")
 CAPTION_PATTERN = re.compile(r"^\s*(fig(?:ure)?\.?|图|table|表)\s*\d+", re.IGNORECASE)
-FIGURE_CAPTION_PATTERN = re.compile(r"^\s*(fig(?:ure)?\.?\s*\d+[A-Za-z]?|图\s*\d+)", re.IGNORECASE)
+FIGURE_CAPTION_PATTERN = re.compile(
+    r"^\s*(fig(?:ure)?[\.\．]?|图)\s*([0-9]+[A-Za-z]?)\b",
+    re.IGNORECASE,
+)
 TABLE_CAPTION_PATTERN = re.compile(r"^\s*(table\s*\d+[A-Za-z]?|表\s*\d+)", re.IGNORECASE)
+DECORATIVE_FIGURE_TEXT_PATTERN = re.compile(
+    r"("
+    r"royal\s+society\s+of\s+chemistry|"
+    r"\brsc\s+advances\b|"
+    r"\bview\s+article\s+online\b|"
+    r"\bview\s+journal\b|"
+    r"\bview\s+issue\b|"
+    r"\bcheck\s+for\s+updates\b|"
+    r"\barticle\s+online\b|"
+    r"\bjournal\s+homepage\b|"
+    r"\bpaper\b|"
+    r"\bcommunication\b|"
+    r"\breview\s+article\b|"
+    r"\breceived\b|"
+    r"\baccepted\b|"
+    r"\bpublished\b|"
+    r"\bdoi\s*:|"
+    r"www\.|"
+    r"copyright|"
+    r"creative\s+commons"
+    r")",
+    re.IGNORECASE,
+)
+FIGURE_LABEL_EXTRACT_PATTERN = re.compile(
+    r"^\s*(?:fig(?:ure)?\.?|图)\s*([0-9]+[A-Za-z]?)",
+    re.IGNORECASE,
+)
 ENABLE_VECTOR_FIGURE_DETECTION = False
 MAX_VECTOR_DRAWINGS_PER_PAGE = 500
 
@@ -62,7 +92,7 @@ def analyze_pdf(pdf_path: str | Path, output_dir: str | Path) -> dict[str, Any]:
             tables = extract_tables_pymupdf_multi_strategy(page, page_index, page_size, target, text_blocks)
             elements.extend(tables)
             table_rects = [_rect_from_bbox(item["bbox"]) for item in tables]
-            elements.extend(extract_figures_pymupdf_enhanced(page, text_blocks, table_rects, page_index, page_size, target))
+            elements.extend(extract_figures_pymupdf_enhanced(page, table_rects, page_index, page_size, target))
             elements.extend(extract_formula_candidates_pymupdf(page, text_blocks, page_index, page_size, target))
 
     index = {
@@ -205,34 +235,416 @@ def dedupe_tables_by_iou(tables: list[dict[str, Any]], iou_threshold: float = 0.
     return _sort_elements(result)
 
 
+def _bbox_intersection_area(left: list[float], right: list[float]) -> float:
+    if len(left or []) < 4 or len(right or []) < 4:
+        return 0.0
+    x0 = max(float(left[0]), float(right[0]))
+    y0 = max(float(left[1]), float(right[1]))
+    x1 = min(float(left[2]), float(right[2]))
+    y1 = min(float(left[3]), float(right[3]))
+    if x1 <= x0 or y1 <= y0:
+        return 0.0
+    return (x1 - x0) * (y1 - y0)
+
+
+def _horizontal_overlap_ratio(left: list[float], right: list[float]) -> float:
+    if len(left or []) < 4 or len(right or []) < 4:
+        return 0.0
+
+    overlap = max(0.0, min(float(left[2]), float(right[2])) - max(float(left[0]), float(right[0])))
+    left_width = max(1.0, float(left[2]) - float(left[0]))
+    right_width = max(1.0, float(right[2]) - float(right[0]))
+
+    return overlap / min(left_width, right_width)
+
+
+def _bbox_width(bbox: list[float]) -> float:
+    if len(bbox or []) < 4:
+        return 0.0
+    return max(0.0, float(bbox[2]) - float(bbox[0]))
+
+
+def _bbox_height(bbox: list[float]) -> float:
+    if len(bbox or []) < 4:
+        return 0.0
+    return max(0.0, float(bbox[3]) - float(bbox[1]))
+
+
+def _bbox_gap(a: list[float], b: list[float]) -> tuple[float, float]:
+    """返回两个 bbox 的水平间距和垂直间距；相交则为 0。"""
+    if len(a or []) < 4 or len(b or []) < 4:
+        return 10**9, 10**9
+
+    hgap = max(0.0, max(float(a[0]), float(b[0])) - min(float(a[2]), float(b[2])))
+    vgap = max(0.0, max(float(a[1]), float(b[1])) - min(float(a[3]), float(b[3])))
+    return hgap, vgap
+
+
+def _column_bounds_for_bbox(bbox: list[float], page_size: list[float]) -> tuple[float, float]:
+    """估计 figure 所在的栏位边界。
+
+    双栏论文中，caption 应只在同一栏内搜索，避免抓到旁边栏正文。
+    """
+    if len(bbox or []) < 4 or len(page_size or []) < 2:
+        return 0.0, 0.0
+
+    page_width = float(page_size[0] or 0)
+    if page_width <= 0:
+        return 0.0, 0.0
+
+    x0, x1 = float(bbox[0]), float(bbox[2])
+    cx = (x0 + x1) / 2.0
+
+    # 如果图比较宽，视为跨栏图，直接全页
+    if _bbox_width(bbox) >= page_width * 0.62:
+        return 0.0, page_width
+
+    center = page_width / 2.0
+    gutter_half = max(12.0, page_width * 0.025)
+    margin = 8.0
+
+    # 左栏
+    if cx < center and x1 <= center + gutter_half:
+        return margin, center - gutter_half
+
+    # 右栏
+    if cx >= center and x0 >= center - gutter_half:
+        return center + gutter_half, page_width - margin
+
+    return margin, page_width - margin
+
+
+def _bbox_inside_column_ratio(bbox: list[float], col_x0: float, col_x1: float) -> float:
+    if len(bbox or []) < 4:
+        return 0.0
+    overlap = max(0.0, min(float(bbox[2]), col_x1) - max(float(bbox[0]), col_x0))
+    width = max(1.0, float(bbox[2]) - float(bbox[0]))
+    return overlap / width
+
+
+def _same_column(a: list[float], b: list[float], page_size: list[float]) -> bool:
+    ax0, ax1 = _column_bounds_for_bbox(a, page_size)
+    bx0, bx1 = _column_bounds_for_bbox(b, page_size)
+    return abs(ax0 - bx0) <= 10.0 and abs(ax1 - bx1) <= 10.0
+
+
+def _refine_figure_image_bbox(
+        seed_bbox: list[float],
+        visual_candidates: list[list[float]],
+        page_size: list[float],
+) -> list[float]:
+    """把属于同一张图的相邻视觉候选合并，避免图裁剪不完整。"""
+    seed = _bbox_from_any(seed_bbox)
+    if len(seed) < 4:
+        return seed_bbox
+
+    refined = [float(v) for v in seed[:4]]
+    changed = True
+
+    while changed:
+        changed = False
+
+        for cand in visual_candidates or []:
+            box = _bbox_from_any(cand)
+            if len(box) < 4:
+                continue
+
+            if box == refined:
+                continue
+
+            if not _same_column(refined, box, page_size):
+                continue
+
+            hgap, vgap = _bbox_gap(refined, box)
+            h_overlap = _horizontal_overlap_ratio(refined, box)
+            v_overlap = _horizontal_overlap_ratio(
+                [refined[1], refined[0], refined[3], refined[2]],
+                [box[1], box[0], box[3], box[2]],
+            )
+
+            # 条件：
+            # 1. 有明显重叠，或者
+            # 2. 非常接近，且看起来属于同一视觉图块
+            should_merge = (
+                    _bbox_intersection_area(refined, box) > 0
+                    or (h_overlap > 0.35 and vgap <= 22.0)
+                    or (v_overlap > 0.30 and hgap <= 22.0)
+                    or (hgap <= 14.0 and vgap <= 14.0)
+            )
+
+            if not should_merge:
+                continue
+
+            new_box = _union_nonempty_bboxes([refined, box])
+            if len(new_box) < 4:
+                continue
+
+            if new_box != refined:
+                refined = new_box
+                changed = True
+
+    # 最后留少量安全边距，避免坐标轴/边框被切掉
+    page_width = float(page_size[0] or 0) if len(page_size or []) >= 2 else 0.0
+    page_height = float(page_size[1] or 0) if len(page_size or []) >= 2 else 0.0
+
+    pad_x = 6.0
+    pad_y = 6.0
+
+    return [
+        max(0.0, refined[0] - pad_x),
+        max(0.0, refined[1] - pad_y),
+        min(page_width if page_width > 0 else refined[2], refined[2] + pad_x),
+        min(page_height if page_height > 0 else refined[3], refined[3] + pad_y),
+    ]
+
+
+def _expanded_bbox(bbox: list[float], margin: float) -> list[float]:
+    if len(bbox or []) < 4:
+        return []
+    return [
+        float(bbox[0]) - margin,
+        float(bbox[1]) - margin,
+        float(bbox[2]) + margin,
+        float(bbox[3]) + margin,
+        ]
+
+
+def _page_dimensions(page_size: list[float]) -> tuple[float, float]:
+    try:
+        page_width = float(page_size[0])
+        page_height = float(page_size[1])
+    except Exception:
+        return 0.0, 0.0
+    return page_width, page_height
+
+
+def _has_real_figure_caption(caption: str) -> bool:
+    return bool(FIGURE_CAPTION_PATTERN.search(str(caption or "").strip()))
+
+
+def _text_near_or_inside_bbox(
+        bbox: list[float],
+        text_blocks: list[dict[str, Any]],
+        margin: float = 28.0,
+) -> str:
+    if len(bbox or []) < 4:
+        return ""
+
+    expanded = _expanded_bbox(bbox, margin)
+    collected: list[str] = []
+
+    for block in text_blocks or []:
+        if not isinstance(block, dict):
+            continue
+
+        block_bbox = _bbox_from_any(block.get("bbox"))
+        if len(block_bbox) < 4:
+            continue
+
+        text = str(block.get("text") or "").strip().replace("\n", " ")
+        if not text:
+            continue
+
+        if _bbox_intersection_area(expanded, block_bbox) > 0:
+            collected.append(text)
+
+    return " ".join(collected)[:1200]
+
+
+def _is_page_header_or_footer_bbox(bbox: list[float], page_size: list[float]) -> bool:
+    page_width, page_height = _page_dimensions(page_size)
+    if page_width <= 0 or page_height <= 0 or len(bbox or []) < 4:
+        return False
+
+    y0 = float(bbox[1])
+    y1 = float(bbox[3])
+
+    return y1 <= page_height * 0.18 or y0 >= page_height * 0.92
+
+
+def _is_first_page_title_band_candidate(
+        bbox: list[float],
+        page_index: int,
+        page_size: list[float],
+        nearby_text: str,
+) -> bool:
+    if page_index != 0:
+        return False
+
+    page_width, page_height = _page_dimensions(page_size)
+    if page_width <= 0 or page_height <= 0 or len(bbox or []) < 4:
+        return False
+
+    width = float(bbox[2]) - float(bbox[0])
+    height = float(bbox[3]) - float(bbox[1])
+    y0 = float(bbox[1])
+
+    in_first_page_top = y0 <= page_height * 0.35
+    if not in_first_page_top:
+        return False
+
+    wide = width >= page_width * 0.42
+    shallow = height <= page_height * 0.22
+    has_decorative_text = bool(DECORATIVE_FIGURE_TEXT_PATTERN.search(nearby_text or ""))
+
+    return has_decorative_text or (wide and shallow)
+
+
+def _should_skip_figure_candidate(
+        bbox: list[float],
+        page_index: int,
+        page_size: list[float],
+        text_blocks: list[dict[str, Any]],
+        caption: str,
+) -> tuple[bool, str]:
+    if len(bbox or []) < 4:
+        return True, "invalid_bbox"
+
+    if _has_real_figure_caption(caption):
+        return False, ""
+
+    page_width, page_height = _page_dimensions(page_size)
+    if page_width <= 0 or page_height <= 0:
+        return False, ""
+
+    width = float(bbox[2]) - float(bbox[0])
+    height = float(bbox[3]) - float(bbox[1])
+    if width <= 0 or height <= 0:
+        return True, "invalid_bbox_size"
+
+    page_area = max(1.0, page_width * page_height)
+    area_ratio = (width * height) / page_area
+    aspect = width / max(height, 1.0)
+
+    nearby_text = _text_near_or_inside_bbox(bbox, text_blocks)
+    has_decorative_text = bool(DECORATIVE_FIGURE_TEXT_PATTERN.search(nearby_text or ""))
+    is_header_or_footer = _is_page_header_or_footer_bbox(bbox, page_size)
+    is_first_page_title_band = _is_first_page_title_band_candidate(
+        bbox=bbox,
+        page_index=page_index,
+        page_size=page_size,
+        nearby_text=nearby_text,
+    )
+
+    if has_decorative_text and (is_header_or_footer or is_first_page_title_band):
+        return True, "decorative_header_or_title_text"
+
+    if is_first_page_title_band:
+        return True, "first_page_title_band_without_caption"
+
+    if is_header_or_footer and (has_decorative_text or height <= page_height * 0.16):
+        return True, "page_header_or_footer_without_caption"
+
+    if (
+            width >= page_width * 0.55
+            and height <= page_height * 0.16
+            and aspect >= 3.0
+            and (has_decorative_text or float(bbox[1]) <= page_height * 0.35)
+    ):
+        return True, "wide_shallow_banner_without_caption"
+
+    if area_ratio <= 0.018 and (is_header_or_footer or has_decorative_text):
+        return True, "small_logo_or_icon_without_caption"
+
+    return False, ""
+
+
+def _page_text_blocks_with_lines(page: Any) -> list[dict[str, Any]]:
+    """读取页面文本块，并保留 PyMuPDF 的 line/span 信息。
+
+    用于 figure caption 提取，避免 Fig. 2 和后面的图例文字被拆成不同文本块后丢失。
+    """
+    blocks: list[dict[str, Any]] = []
+
+    try:
+        raw = page.get_text("dict") or {}
+    except Exception:
+        return blocks
+
+    for block in raw.get("blocks", []) or []:
+        if not isinstance(block, dict) or block.get("type") != 0:
+            continue
+
+        block_bbox = _bbox_from_any(block.get("bbox"))
+        if len(block_bbox) < 4:
+            continue
+
+        lines = block.get("lines", []) or []
+        line_texts: list[str] = []
+
+        for line in lines:
+            if not isinstance(line, dict):
+                continue
+
+            spans = line.get("spans", []) or []
+            parts: list[str] = []
+
+            for span in spans:
+                if not isinstance(span, dict):
+                    continue
+                parts.append(str(span.get("text") or ""))
+
+            line_text = re.sub(r"\s+", " ", "".join(parts)).strip()
+            if line_text:
+                line_texts.append(line_text)
+
+        block_text = re.sub(r"\s+", " ", " ".join(line_texts)).strip()
+        if not block_text:
+            continue
+
+        blocks.append(
+            {
+                "bbox": block_bbox,
+                "text": block_text,
+                "lines": lines,
+            }
+        )
+
+    return blocks
+
+
 def extract_figures_pymupdf_enhanced(
-    page: Any,
-    text_blocks: list[dict[str, Any]],
-    table_rects: list[Any],
-    page_index: int,
-    page_size: list[float],
-    output_dir: Path,
+        page: Any,
+        table_rects: list[Any],
+        page_index: int,
+        page_size: list[float],
+        output_dir: Path,
 ) -> list[dict[str, Any]]:
+    figures: list[dict[str, Any]] = []
+
+    # 这里保留 line/span 信息，用于提取 Fig. x 后面的完整图例文字
+    text_blocks = _page_text_blocks_with_lines(page)
+
+    # candidates：最终用于判断“哪些东西可能是图”的候选框
+    # raw_visual_candidates：页面上所有视觉候选框，用于后面把被切碎的同一张图合并完整
     candidates: list[list[float]] = []
+    raw_visual_candidates: list[list[float]] = []
+
+    # 1. PDF image block 候选
     for block in (page.get_text("dict") or {}).get("blocks", []):
         if block.get("type") == 1:
             bbox = _bbox_from_any(block.get("bbox"))
-            if bbox:
+            if len(bbox) >= 4:
                 candidates.append(bbox)
+                raw_visual_candidates.append(bbox)
 
+    # 2. PyMuPDF image_info 候选
     try:
         for info in page.get_image_info(hashes=True, xrefs=True) or []:
             bbox = _bbox_from_any(info.get("bbox"))
-            if bbox:
+            if len(bbox) >= 4:
                 candidates.append(bbox)
+                raw_visual_candidates.append(bbox)
     except Exception:
         pass
 
+    # 3. vector drawing 候选
     drawings = []
     try:
         drawings = page.get_drawings() or []
     except Exception:
         drawings = []
+
     if len(drawings) > MAX_VECTOR_DRAWINGS_PER_PAGE and not ENABLE_VECTOR_FIGURE_DETECTION:
         drawings = []
 
@@ -240,67 +652,133 @@ def extract_figures_pymupdf_enhanced(
     for drawing in drawings:
         rect = drawing.get("rect")
         bbox = _bbox_from_any(rect)
-        if not bbox:
+        if len(bbox) < 4:
             continue
+
         width = bbox[2] - bbox[0]
         height = bbox[3] - bbox[1]
         area = width * height
+
         if width < 35 or height < 25 or area < 1800:
             continue
-        drawing_bboxes.append(bbox)
-    candidates.extend(_merge_nearby_bboxes(drawing_bboxes))
-    candidates.extend(_caption_anchored_figure_bboxes(text_blocks, page_size, table_rects))
 
-    figures: list[dict[str, Any]] = []
-    filtered = []
+        drawing_bboxes.append(bbox)
+        raw_visual_candidates.append(bbox)
+
+    merged_drawing_bboxes = _merge_nearby_bboxes(drawing_bboxes)
+    candidates.extend(merged_drawing_bboxes)
+
+    for merged_bbox in merged_drawing_bboxes:
+        if len(merged_bbox) >= 4:
+            raw_visual_candidates.append(merged_bbox)
+
+    # 4. 由 caption 反推图区域的候选
+    caption_anchored_bboxes = _caption_anchored_figure_bboxes(text_blocks, page_size, table_rects)
+    candidates.extend(caption_anchored_bboxes)
+
+    for anchored_bbox in caption_anchored_bboxes:
+        if len(anchored_bbox) >= 4:
+            raw_visual_candidates.append(anchored_bbox)
+
+    # 5. 初步过滤明显不合理的候选框
+    filtered: list[list[float]] = []
     for bbox in candidates:
         if not _reasonable_figure_bbox(bbox, page_size):
             continue
+
         if any(_overlap_ratio(_rect_from_bbox(bbox), table_rect) > 0.35 for table_rect in table_rects):
             continue
+
         filtered.append(bbox)
-    for figure_index, bbox in enumerate(_dedupe_bboxes(filtered), start=1):
-        caption_info = find_nearby_caption(bbox, text_blocks, page_size, "figure")
-        caption = caption_info.get("text", "") if caption_info else _caption_near_bbox(bbox, text_blocks)
-        display_bbox = _union_bboxes([bbox, caption_info.get("bbox", []) if caption_info else []])
+
+    # 6. 正式生成 figure
+    for bbox in _dedupe_bboxes(filtered):
+        # 关键：先用 raw_visual_candidates 修正图像 bbox，避免只截到半张图
+        image_bbox = _refine_figure_image_bbox(
+            seed_bbox=bbox,
+            visual_candidates=raw_visual_candidates,
+            page_size=page_size,
+        )
+
+        if not _reasonable_figure_bbox(image_bbox, page_size):
+            continue
+
+        # caption 也用修正后的 image_bbox 去找
+        caption_info = _expanded_figure_caption_info(
+            figure_bbox=image_bbox,
+            text_blocks=text_blocks,
+            page_size=page_size,
+        )
+        caption = str(caption_info.get("text", "") or "").strip()
+
+        # 兜底：如果新版 caption 提取失败，回退旧逻辑，避免右侧显示“暂无图例文字”
+        if not caption:
+            fallback_caption_info = find_nearby_caption(image_bbox, text_blocks, page_size, "figure")
+            if fallback_caption_info:
+                caption_info = fallback_caption_info
+                caption = str(fallback_caption_info.get("text", "") or "").strip()
+
+        if not caption:
+            caption = _caption_near_bbox(image_bbox, text_blocks)
+
+        skip, _reason = _should_skip_figure_candidate(
+            bbox=image_bbox,
+            page_index=page_index,
+            page_size=page_size,
+            text_blocks=text_blocks,
+            caption=caption,
+        )
+        if skip:
+            continue
+
+        figure_index = len(figures) + 1
+        caption_bbox = caption_info.get("bbox", []) if caption_info else []
+
         element_id = f"p{page_index + 1}_figure_{figure_index}"
         png_path = output_dir / "clips" / f"{element_id}.png"
-        image_meta = crop_element_png(page, display_bbox, png_path, zoom=2.5, padding=8)
+
+        # 关键：只裁剪图像本体，不把 caption 和页脚合并进图片
+        image_meta = crop_element_png(page, image_bbox, png_path, zoom=2.5, padding=6)
+
+        figure_label = _figure_label_from_caption(caption, figure_index)
+
         figures.append(
             {
                 "id": element_id,
                 "type": "figure",
                 "page": page_index,
-                "bbox": display_bbox,
+                "bbox": image_bbox,
                 "pageSize": page_size,
-                "label": f"Figure {figure_index}",
+                "label": figure_label,
                 "caption": caption,
-                "captionBBox": caption_info.get("bbox", []) if caption_info else [],
+                "captionBBox": caption_bbox,
                 "text": caption,
                 "table": [],
                 "csvPath": "",
                 "jsonPath": "",
                 "pngPath": str(png_path),
                 "metadata": {
-                    "width": round(display_bbox[2] - display_bbox[0], 2),
-                    "height": round(display_bbox[3] - display_bbox[1], 2),
-                    "imageBBox": bbox,
+                    "width": round(image_bbox[2] - image_bbox[0], 2),
+                    "height": round(image_bbox[3] - image_bbox[1], 2),
+                    "imageBBox": image_bbox,
+                    "captionBBox": caption_bbox,
                     **image_meta,
                 },
             }
         )
+
     return figures
 
 
 def _extract_figures(
-    page: Any,
-    page_index: int,
-    page_size: list[float],
-    output_dir: Path,
-    text_blocks: list[dict[str, Any]],
-    table_rects: list[Any],
+        page: Any,
+        page_index: int,
+        page_size: list[float],
+        output_dir: Path,
+        text_blocks: list[dict[str, Any]],
+        table_rects: list[Any],
 ) -> list[dict[str, Any]]:
-    return extract_figures_pymupdf_enhanced(page, text_blocks, table_rects, page_index, page_size, output_dir)
+    return extract_figures_pymupdf_enhanced(page, table_rects, page_index, page_size, output_dir)
 
 
 def extract_formula_candidates_pymupdf(page: Any, text_blocks: list[dict[str, Any]], page_index: int, page_size: list[float], output_dir: Path) -> list[dict[str, Any]]:
@@ -581,9 +1059,362 @@ def _caption_near_bbox(bbox: list[float], text_blocks: list[dict[str, Any]]) -> 
         if 0 <= distance_above <= 35:
             above.append((distance_above, text))
     for _distance, text in sorted(below + above, key=lambda item: item[0]):
-        if CAPTION_PATTERN.search(text) or len(text) <= 180:
+        if FIGURE_CAPTION_PATTERN.search(text):
             return text[:240]
+
     return ""
+
+
+FIGURE_CAPTION_LABEL_PATTERN = re.compile(
+    r"^\s*(?:fig(?:ure)?[\.\．]?|图)\s*([0-9]+[A-Za-z]?)\b",
+    re.IGNORECASE,
+)
+
+CAPTION_FOOTER_NOISE_PATTERN = re.compile(
+    r"("
+    r"©|copyright|the\s+author\(s\)|published\s+by|royal\s+society\s+of\s+chemistry|"
+    r"rsc\s+adv\.|rsc\s+advances|view\s+article\s+online|view\s+journal|view\s+issue|"
+    r"doi\s*:|creative\s+commons"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _normalize_inline_text(text: str) -> str:
+    return re.sub(r"\s+", " ", str(text or "")).strip()
+
+
+def _union_nonempty_bboxes(boxes: list[list[float]]) -> list[float]:
+    valid: list[list[float]] = []
+    for box in boxes or []:
+        normalized = _bbox_from_any(box)
+        if len(normalized) >= 4:
+            valid.append([float(v) for v in normalized[:4]])
+
+    if not valid:
+        return []
+
+    return [
+        min(box[0] for box in valid),
+        min(box[1] for box in valid),
+        max(box[2] for box in valid),
+        max(box[3] for box in valid),
+    ]
+
+
+def _line_entries_from_text_blocks(text_blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """把 text block 拆成 line entry，后续按视觉行合并。"""
+    entries: list[dict[str, Any]] = []
+
+    for block in text_blocks or []:
+        if not isinstance(block, dict):
+            continue
+
+        lines = block.get("lines", []) or []
+        if lines:
+            for line in lines:
+                if not isinstance(line, dict):
+                    continue
+
+                spans = line.get("spans", []) or []
+                parts: list[str] = []
+                span_boxes: list[list[float]] = []
+
+                for span in spans:
+                    if not isinstance(span, dict):
+                        continue
+                    text = str(span.get("text") or "")
+                    if text:
+                        parts.append(text)
+
+                    span_bbox = _bbox_from_any(span.get("bbox"))
+                    if len(span_bbox) >= 4:
+                        span_boxes.append(span_bbox)
+
+                text = _normalize_inline_text("".join(parts))
+                bbox = _union_nonempty_bboxes(span_boxes) or _bbox_from_any(line.get("bbox"))
+
+                if text and len(bbox) >= 4:
+                    entries.append(
+                        {
+                            "text": text,
+                            "bbox": bbox,
+                            "x0": float(bbox[0]),
+                            "y0": float(bbox[1]),
+                            "x1": float(bbox[2]),
+                            "y1": float(bbox[3]),
+                            "cy": (float(bbox[1]) + float(bbox[3])) / 2.0,
+                            "height": max(1.0, float(bbox[3]) - float(bbox[1])),
+                        }
+                    )
+            continue
+
+        # 兜底：如果只有 block 级 text/bbox，也保留，但精度会低于 line 级。
+        text = _normalize_inline_text(block.get("text", ""))
+        bbox = _bbox_from_any(block.get("bbox"))
+        if text and len(bbox) >= 4:
+            entries.append(
+                {
+                    "text": text,
+                    "bbox": bbox,
+                    "x0": float(bbox[0]),
+                    "y0": float(bbox[1]),
+                    "x1": float(bbox[2]),
+                    "y1": float(bbox[3]),
+                    "cy": (float(bbox[1]) + float(bbox[3])) / 2.0,
+                    "height": max(1.0, float(bbox[3]) - float(bbox[1])),
+                }
+            )
+
+    entries.sort(key=lambda item: (item["cy"], item["x0"]))
+    return entries
+
+
+def _merge_visual_text_rows(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """合并同一视觉行上的碎片，例如 'Fig. 2' 和 'Maximum temperature...'。"""
+    if not entries:
+        return []
+
+    rows: list[list[dict[str, Any]]] = []
+
+    for entry in entries:
+        placed = False
+        for row in rows:
+            row_cy = sum(item["cy"] for item in row) / max(1, len(row))
+            row_height = max(item["height"] for item in row)
+            tolerance = max(3.5, row_height * 0.45)
+
+            if abs(entry["cy"] - row_cy) <= tolerance:
+                row.append(entry)
+                placed = True
+                break
+
+        if not placed:
+            rows.append([entry])
+
+    merged_rows: list[dict[str, Any]] = []
+
+    for row in rows:
+        row.sort(key=lambda item: item["x0"])
+        texts = [_normalize_inline_text(item["text"]) for item in row if _normalize_inline_text(item["text"])]
+        boxes = [item["bbox"] for item in row if len(item.get("bbox", [])) >= 4]
+        bbox = _union_nonempty_bboxes(boxes)
+
+        if not texts or len(bbox) < 4:
+            continue
+
+        text = _normalize_inline_text(" ".join(texts))
+        merged_rows.append(
+            {
+                "text": text,
+                "bbox": bbox,
+                "x0": float(bbox[0]),
+                "y0": float(bbox[1]),
+                "x1": float(bbox[2]),
+                "y1": float(bbox[3]),
+                "cy": (float(bbox[1]) + float(bbox[3])) / 2.0,
+                "height": max(1.0, float(bbox[3]) - float(bbox[1])),
+            }
+        )
+
+    merged_rows.sort(key=lambda item: (item["y0"], item["x0"]))
+    return merged_rows
+
+
+def _caption_sentence_complete(text: str) -> bool:
+    value = _normalize_inline_text(text)
+    if not value:
+        return False
+
+    return bool(re.search(r"[。.!?]\s*$", value))
+
+
+def _is_probable_body_or_heading_after_caption(text: str) -> bool:
+    value = _normalize_inline_text(text)
+    if not value:
+        return True
+
+    if CAPTION_FOOTER_NOISE_PATTERN.search(value):
+        return True
+
+    if TABLE_CAPTION_PATTERN.search(value):
+        return True
+
+    if FIGURE_CAPTION_LABEL_PATTERN.search(value):
+        return True
+
+    # 章节标题，例如 3.2. Current density uniformity analysis
+    if re.match(r"^\s*\d+(?:\.\d+)*\.?\s+[A-Z]", value):
+        return True
+
+    return False
+
+
+def _expanded_figure_caption_info(
+        figure_bbox: list[float],
+        text_blocks: list[dict[str, Any]],
+        page_size: list[float],
+) -> dict[str, Any]:
+    """从 PDF 文本行中提取 Fig.x 后面的完整图例文字。"""
+    if len(figure_bbox or []) < 4 or len(page_size or []) < 2:
+        return {"text": "", "bbox": []}
+
+    page_width = float(page_size[0] or 0)
+    page_height = float(page_size[1] or 0)
+    if page_width <= 0 or page_height <= 0:
+        return {"text": "", "bbox": []}
+
+    fx0, fy0, fx1, fy1 = [float(v) for v in figure_bbox[:4]]
+
+    # 关键改动：
+    # 旧版只在图底部附近找，太窄；
+    # 新版允许在图框内部下半部分、图下方一小段寻找 caption。
+    col_x0, col_x1 = _column_bounds_for_bbox(figure_bbox, page_size)
+    # caption 只允许在 figure 同一栏内搜索
+    search_x0 = col_x0
+    search_x1 = col_x1
+
+    # caption 通常在图底部附近或图下方一小段
+    search_y0 = max(0.0, fy1 - 26.0)
+    search_y1 = min(page_height, fy1 + max(54.0, page_height * 0.075))
+
+    search_bbox = [search_x0, search_y0, search_x1, search_y1]
+    rows = _merge_visual_text_rows(_line_entries_from_text_blocks(text_blocks))
+
+    candidate_rows: list[dict[str, Any]] = []
+
+    for row in rows:
+        text = _normalize_inline_text(row.get("text", ""))
+        if not text:
+            continue
+
+        if CAPTION_FOOTER_NOISE_PATTERN.search(text):
+            continue
+
+        row_bbox = _bbox_from_any(row.get("bbox"))
+        if len(row_bbox) < 4:
+            continue
+
+        row_center_y = float(row["cy"])
+        if row_center_y < search_y0 or row_center_y > search_y1:
+            continue
+
+        # 关键改动：
+        # 不再只看 center_x，改成看横向重叠。
+        # 因为 caption 往往比图宽，或 Fig. 2 标签和后文被拆成多个 span。
+        if _bbox_inside_column_ratio(row_bbox, col_x0, col_x1) < 0.72:
+            continue
+
+        if FIGURE_CAPTION_LABEL_PATTERN.search(text):
+            candidate_rows.append(row)
+
+    if not candidate_rows:
+        return {"text": "", "bbox": []}
+
+    # 优先选择最靠近图底部的 Fig.x 行。
+    anchor = min(candidate_rows, key=lambda item: abs(float(item["cy"]) - fy1))
+
+    try:
+        anchor_index = rows.index(anchor)
+    except ValueError:
+        text = _normalize_inline_text(anchor.get("text", ""))
+        return {"text": text[:900], "bbox": _bbox_from_any(anchor.get("bbox"))}
+
+    caption_rows: list[dict[str, Any]] = [anchor]
+    merged_text = _normalize_inline_text(anchor.get("text", ""))
+    anchor_bbox = _bbox_from_any(anchor.get("bbox"))
+
+    # 如果第一行已经完整，例如：
+    # Fig. 2 Maximum temperature for different carbon shell thicknesses.
+    # 直接停止，不再向下抓正文。
+    if not _caption_sentence_complete(merged_text):
+        previous = anchor
+
+        for row in rows[anchor_index + 1:]:
+            text = _normalize_inline_text(row.get("text", ""))
+            if not text:
+                continue
+
+            row_bbox = _bbox_from_any(row.get("bbox"))
+            if len(row_bbox) < 4:
+                continue
+
+            if float(row["cy"]) > search_y1:
+                break
+
+            if CAPTION_FOOTER_NOISE_PATTERN.search(text):
+                break
+
+            if TABLE_CAPTION_PATTERN.search(text):
+                break
+
+            if FIGURE_CAPTION_LABEL_PATTERN.search(text):
+                break
+
+            if re.match(r"^\s*\d+(?:\.\d+)*\.?\s+[A-Z]", text):
+                break
+
+            # 新增：必须仍在当前 figure 所在栏位内，防止抓到旁边栏正文
+            if _bbox_inside_column_ratio(row_bbox, col_x0, col_x1) < 0.72:
+                break
+
+            vertical_gap = float(row["y0"]) - float(previous["y1"])
+            allowed_gap = max(4.5, float(previous["height"]) * 0.80)
+
+            # caption 换行通常很紧；超过这个间距就认为进入正文
+            if vertical_gap > allowed_gap:
+                break
+
+            # 新增：caption 续行不应该突然跑到很远的横向位置
+            if len(anchor_bbox) >= 4:
+                if abs(float(row["x0"]) - float(anchor_bbox[0])) > 26.0:
+                    break
+
+            caption_rows.append(row)
+            previous = row
+            merged_text = _normalize_inline_text(merged_text + " " + text)
+
+            if _caption_sentence_complete(merged_text):
+                break
+
+            if len(merged_text) >= 900:
+                break
+
+    caption_text = _normalize_inline_text(
+        " ".join(_normalize_inline_text(row.get("text", "")) for row in caption_rows)
+    )
+    caption_bbox = _union_nonempty_bboxes([row.get("bbox", []) for row in caption_rows])
+
+    if not FIGURE_CAPTION_LABEL_PATTERN.search(caption_text):
+        return {"text": "", "bbox": []}
+
+    return {
+        "text": caption_text[:900],
+        "bbox": caption_bbox,
+    }
+
+
+def _is_probable_section_heading(text: str) -> bool:
+    value = _normalize_inline_text(text)
+    if not value:
+        return False
+
+    if re.match(r"^\s*\d+(\.\d+)*\.?\s+[A-Z]", value):
+        return True
+
+    if len(value) <= 80 and value.isupper():
+        return True
+
+    return False
+
+
+
+def _figure_label_from_caption(caption: str, fallback_index: int) -> str:
+    text = str(caption or "").strip()
+    match = FIGURE_LABEL_EXTRACT_PATTERN.search(text)
+    if match:
+        return f"Figure {match.group(1)}"
+    return f"Figure {fallback_index}"
 
 
 def _table_caption_for_bbox(bbox: list[float], text_blocks: list[dict[str, Any]], page_size: list[float]) -> dict[str, Any]:

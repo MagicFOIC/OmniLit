@@ -142,6 +142,7 @@ class TranslationController(QObject):
     document = Signal(str)
     preview = Signal(str)
     finished = Signal(bool, str)
+    snippetTranslationFinished = Signal(str, str, bool, str)
 
     def __init__(self, app: AppController, paths: AppPaths, store: AccountStore, locale: LocaleController):
         """初始化翻译控制器。参数：应用、路径和语言。返回值：无。"""
@@ -484,6 +485,136 @@ class TranslationController(QObject):
         self.paths.data("Translate", USER_KEY_FILE_NAME).unlink(missing_ok=True)
         self._user_key, self._status = "", self.locale.textf("user_key_cleared")
         self.changed.emit()
+
+    @Slot(str, str, result=str)
+    def translateSnippet(self, text: str, target_lang: str = "zh") -> str:
+        """翻译短文本片段，用于解析阅读页图例对照。"""
+        source_text = str(text or "").strip()
+        if not source_text:
+            self._status = "没有可翻译的文本。"
+            self.changed.emit()
+            return ""
+
+        try:
+            core = import_resource_module(self.paths, "Translate", "literature_translate_core")
+
+            raw = dict(self._saved_config or {})
+            normalized_target = "en" if str(target_lang or "").strip().lower() == "en" else "zh"
+
+            glossary_text = core.load_glossary(
+                self._glossary_paths(raw.get("glossaryPaths")),
+                target_lang=normalized_target,
+            )
+
+            api_key = (
+                    str(raw.get("apiKey") or "").strip()
+                    or self._user_key
+                    or self._default_key
+                    or None
+            )
+
+            args = argparse.Namespace(
+                translator="deepseek",
+                target_lang=normalized_target,
+                api_key=api_key,
+                base_url=str(raw.get("baseUrl") or "https://api.deepseek.com").strip(),
+                model=str(raw.get("model") or "deepseek-v4-flash").strip(),
+                temperature=0.15,
+                max_retries=2,
+                disable_json_mode=False,
+            )
+
+            translator = core.make_translator(args, glossary_text)
+
+            segment = core.Segment(
+                sid="snippet_1",
+                page_index=0,
+                kind="caption",
+                text=source_text[:5000],
+                lines=[],
+                translate=True,
+            )
+
+            cache = core.TranslationCache(
+                self.paths.data("Translate", "snippet_translation_cache.json"),
+                enabled=True,
+            )
+            cache_key = cache.key(
+                translator.provider,
+                translator.model,
+                normalized_target,
+                segment.text,
+                glossary_text,
+            )
+            cached = cache.get(cache_key)
+            if cached:
+                self._status = "图例翻译已从缓存读取。"
+                self.changed.emit()
+                return str(cached).strip()
+
+            result = translator.translate_many([segment], context="Figure caption from PDF reading panel.")
+            translated = str(result.get(segment.sid, "") or "").strip()
+            translated, cacheable = core.guarded_translation(
+                translator,
+                segment,
+                translated,
+                context="Figure caption from PDF reading panel.",
+                target_lang=normalized_target,
+            )
+
+            translated = str(translated or "").strip()
+            if not translated:
+                self._status = "图例翻译失败：模型未返回有效译文。"
+                self.changed.emit()
+                return ""
+
+            if cacheable:
+                cache.set(cache_key, translated)
+                cache.save()
+
+            self._status = "图例翻译完成。"
+            self.changed.emit()
+            return translated
+
+        except Exception as exc:
+            self._status = f"图例翻译失败：{exc}"
+            self.changed.emit()
+            return ""
+
+    @Slot(str, str, str)
+    def translateSnippetAsync(self, element_key: str, text: str, target_lang: str = "zh") -> None:
+        """异步翻译短文本，避免 QML 主线程卡顿。"""
+        key = str(element_key or "").strip()
+        source_text = str(text or "").strip()
+        target = str(target_lang or "zh").strip() or "zh"
+
+        if not source_text:
+            self.snippetTranslationFinished.emit(key, "", False, "暂无可翻译图例。")
+            return
+
+        def _worker() -> None:
+            try:
+                translated = self.translateSnippet(source_text, target)
+                translated = str(translated or "").strip()
+
+                if translated:
+                    message = "图例翻译完成。"
+                    self.snippetTranslationFinished.emit(key, translated, True, message)
+                else:
+                    message = str(getattr(self, "_status", "") or "图例翻译失败。")
+                    self.snippetTranslationFinished.emit(key, "", False, message)
+
+            except Exception as exc:
+                message = f"图例翻译失败：{exc}"
+                try:
+                    self._status = message
+                    self.changed.emit()
+                except Exception:
+                    pass
+                self.snippetTranslationFinished.emit(key, "", False, message)
+
+        thread = threading.Thread(target=_worker, daemon=True)
+        thread.start()
 
     def _glossary_paths(self, raw: Any) -> list[Path]:
         """规范化术语表路径。参数：QML 列表或文本。返回值：路径列表。"""
