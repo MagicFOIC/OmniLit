@@ -35,6 +35,38 @@ class PdfExtractionQualityTests(unittest.TestCase):
         self.assertTrue(element["needsReview"])
         self.assertIn("missing_bbox", element["qualityFlags"])
 
+    def test_single_engine_formula_is_reviewable_even_with_good_text_and_bbox(self) -> None:
+        element = apply_quality({"type": "formula", "latex": "E = mc^2", "bbox": [10, 10, 90, 30], "pageSize": [100, 100], "engine": "pymupdf"})
+        self.assertTrue(element["needsReview"])
+        self.assertIn("single_engine_formula", element["qualityFlags"])
+
+    def test_weak_table_evidence_adds_quality_flag(self) -> None:
+        element = apply_quality(
+            {
+                "type": "table",
+                "table": [["A", "B"], ["", ""]],
+                "bbox": [10, 10, 90, 80],
+                "pageSize": [100, 100],
+                "metadata": {"tableEvidenceScore": 0.2},
+            }
+        )
+        self.assertTrue(element["needsReview"])
+        self.assertIn("weak_table_evidence", element["qualityFlags"])
+
+    def test_page_sized_unanchored_text_table_needs_review(self) -> None:
+        element = apply_quality(
+            {
+                "type": "table",
+                "table": [["body", "text"], ["more", "prose"]],
+                "bbox": [5, 5, 95, 95],
+                "pageSize": [100, 100],
+                "metadata": {"textStrategy": True},
+            }
+        )
+        self.assertTrue(element["needsReview"])
+        self.assertIn("unanchored_text_table", element["qualityFlags"])
+        self.assertIn("page_sized_table", element["qualityFlags"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -21,6 +21,9 @@ from .services import AccountStore, as_float, default_download_dir, import_resou
 
 LEVEL_ORDER: dict[str, int] = {
     "unmatched": -1,
+    "weak": 1,
+    "medium": 2,
+    "strong": 3,
     "keyword_only": 0,
     "loose": 1,
     "balanced": 2,
@@ -50,7 +53,142 @@ KEYWORD_GROUP_ALIASES: dict[str, str] = {
 
 BROAD_KEYWORD_GROUPS = {"article", "study", "result", "method", "battery"}
 
-LIBRARY_CACHE_VERSION = 1
+LIBRARY_CACHE_VERSION = 2
+
+JOURNAL_TYPE_LABELS: dict[str, str] = {
+    "all": "全部期刊类型",
+    "flagship": "综合/高影响力",
+    "field_journal": "专业领域",
+    "review_journal": "综述类",
+    "oa_journal": "开放获取",
+    "preprint": "预印本",
+    "conference": "会议/论文集",
+    "unknown": "未识别",
+}
+
+DEFAULT_FAVORITE_PROJECTS: list[dict[str, Any]] = [
+    {"id": "to_read", "name": "待读精读", "built_in": True},
+    {"id": "core", "name": "核心文献", "built_in": True},
+    {"id": "review", "name": "综述与背景", "built_in": True},
+    {"id": "method", "name": "方法/模型", "built_in": True},
+    {"id": "data", "name": "数据集/实验", "built_in": True},
+    {"id": "writing", "name": "写作引用", "built_in": True},
+    {"id": "read_archive", "name": "已读归档", "built_in": True},
+]
+
+
+def classify_journal_type(record: dict[str, Any]) -> tuple[str, str]:
+    """Classify a literature record by journal/source type."""
+    source = str(record.get("literature_source") or record.get("source") or "").strip()
+    journal_name = str(
+        record.get("journalName")
+        or record.get("journalTitle")
+        or record.get("journal_title")
+        or record.get("journal")
+        or record.get("container_title")
+        or record.get("container-title")
+        or ""
+    ).strip()
+    publisher = str(record.get("publisher") or record.get("host_venue") or "").strip()
+    source_text = source.casefold()
+    combined = " ".join([journal_name, publisher, source]).casefold()
+
+    if source_text == "arxiv" or "arxiv" in source_text or "arxiv" in combined:
+        return "preprint", journal_name
+    if source_text == "doaj" or "doaj" in source_text or "doaj" in combined or "open access" in combined:
+        return "oa_journal", journal_name
+    if any(token in combined for token in ("annual reviews", "trends in", "review")):
+        return "review_journal", journal_name
+    if any(token in combined for token in ("conference", "proceedings", "symposium")):
+        return "conference", journal_name
+    journal_text = journal_name.casefold()
+    if any(token in journal_text for token in ("nature", "science", "cell", "pnas")):
+        return "flagship", journal_name
+    if journal_name:
+        return "field_journal", journal_name
+    return "unknown", ""
+
+
+class LibraryStateStore:
+    """Small JSON state store for library favorites and compare groups."""
+
+    def __init__(self, path: Path):
+        self.path = path
+
+    @staticmethod
+    def default_state() -> dict[str, Any]:
+        return {
+            "schema_version": 1,
+            "projects": [dict(project) for project in DEFAULT_FAVORITE_PROJECTS],
+            "favorites": {},
+            "compare": {"active": []},
+        }
+
+    def load(self) -> dict[str, Any]:
+        if not self.path.exists():
+            state = self.default_state()
+            self.save(state)
+            return state
+        try:
+            with self.path.open("r", encoding="utf-8") as fin:
+                state = json.load(fin)
+            if not isinstance(state, dict):
+                raise ValueError("library state must be a JSON object")
+        except Exception:
+            backup = self.path.with_suffix(self.path.suffix + ".bak")
+            if backup.exists():
+                backup = self.path.with_suffix(self.path.suffix + f".{datetime.now().strftime('%Y%m%d%H%M%S')}.bak")
+            try:
+                shutil.copy2(self.path, backup)
+            except OSError:
+                pass
+            state = self.default_state()
+            self.save(state)
+            return state
+        return self._normalized_state(state)
+
+    def save(self, state: dict[str, Any]) -> None:
+        normalized = self._normalized_state(state)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = self.path.with_name(f"{self.path.name}.tmp")
+        with tmp_path.open("w", encoding="utf-8") as fout:
+            json.dump(normalized, fout, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, self.path)
+
+    @classmethod
+    def _normalized_state(cls, state: dict[str, Any]) -> dict[str, Any]:
+        normalized = cls.default_state()
+        projects = state.get("projects")
+        if isinstance(projects, list):
+            seen: set[str] = set()
+            merged: list[dict[str, Any]] = []
+            for project in [*DEFAULT_FAVORITE_PROJECTS, *projects]:
+                if not isinstance(project, dict):
+                    continue
+                project_id = str(project.get("id") or "").strip()
+                name = str(project.get("name") or "").strip()
+                if not project_id or not name or project_id in seen:
+                    continue
+                seen.add(project_id)
+                merged.append({"id": project_id, "name": name, "built_in": bool(project.get("built_in"))})
+            normalized["projects"] = merged
+        favorites = state.get("favorites")
+        if isinstance(favorites, dict):
+            valid_project_ids = {str(project["id"]) for project in normalized["projects"]}
+            cleaned: dict[str, list[str]] = {}
+            for record_id, project_ids in favorites.items():
+                values = project_ids if isinstance(project_ids, list) else []
+                ids = [str(item) for item in values if str(item) in valid_project_ids]
+                unique_ids = list(dict.fromkeys(ids))
+                if unique_ids:
+                    cleaned[str(record_id)] = unique_ids
+            normalized["favorites"] = cleaned
+        compare = state.get("compare")
+        if isinstance(compare, dict):
+            active = compare.get("active")
+            if isinstance(active, list):
+                normalized["compare"] = {"active": list(dict.fromkeys(str(item) for item in active if str(item)))[:4]}
+        return normalized
 
 
 class LiteratureLibraryController(QObject):
@@ -70,8 +208,13 @@ class LiteratureLibraryController(QObject):
         self._query = ""
         self._relevance_filter = "all"
         self._pdf_status_filter = "all"
+        self._sort_mode = "relevance_desc"
+        self._journal_type_filter = "all"
+        self._project_id_filter = "all"
         self._keyword_group_filter: set[str] = set()
         self._keyword_group_options: list[dict[str, Any]] = []
+        self._state_store = LibraryStateStore(self._output_root() / "library_state.json")
+        self._library_state = self._state_store.load()
         self._status = "文献库尚未加载。" if locale.language == "zh" else "Library has not been loaded."
         self._loading = False
         self._busy_action = ""
@@ -112,6 +255,17 @@ class LiteratureLibraryController(QObject):
 
     def _output_root(self) -> Path:
         return self._output_root_from_settings(self._download_settings())
+
+    def _ensure_state_store(self) -> None:
+        state_path = self._output_root() / "library_state.json"
+        if self._state_store.path != state_path:
+            self._state_store = LibraryStateStore(state_path)
+            self._library_state = self._state_store.load()
+
+    def _save_library_state(self) -> None:
+        self._ensure_state_store()
+        self._state_store.save(self._library_state)
+        self._library_state = self._state_store.load()
 
     @property
     def _meta_path(self) -> Path:
@@ -399,6 +553,34 @@ class LiteratureLibraryController(QObject):
         except (TypeError, ValueError):
             return ""
 
+    @staticmethod
+    def _project_id_from_name(name: str, existing: set[str]) -> str:
+        base = re.sub(r"[^0-9a-zA-Z_\-\u4e00-\u9fff]+", "_", str(name or "").strip()).strip("_")
+        base = base or "project"
+        candidate = base
+        index = 2
+        while candidate in existing:
+            candidate = f"{base}_{index}"
+            index += 1
+        return candidate
+
+    def _favorite_project_ids(self, record_id: str) -> list[str]:
+        favorites = self._library_state.get("favorites") if isinstance(self._library_state, dict) else {}
+        project_ids = favorites.get(str(record_id), []) if isinstance(favorites, dict) else []
+        return [str(item) for item in project_ids if str(item)]
+
+    def _favorite_project_names_text(self, record_id: str) -> str:
+        ids = set(self._favorite_project_ids(record_id))
+        if not ids:
+            return ""
+        names = [str(project.get("name") or "") for project in self.favoriteProjects if str(project.get("id") or "") in ids]
+        return "、".join(name for name in names if name)
+
+    def _compare_ids(self) -> list[str]:
+        compare = self._library_state.get("compare") if isinstance(self._library_state, dict) else {}
+        active = compare.get("active", []) if isinstance(compare, dict) else []
+        return [str(item) for item in active if str(item)]
+
     @classmethod
     def _impact_factor_text(cls, record: dict[str, Any]) -> str:
         value = record.get("impact_factor")
@@ -468,6 +650,15 @@ class LiteratureLibraryController(QObject):
         authors_text = ", ".join(str(author) for author in authors[:6]) if isinstance(authors, list) else str(authors or "")
         impact_factor_text = self._impact_factor_text(enriched)
         publication_date = str(enriched.get("publication_date") or "")
+        journal_name = str(
+            enriched.get("journal_title")
+            or enriched.get("journal")
+            or enriched.get("container_title")
+            or enriched.get("container-title")
+            or ""
+        ).strip()
+        journal_type, classified_journal_name = classify_journal_type({**enriched, "journalTitle": journal_name})
+        journal_name = classified_journal_name or journal_name
         journal_issns = self._list_values(enriched.get("journal_issns") or enriched.get("journal_issn") or enriched.get("issn"))
         journal_issns_text = ", ".join(journal_issns)
         summary_text = str(enriched.get("summary_text") or enriched.get("content_summary") or core.summarize_content(abstract, str(enriched.get("title") or "")))
@@ -492,7 +683,10 @@ class LiteratureLibraryController(QObject):
                 "source": str(enriched.get("literature_source") or ""),
                 "year": str(enriched.get("publication_year") or "") or str(enriched.get("publication_date") or "")[:4],
                 "publicationDate": publication_date,
-                "journalTitle": str(enriched.get("journal_title") or ""),
+                "journalTitle": journal_name,
+                "journalType": journal_type,
+                "journalTypeLabel": JOURNAL_TYPE_LABELS.get(journal_type, JOURNAL_TYPE_LABELS["unknown"]),
+                "journalName": journal_name,
                 "impactFactorText": impact_factor_text,
                 "impactFactorSource": str(enriched.get("impact_factor_source") or enriched.get("journal_metric_source") or ""),
                 "impactFactorMetric": str(enriched.get("impact_factor_metric") or enriched.get("journal_impact_metric") or ""),
@@ -589,7 +783,6 @@ class LiteratureLibraryController(QObject):
         for record in enriched_records:
             deduped[str(record["recordId"])] = record
         records = list(deduped.values())
-        records.sort(key=lambda item: (str(item.get("year") or ""), str(item.get("title") or "")), reverse=True)
         return records
 
     def _cleanup_candidate(
@@ -927,6 +1120,7 @@ class LiteratureLibraryController(QObject):
         return "idle"
 
     def _apply_loaded_records(self, records: list[dict[str, Any]]) -> None:
+        self._ensure_state_store()
         self._records = records
         self._record_by_id = {str(record["recordId"]): record for record in self._records}
         self._keyword_group_options = self._build_keyword_group_options(self._records)
@@ -934,8 +1128,10 @@ class LiteratureLibraryController(QObject):
         self._keyword_group_filter = {key for key in self._keyword_group_filter if key in valid_keys}
         self._apply_filters()
 
-    @staticmethod
-    def _list_record(record: dict[str, Any]) -> dict[str, Any]:
+    def _list_record(self, record: dict[str, Any]) -> dict[str, Any]:
+        record_id = str(record.get("recordId") or "")
+        favorite_project_ids = self._favorite_project_ids(record_id)
+        compare_ids = set(self._compare_ids())
         return {
             "recordId": record.get("recordId", ""),
             "title": record.get("title", ""),
@@ -944,6 +1140,9 @@ class LiteratureLibraryController(QObject):
             "year": record.get("year", ""),
             "publicationDate": record.get("publicationDate", ""),
             "journalTitle": record.get("journalTitle", ""),
+            "journalType": record.get("journalType", "unknown"),
+            "journalTypeLabel": record.get("journalTypeLabel", JOURNAL_TYPE_LABELS["unknown"]),
+            "journalName": record.get("journalName", ""),
             "impactFactorText": record.get("impactFactorText", "未知"),
             "impactFactorSource": record.get("impactFactorSource", ""),
             "impactFactorMetric": record.get("impactFactorMetric", ""),
@@ -964,7 +1163,52 @@ class LiteratureLibraryController(QObject):
             "matchedKeywordsText": record.get("matchedKeywordsText", ""),
             "matchedFieldsText": record.get("matchedFieldsText", ""),
             "keywordGroupKeys": record.get("keywordGroupKeys", []),
+            "isFavorite": bool(favorite_project_ids),
+            "favoriteProjectIds": favorite_project_ids,
+            "favoriteProjectNamesText": self._favorite_project_names_text(record_id),
+            "inCompare": record_id in compare_ids,
         }
+
+    @staticmethod
+    def _year_value(record: dict[str, Any]) -> int:
+        for value in (record.get("year"), record.get("publication_year"), record.get("publicationDate"), record.get("publication_date")):
+            match = re.search(r"(?:19|20)\d{2}", str(value or ""))
+            if match:
+                return int(match.group(0))
+        return 0
+
+    @staticmethod
+    def _relevance_rank(record: dict[str, Any]) -> int:
+        return LEVEL_ORDER.get(str(record.get("relevance_level") or "unmatched"), -1)
+
+    @staticmethod
+    def _relevance_score(record: dict[str, Any]) -> float:
+        try:
+            return float(record.get("relevance_score") or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _sort_records(self, records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        mode = self._sort_mode or "relevance_desc"
+        if mode == "relevance_asc":
+            return sorted(records, key=lambda item: (self._relevance_rank(item), self._relevance_score(item), self._year_value(item), str(item.get("title") or "").casefold()))
+        if mode == "year_desc":
+            return sorted(records, key=lambda item: (self._year_value(item), self._relevance_rank(item), self._relevance_score(item), str(item.get("title") or "").casefold()), reverse=True)
+        if mode == "year_asc":
+            return sorted(records, key=lambda item: (self._year_value(item) or 9999, str(item.get("title") or "").casefold()))
+        if mode == "downloaded_first":
+            return sorted(
+                records,
+                key=lambda item: (bool(item.get("localPdfPath")), self._relevance_rank(item), self._relevance_score(item), self._year_value(item)),
+                reverse=True,
+            )
+        if mode == "title_asc":
+            return sorted(records, key=lambda item: str(item.get("title") or "").casefold())
+        return sorted(
+            records,
+            key=lambda item: (self._relevance_rank(item), self._relevance_score(item), self._year_value(item), str(item.get("title") or "").casefold()),
+            reverse=True,
+        )
 
     def _apply_filters(self) -> None:
         query = self._query.casefold().strip()
@@ -985,6 +1229,12 @@ class LiteratureLibraryController(QObject):
                 record_groups = {str(key) for key in record.get("keywordGroupKeys") or []}
                 if not record_groups.intersection(self._keyword_group_filter):
                     continue
+            if self._journal_type_filter != "all":
+                if str(record.get("journalType") or "unknown") != self._journal_type_filter:
+                    continue
+            if self._project_id_filter not in {"", "all"}:
+                if self._project_id_filter not in self._favorite_project_ids(str(record.get("recordId") or "")):
+                    continue
             if query:
                 haystack = " ".join(
                     str(record.get(name) or "")
@@ -998,12 +1248,14 @@ class LiteratureLibraryController(QObject):
                         "normalized_doi",
                         "keyword",
                         "journalTitle",
+                        "journalName",
+                        "journalTypeLabel",
                     )
                 ).casefold()
                 if query not in haystack:
                     continue
             filtered.append(record)
-        self._filtered = filtered
+        self._filtered = self._sort_records(filtered)
 
     def _start_worker(
         self,
@@ -1110,6 +1362,20 @@ class LiteratureLibraryController(QObject):
     @Property("QVariantList", notify=changed)
     def keywordGroupOptions(self) -> list[dict[str, Any]]:
         return list(self._keyword_group_options)
+
+    @Property("QVariantList", notify=changed)
+    def favoriteProjects(self) -> list[dict[str, Any]]:
+        self._ensure_state_store()
+        projects = self._library_state.get("projects") if isinstance(self._library_state, dict) else []
+        return [dict(project) for project in projects if isinstance(project, dict)]
+
+    @Property("QVariantList", notify=changed)
+    def compareRecords(self) -> list[dict[str, Any]]:
+        return self.compareDetails()
+
+    @Property(int, notify=changed)
+    def compareCount(self) -> int:
+        return len(self._compare_ids())
 
     @Property(int, notify=changed)
     def totalCount(self) -> int:
@@ -1226,6 +1492,174 @@ class LiteratureLibraryController(QObject):
         self._keyword_group_filter = {str(item) for item in (keyword_groups or []) if str(item)}
         self._apply_filters()
         self.changed.emit()
+
+    @Slot("QVariantMap")
+    def setLibraryFilters(self, filters: dict[str, Any]) -> None:
+        filters = filters if isinstance(filters, dict) else {}
+        self._relevance_filter = str(filters.get("relevance") or "all")
+        self._pdf_status_filter = str(filters.get("pdf_status") or "all")
+        self._query = str(filters.get("query") or "")
+        self._sort_mode = str(filters.get("sort") or "relevance_desc")
+        self._journal_type_filter = str(filters.get("journal_type") or "all")
+        self._project_id_filter = str(filters.get("project_id") or "all")
+        keyword_groups = filters.get("keyword_groups") or filters.get("keywordGroups") or []
+        self._keyword_group_filter = {str(item) for item in keyword_groups if str(item)} if isinstance(keyword_groups, list) else set()
+        self._apply_filters()
+        self.changed.emit()
+
+    @Slot(str, result=str)
+    def createFavoriteProject(self, name: str) -> str:
+        self._ensure_state_store()
+        clean_name = str(name or "").strip()
+        if not clean_name:
+            return ""
+        projects = self._library_state.setdefault("projects", [])
+        existing = {str(project.get("id") or "") for project in projects if isinstance(project, dict)}
+        project_id = self._project_id_from_name(clean_name, existing)
+        projects.append({"id": project_id, "name": clean_name, "built_in": False})
+        self._save_library_state()
+        self.changed.emit()
+        return project_id
+
+    @Slot(str, str, result=bool)
+    def renameFavoriteProject(self, project_id: str, name: str) -> bool:
+        self._ensure_state_store()
+        clean_name = str(name or "").strip()
+        if not clean_name:
+            return False
+        for project in self._library_state.get("projects", []):
+            if isinstance(project, dict) and str(project.get("id") or "") == str(project_id):
+                project["name"] = clean_name
+                self._save_library_state()
+                self.changed.emit()
+                return True
+        return False
+
+    @Slot(str, result=bool)
+    def deleteFavoriteProject(self, project_id: str) -> bool:
+        self._ensure_state_store()
+        project_id = str(project_id or "")
+        projects = [project for project in self._library_state.get("projects", []) if isinstance(project, dict)]
+        target = next((project for project in projects if str(project.get("id") or "") == project_id), None)
+        if not target or bool(target.get("built_in")):
+            return False
+        self._library_state["projects"] = [project for project in projects if str(project.get("id") or "") != project_id]
+        favorites = self._library_state.setdefault("favorites", {})
+        for record_id, project_ids in list(favorites.items()):
+            if not isinstance(project_ids, list):
+                continue
+            remaining = [str(item) for item in project_ids if str(item) != project_id]
+            if remaining:
+                favorites[record_id] = remaining
+            else:
+                favorites.pop(record_id, None)
+        if self._project_id_filter == project_id:
+            self._project_id_filter = "all"
+        self._save_library_state()
+        self._apply_filters()
+        self.changed.emit()
+        return True
+
+    @Slot(str, str, result=bool)
+    def toggleFavorite(self, record_id: str, project_id: str) -> bool:
+        self._ensure_state_store()
+        record_id = str(record_id or "")
+        project_id = str(project_id or "")
+        valid_project_ids = {str(project.get("id") or "") for project in self.favoriteProjects}
+        if not record_id or project_id not in valid_project_ids:
+            return False
+        favorites = self._library_state.setdefault("favorites", {})
+        project_ids = [str(item) for item in favorites.get(record_id, []) if str(item)]
+        if project_id in project_ids:
+            project_ids = [item for item in project_ids if item != project_id]
+        else:
+            project_ids.append(project_id)
+        if project_ids:
+            favorites[record_id] = list(dict.fromkeys(project_ids))
+        else:
+            favorites.pop(record_id, None)
+        self._save_library_state()
+        self._apply_filters()
+        self.changed.emit()
+        return True
+
+    @Slot(str, result=bool)
+    def toggleFavoriteDefault(self, record_id: str) -> bool:
+        return self.toggleFavorite(record_id, "to_read")
+
+    @Slot(str, result="QVariantList")
+    def favoriteProjectIdsFor(self, record_id: str) -> list[str]:
+        self._ensure_state_store()
+        return self._favorite_project_ids(str(record_id or ""))
+
+    @Slot(str, result=bool)
+    def toggleCompare(self, record_id: str) -> bool:
+        self._ensure_state_store()
+        record_id = str(record_id or "")
+        if not record_id:
+            return False
+        compare = self._library_state.setdefault("compare", {"active": []})
+        active = [str(item) for item in compare.get("active", []) if str(item)]
+        if record_id in active:
+            active = [item for item in active if item != record_id]
+        elif len(active) < 4:
+            active.append(record_id)
+        else:
+            return False
+        compare["active"] = active
+        self._save_library_state()
+        self._apply_filters()
+        self.changed.emit()
+        return True
+
+    @Slot(str, result=bool)
+    def removeCompare(self, record_id: str) -> bool:
+        self._ensure_state_store()
+        record_id = str(record_id or "")
+        compare = self._library_state.setdefault("compare", {"active": []})
+        active = [str(item) for item in compare.get("active", []) if str(item) and str(item) != record_id]
+        compare["active"] = active
+        self._save_library_state()
+        self._apply_filters()
+        self.changed.emit()
+        return True
+
+    @Slot(result=bool)
+    def clearCompare(self) -> bool:
+        self._ensure_state_store()
+        self._library_state.setdefault("compare", {})["active"] = []
+        self._save_library_state()
+        self._apply_filters()
+        self.changed.emit()
+        return True
+
+    @Slot(result="QVariantList")
+    def compareDetails(self) -> list[dict[str, Any]]:
+        details: list[dict[str, Any]] = []
+        for record_id in self._compare_ids():
+            record = self._record_by_id.get(record_id)
+            if not record:
+                continue
+            details.append(
+                {
+                    "recordId": record_id,
+                    "title": record.get("title", ""),
+                    "authorsText": record.get("authorsText", ""),
+                    "authors": record.get("authors", []),
+                    "year": record.get("year", ""),
+                    "journalTypeLabel": record.get("journalTypeLabel", JOURNAL_TYPE_LABELS["unknown"]),
+                    "journalName": record.get("journalName", ""),
+                    "relevanceLabel": record.get("relevanceLabel", ""),
+                    "relevance_score": record.get("relevance_score", 0),
+                    "matchedKeywordsText": record.get("matchedKeywordsText", ""),
+                    "matchedFieldsText": record.get("matchedFieldsText", ""),
+                    "downloaded": bool(record.get("localPdfPath")),
+                    "localPdfPath": record.get("localPdfPath", ""),
+                    "doi": record.get("doi") or record.get("normalized_doi") or "",
+                    "source": record.get("source", ""),
+                }
+            )
+        return details
 
     @Slot(str, result=str)
     def thumbnailFor(self, record_id: str) -> str:

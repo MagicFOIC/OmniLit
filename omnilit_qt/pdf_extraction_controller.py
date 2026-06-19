@@ -21,8 +21,17 @@ from .pdf_extraction_engines import (
     PyMuPDFExtractionEngine,
 )
 from .pdf_extraction_settings import (
+    MINERU_API_URL_DEFAULT,
+    PADDLEOCR_API_URL_DEFAULT,
+    PARSER_CONFIG_VERSION,
+    clear_parser_token,
     engine_status,
+    import_legacy_parser_tokens,
     normalize_engine_id,
+    parser_api_token,
+    parser_api_url,
+    parser_service_enabled,
+    save_parser_service,
 )
 from .parser_runtime_manager import ParserRuntimeManager
 
@@ -56,6 +65,8 @@ class PdfExtractionController(QObject):
         self.runtime_manager = ParserRuntimeManager()
         self._worker: ManagedWorker | None = None
         self._stop = threading.Event()
+        self._parser_settings_status = ""
+        import_legacy_parser_tokens(self.store)
         self._taskFinished.connect(self._on_task_finished)
 
     @staticmethod
@@ -81,8 +92,6 @@ class PdfExtractionController(QObject):
         selected = normalize_engine_id(engine)
         if selected == "fast":
             return "pymupdf"
-        if selected == "auto":
-            return "fusion"
         return selected or "pymupdf"
 
     def _clear_current_index_state(self, record_id: str = "", pdf_path: str = "") -> None:
@@ -110,7 +119,25 @@ class PdfExtractionController(QObject):
             return {}
         with path.open("r", encoding="utf-8") as handle:
             index = json.load(handle)
-        return index if isinstance(index, dict) else {}
+        if not isinstance(index, dict):
+            return {}
+        if self._is_legacy_cloud_index(index):
+            if engine != "active":
+                return {}
+            fast_path = self._index_path(record_id, "fast")
+            if not fast_path.exists():
+                return {}
+            with fast_path.open("r", encoding="utf-8") as handle:
+                fast_index = json.load(handle)
+            return fast_index if isinstance(fast_index, dict) else {}
+        return index
+
+    @staticmethod
+    def _is_legacy_cloud_index(index: dict[str, Any]) -> bool:
+        engines = {str(index.get("engine") or "")}
+        engines.update(str(item) for item in index.get("engineChain") or [])
+        is_cloud_engine = bool(engines.intersection({"mineru", "paddleocr_vl", "fusion"}))
+        return is_cloud_engine and index.get("parserConfigVersion") != PARSER_CONFIG_VERSION
 
     def _write_active_index(self, record_id: str, index: dict[str, Any], source_engine: str = "") -> None:
         record_dir = self._record_dir(record_id)
@@ -201,54 +228,80 @@ class PdfExtractionController(QObject):
 
     @Slot(result="QVariantMap")
     def engineStatus(self) -> dict[str, Any]:
-        return engine_status(self.runtime_manager)
+        return engine_status(self.runtime_manager, self.store)
+
+    @Property(str, notify=changed)
+    def mineruApiUrl(self) -> str:
+        return parser_api_url(self.store, "mineru") if self.store is not None else MINERU_API_URL_DEFAULT
+
+    @Property(str, notify=changed)
+    def paddleocrApiUrl(self) -> str:
+        return parser_api_url(self.store, "paddleocr_vl") if self.store is not None else PADDLEOCR_API_URL_DEFAULT
+
+    @Property(bool, notify=changed)
+    def mineruTokenConfigured(self) -> bool:
+        return bool(parser_api_token(self.store, "mineru"))
+
+    @Property(bool, notify=changed)
+    def paddleocrTokenConfigured(self) -> bool:
+        return bool(parser_api_token(self.store, "paddleocr_vl"))
+
+    @Property(bool, notify=changed)
+    def mineruApiEnabled(self) -> bool:
+        return parser_service_enabled(self.store, "mineru")
+
+    @Property(bool, notify=changed)
+    def paddleocrApiEnabled(self) -> bool:
+        return parser_service_enabled(self.store, "paddleocr_vl")
+
+    @Property(str, notify=changed)
+    def parserSettingsStatus(self) -> str:
+        return self._parser_settings_status
+
+    @Slot(str, str, str, bool, result=bool)
+    def saveParserService(self, engine: str, api_url: str, token: str, enabled: bool) -> bool:
+        selected = normalize_engine_id(engine)
+        if self.store is None or selected not in {"mineru", "paddleocr_vl"}:
+            return False
+        url = str(api_url or "").strip()
+        if not url.startswith(("https://", "http://")):
+            self._parser_settings_status = "API 地址必须以 http:// 或 https:// 开头。"
+            self.changed.emit()
+            return False
+        save_parser_service(self.store, selected, url, str(token or ""), bool(enabled))
+        self._parser_settings_status = "解析服务设置已安全保存。"
+        self.runtimeStatusChanged.emit(self.engineStatus())
+        self.changed.emit()
+        return True
+
+    @Slot(str, result=bool)
+    def clearParserServiceToken(self, engine: str) -> bool:
+        selected = normalize_engine_id(engine)
+        if self.store is None or selected not in {"mineru", "paddleocr_vl"}:
+            return False
+        clear_parser_token(self.store, selected)
+        self._parser_settings_status = "API 令牌已清除。"
+        self.runtimeStatusChanged.emit(self.engineStatus())
+        self.changed.emit()
+        return True
+
+    @Slot(str, result=bool)
+    def testParserService(self, engine: str) -> bool:
+        selected = normalize_engine_id(engine)
+        status = self.engineStatus().get(selected, {})
+        ok = bool(status.get("available"))
+        self._parser_settings_status = "服务配置有效，可开始云解析。" if ok else str(status.get("message") or "解析服务尚未配置。")
+        self.changed.emit()
+        return ok
 
     @Slot(str, result=bool)
     def bootstrapEngine(self, engine: str) -> bool:
         selected = normalize_engine_id(engine)
-        if self._loading:
-            self._status = "PDF 正在解析中，请稍后再初始化解析引擎。"
-            self.changed.emit()
-            return False
-
-        if selected == "mineru":
-            self._loading = True
-            self._progress = "正在初始化深度解析组件，首次使用需要下载依赖。"
-            self._status = self._progress
-            self.changed.emit()
-
-            def run() -> None:
-                def progress(name: str, percent: int, message: str) -> None:
-                    self.runtimeInstallProgress.emit(name, int(percent), str(message or ""))
-
-                result = self.runtime_manager.ensure_mineru_runtime(progress)
-                ok = bool(result.get("available"))
-                message = str(result.get("message") or ("MinerU 初始化完成。" if ok else "深度解析初始化失败，已保留快速解析结果。"))
-                self._taskFinished.emit("__runtime__", result, message, ok)
-                self.runtimeStatusChanged.emit(self.engineStatus())
-
-            task = ManagedWorker(
-                name="PdfParserRuntimeBootstrap",
-                target=run,
-                state_path=self.paths.data("task_state", "pdf_parser_runtime_bootstrap_mineru.json"),
-                cancel_event=self._stop,
-                metadata={"engine": selected},
-            )
-            self._worker = task
-            task.start()
-            return True
-
-        if selected == "paddleocr_vl":
-            result = PaddleOCRVLExtractionEngine(runtime_manager=self.runtime_manager).bootstrap_paddleocr_vl_service()
-            self._status = str(result.get("message") or "PaddleOCR-VL 高精度引擎未初始化，可通过 Docker 或独立环境启用。")
-            self.runtimeStatusChanged.emit(self.engineStatus())
-            self.changed.emit()
-            return bool(result.get("available"))
-
-        self._status = "该解析引擎无需单独初始化。"
+        status = self.engineStatus().get(selected, {})
+        self._status = str(status.get("message") or "请在系统设置中配置云解析服务。")
         self.runtimeStatusChanged.emit(self.engineStatus())
         self.changed.emit()
-        return True
+        return bool(status.get("available"))
 
     @Property("QVariantMap", notify=changed)
     def currentIndex(self) -> dict[str, Any]:
@@ -272,11 +325,20 @@ class PdfExtractionController(QObject):
     def analyzeRecord(self, record_id: str, pdf_path: str) -> bool:
         return self.analyzeRecordWithEngine(record_id, pdf_path, "fast")
 
+    @Slot(result=bool)
+    def cancelAnalysis(self) -> bool:
+        if not self._loading:
+            return False
+        self._stop.set()
+        self._status = "正在取消 PDF 云解析..."
+        self.changed.emit()
+        return True
+
     @Slot(str, str, str, result=bool)
     def selectExtractionEngine(self, record_id: str, pdf_path: str, engine: str) -> bool:
         key = str(record_id or "").strip()
         source = Path(str(pdf_path or "")).expanduser()
-        selected_engine = normalize_engine_id(str(engine or "auto"))
+        selected_engine = normalize_engine_id(str(engine or "fast"))
         if not key or not source.exists():
             self._status = "无法切换解析引擎：PDF 文件不存在。"
             self.changed.emit()
@@ -304,7 +366,7 @@ class PdfExtractionController(QObject):
     def analyzeRecordWithEngine(self, record_id: str, pdf_path: str, engine: str) -> bool:
         key = str(record_id or "").strip()
         source = Path(str(pdf_path or "")).expanduser()
-        selected_engine = normalize_engine_id(str(engine or "auto"))
+        selected_engine = normalize_engine_id(str(engine or "fast"))
         if not key or not source.exists():
             self._status = "无法解析：本地 PDF 不存在。"
             self.changed.emit()
@@ -337,8 +399,8 @@ class PdfExtractionController(QObject):
 
                 pipeline = HybridExtractionPipeline(
                     engines=[
-                        PaddleOCRVLExtractionEngine(runtime_manager=self.runtime_manager),
-                        MinerUExtractionEngine(runtime_manager=self.runtime_manager),
+                        PaddleOCRVLExtractionEngine(runtime_manager=self.runtime_manager, store=self.store),
+                        MinerUExtractionEngine(runtime_manager=self.runtime_manager, store=self.store),
                     ],
                     fallback_engine=PyMuPDFExtractionEngine(),
                 )
@@ -351,6 +413,7 @@ class PdfExtractionController(QObject):
                         "engine": selected_engine,
                         "record_dir": str(record_dir),
                         "runtime_progress_callback": progress,
+                        "cancel_event": self._stop,
                     },
                 )
                 self.runtimeStatusChanged.emit(self.engineStatus())

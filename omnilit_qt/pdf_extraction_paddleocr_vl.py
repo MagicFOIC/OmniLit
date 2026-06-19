@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import csv
 import html
 import json
@@ -12,8 +13,15 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
+from .pdf_cloud_client import CloudAPIClient, CloudAPIError
 from .pdf_extraction_schema import make_base_index, make_element, normalize_bbox
-from .pdf_extraction_settings import redact_sensitive_text
+from .pdf_extraction_settings import (
+    PARSER_CONFIG_VERSION,
+    parser_api_token,
+    parser_api_url,
+    parser_service_enabled,
+    redact_sensitive_text,
+)
 from .parser_runtime_manager import ParserRuntimeManager
 
 
@@ -30,25 +38,28 @@ class PaddleOCRVLConfig:
     pipeline_version: str
     python: str
     timeout: float
+    api_token: str = ""
+    config_version: str = PARSER_CONFIG_VERSION
 
     @classmethod
-    def from_env(cls) -> "PaddleOCRVLConfig":
+    def from_env(cls, store: Any | None = None) -> "PaddleOCRVLConfig":
         return cls(
-            enabled=_env_bool("OMNILIT_PADDLEOCR_VL_ENABLED", True),
-            mode=os.environ.get("OMNILIT_PADDLEOCR_VL_MODE", "auto").strip().lower() or "auto",
-            server_url=os.environ.get("OMNILIT_PADDLEOCR_VL_URL", "http://127.0.0.1:8118/v1").strip(),
+            enabled=parser_service_enabled(store, "paddleocr_vl"),
+            mode=os.environ.get("OMNILIT_PADDLEOCR_VL_MODE", "api").strip().lower() or "api",
+            server_url=parser_api_url(store, "paddleocr_vl"),
             model=os.environ.get("OMNILIT_PADDLEOCR_VL_MODEL", "PaddlePaddle/PaddleOCR-VL-1.6").strip(),
             pipeline_version=os.environ.get("OMNILIT_PADDLEOCR_VL_PIPELINE_VERSION", "v1.6").strip(),
             python=os.environ.get("OMNILIT_PADDLEOCR_VL_PYTHON", "").strip(),
             timeout=_env_float("OMNILIT_PADDLEOCR_VL_TIMEOUT", 900.0),
+            api_token=parser_api_token(store, "paddleocr_vl"),
         )
 
 
 class PaddleOCRVLExtractionEngine:
     name = "paddleocr_vl"
 
-    def __init__(self, config: PaddleOCRVLConfig | None = None, runtime_manager: ParserRuntimeManager | None = None) -> None:
-        self.config = config or PaddleOCRVLConfig.from_env()
+    def __init__(self, config: PaddleOCRVLConfig | None = None, runtime_manager: ParserRuntimeManager | None = None, store: Any | None = None) -> None:
+        self.config = config or PaddleOCRVLConfig.from_env(store)
         self.runtime_manager = runtime_manager or ParserRuntimeManager()
         self._runtime_info: dict[str, Any] = {}
 
@@ -58,15 +69,23 @@ class PaddleOCRVLExtractionEngine:
     def availability(self) -> dict[str, Any]:
         if not self.config.enabled or self.config.mode == "off":
             return {"available": False, "installable": False, "status": "off", "message": "PaddleOCR-VL 高精度引擎已禁用。"}
+        if self.config.mode == "api":
+            configured = bool(self.config.api_token and self.config.server_url)
+            return {
+                "available": configured,
+                "installable": False,
+                "status": "ready" if configured else "not_configured",
+                "message": "PaddleOCR-VL cloud API is configured." if configured else "Configure the PaddleOCR-VL API token in system settings.",
+            }
         if self.config.mode not in {"auto", "service", "subprocess", "cli"}:
             return {"available": False, "installable": False, "status": "invalid", "message": f"不支持的 PaddleOCR-VL 模式：{self.config.mode}"}
         info = self.runtime_manager.check_paddleocr_vl_available()
         if self.config.python and Path(self.config.python).exists():
             info = {"available": True, "installable": False, "status": "managed", "python": self.config.python, "serviceUrl": self.config.server_url, "command": "", "message": "PaddleOCR-VL 独立运行环境可用。"}
         elif self.config.mode == "service" and info.get("status") != "service":
-            info = {"available": False, "installable": False, "status": "not_initialized", "message": "PaddleOCR-VL 服务未启动，已尝试使用 MinerU fallback。"}
+            info = {"available": False, "installable": False, "status": "not_initialized", "message": "PaddleOCR-VL 服务未启动。"}
         elif self.config.mode == "subprocess" and not self.config.python:
-            info = {"available": False, "installable": False, "status": "not_initialized", "message": "PaddleOCR-VL 本地运行环境未初始化，已尝试使用 MinerU fallback。"}
+            info = {"available": False, "installable": False, "status": "not_initialized", "message": "PaddleOCR-VL 本地运行环境未初始化。"}
         self._runtime_info = dict(info)
         return dict(info)
 
@@ -105,7 +124,7 @@ class PaddleOCRVLExtractionEngine:
         return str(self._runtime_info.get("serviceUrl") or self.config.server_url or "")
 
     def _raise_not_initialized(self) -> None:
-        raise EngineUnavailable("PaddleOCR-VL 高精度引擎尚未初始化，已尝试使用 MinerU fallback。")
+        raise EngineUnavailable("PaddleOCR-VL 高精度引擎尚未初始化。")
 
     def _can_run_worker(self) -> bool:
         return bool(self._effective_python())
@@ -164,7 +183,7 @@ class PaddleOCRVLExtractionEngine:
         return self._effective_mode() == "service" and not self._can_run_worker()
 
     def _service_only_unimplemented(self) -> None:
-        raise EngineUnavailable("PaddleOCR-VL 服务已发现，但当前需要独立 Python worker 或 paddleocr CLI 来归一化结果，已尝试使用 MinerU fallback。")
+        raise EngineUnavailable("PaddleOCR-VL 服务已发现，但当前需要独立 Python worker 或 paddleocr CLI 来归一化结果。")
 
     def _mode_available(self) -> bool:
         if not self.config.enabled:
@@ -177,6 +196,8 @@ class PaddleOCRVLExtractionEngine:
         options = dict(options or {})
         if not self._mode_available():
             self._raise_not_initialized()
+        if self.config.mode == "api":
+            return self._analyze_api(pdf_path, output_dir, options)
         self._ensure_ready_for_analyze()
 
         source = Path(pdf_path).expanduser().resolve()
@@ -193,12 +214,62 @@ class PaddleOCRVLExtractionEngine:
             self._run_cli(source, engine_dir)
 
         if not self._result_ready(engine_dir) and not list(engine_dir.rglob("*.json")):
-            raise EngineUnavailable("PaddleOCR-VL 没有生成可读取的 JSON 结果，已尝试使用 MinerU fallback。")
+            raise EngineUnavailable("PaddleOCR-VL 没有生成可读取的 JSON 结果。")
         result = self._load_result(engine_dir)
         self._maybe_write_normalized_result(engine_dir, result)
         markdown_path = self._write_merged_markdown(engine_dir)
         markdown_text = markdown_path.read_text(encoding="utf-8") if markdown_path.exists() else ""
         return self._to_index(source, Path(output_dir), engine_dir, result, markdown_path, markdown_text)
+
+    def _analyze_api(self, pdf_path: Path, output_dir: Path, options: dict[str, Any]) -> dict[str, Any]:
+        if not self.config.api_token or not self.config.server_url:
+            raise EngineUnavailable("Configure the PaddleOCR-VL API token in system settings.")
+        source = Path(pdf_path).expanduser().resolve()
+        if not source.exists():
+            raise FileNotFoundError(f"PDF file does not exist: {source}")
+        engine_dir = Path(output_dir) / self.name
+        engine_dir.mkdir(parents=True, exist_ok=True)
+        callback = options.get("runtime_progress_callback")
+        cancel_event = options.get("cancel_event")
+        client = CloudAPIClient(
+            self.name,
+            timeout=self.config.timeout,
+            cancel_event=cancel_event if hasattr(cancel_event, "is_set") else None,
+            progress=callback if callable(callback) else None,
+        )
+        client.notify(12, "正在准备 PaddleOCR-VL 云解析请求...")
+        payload = {
+            "file": base64.b64encode(source.read_bytes()).decode("ascii"),
+            "fileType": 0,
+            "useDocOrientationClassify": False,
+            "useDocUnwarping": False,
+            "useTextlineOrientation": False,
+        }
+        client.notify(28, "正在上传 PDF 到 PaddleOCR-VL...")
+        response = client.request_json(
+            "POST",
+            self.config.server_url,
+            headers={"Authorization": f"token {self.config.api_token}", "Content-Type": "application/json"},
+            json=payload,
+            expected=(200,),
+            request_timeout=self.config.timeout,
+        )
+        result = _paddle_response_result(response)
+        client.check_cancelled()
+        client.notify(78, "正在整理 PaddleOCR-VL 图、表格和公式...")
+        (engine_dir / "paddleocr_vl_result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        saved_images = _save_api_images(result, engine_dir)
+        markdown_text = _collect_api_markdown(result)
+        markdown_path = engine_dir / "paddleocr_vl.md"
+        markdown_path.write_text(markdown_text, encoding="utf-8")
+        index = self._to_index(source, Path(output_dir), engine_dir, result, markdown_path, markdown_text)
+        figures = [element for element in index.get("elements", []) if element.get("type") == "figure"]
+        for element, image_path in zip(figures, saved_images):
+            element["pngPath"] = str(image_path)
+        index["parserConfigVersion"] = self.config.config_version
+        index["providerMode"] = "cloud-api"
+        client.notify(100, "PaddleOCR-VL 云解析完成。")
+        return index
 
     def _run_worker(self, pdf_path: Path, engine_dir: Path, options: dict[str, Any]) -> None:
         cmd = [
@@ -386,6 +457,76 @@ class _HTMLTableParser(HTMLParser):
             self._current_row = None
 
 
+def _paddle_response_result(payload: dict[str, Any]) -> dict[str, Any]:
+    error_code = payload.get("errorCode", payload.get("code"))
+    if error_code not in (None, 0, "0", 200, "200"):
+        raise CloudAPIError(str(payload.get("errorMsg") or payload.get("message") or "PaddleOCR API rejected the request."), code="API_REJECTED")
+    result = payload.get("result", payload)
+    if not isinstance(result, dict):
+        raise CloudAPIError("PaddleOCR returned an invalid result.", code="INVALID_RESPONSE")
+    return result
+
+
+def _collect_api_markdown(value: Any) -> str:
+    parts: list[str] = []
+
+    def visit(item: Any) -> None:
+        if isinstance(item, dict):
+            markdown = item.get("markdown")
+            if isinstance(markdown, str) and markdown.strip():
+                parts.append(markdown.strip())
+            elif isinstance(markdown, dict):
+                text = str(markdown.get("text") or "").strip()
+                if text:
+                    parts.append(text)
+            for key, child in item.items():
+                if key != "markdown":
+                    visit(child)
+        elif isinstance(item, list):
+            for child in item:
+                visit(child)
+
+    visit(value)
+    return "\n\n".join(dict.fromkeys(parts))
+
+
+def _save_api_images(value: Any, engine_dir: Path) -> list[Path]:
+    image_dir = engine_dir / "images"
+    saved: list[Path] = []
+
+    def save_mapping(mapping: dict[str, Any]) -> None:
+        for name, encoded in mapping.items():
+            if not isinstance(encoded, str) or not encoded.strip():
+                continue
+            payload = encoded.split(",", 1)[-1] if encoded.startswith("data:") else encoded
+            try:
+                data = base64.b64decode(payload, validate=True)
+            except (ValueError, TypeError):
+                continue
+            filename = Path(str(name)).name or f"image_{len(saved) + 1}.png"
+            if not Path(filename).suffix:
+                filename += ".png"
+            image_dir.mkdir(parents=True, exist_ok=True)
+            target = image_dir / filename
+            target.write_bytes(data)
+            saved.append(target)
+
+    def visit(item: Any) -> None:
+        if isinstance(item, dict):
+            for key in ("outputImages", "images"):
+                mapping = item.get(key)
+                if isinstance(mapping, dict):
+                    save_mapping(mapping)
+            for child in item.values():
+                visit(child)
+        elif isinstance(item, list):
+            for child in item:
+                visit(child)
+
+    visit(value)
+    return saved
+
+
 def _env_bool(name: str, default: bool) -> bool:
     value = os.environ.get(name)
     if value is None:
@@ -462,11 +603,13 @@ def _iter_blocks(value: Any, inherited_page: int | None = None) -> list[dict[str
             if current_page is not None and not any(page_key in item for page_key in ("page", "page_index", "page_idx", "page_no", "pageNumber", "page_num")):
                 item["page"] = current_page
             blocks.append(item)
-        for key in ("blocks", "layout", "elements", "items", "results", "pages"):
+        for key in ("blocks", "layout", "elements", "items", "results", "pages", "layoutParsingResults", "prunedResult", "layoutDetections", "parsing_res_list", "layout_det_res"):
             child = value.get(key)
             if isinstance(child, list):
                 for item in child:
                     blocks.extend(_iter_blocks(item, current_page))
+            elif isinstance(child, dict):
+                blocks.extend(_iter_blocks(child, current_page))
         for key in ("json", "raw"):
             child = value.get(key)
             if isinstance(child, (dict, list)):
@@ -478,7 +621,7 @@ def _iter_blocks(value: Any, inherited_page: int | None = None) -> list[dict[str
 
 
 def _block_label(block: dict[str, Any]) -> str:
-    for key in ("block_label", "label", "type", "category", "structureType"):
+    for key in ("block_label", "label", "type", "category", "structureType", "layout_type"):
         value = str(block.get(key) or "").strip().lower()
         if value:
             return value

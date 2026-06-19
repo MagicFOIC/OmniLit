@@ -5,12 +5,20 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+from omnilit_qt.pdf_cloud_client import CloudAPIClient
 from omnilit_qt.pdf_extraction_engines import HybridExtractionPipeline
-from omnilit_qt.pdf_extraction_mineru import EngineUnavailable, MinerUConfig, MinerUExtractionEngine
+from omnilit_qt.pdf_extraction_mineru import (
+    EngineUnavailable,
+    MinerUConfig,
+    MinerUExtractionEngine,
+    discover_mineru_outputs,
+    parse_mineru_json_files,
+)
 from omnilit_qt.pdf_extraction_schema import make_base_index
 
 
@@ -42,6 +50,33 @@ class FakeEngine:
 
 
 class MinerUExtractionEngineTests(unittest.TestCase):
+    def test_cloud_api_uploads_polls_and_normalizes_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            pdf_path = root / "sample.pdf"
+            write_blank_pdf(pdf_path)
+            config = MinerUConfig(True, "api", "", "", "https://mineru.example/api/v4", 30, "pipeline", "token-value", 0)
+            responses = [
+                {"code": 0, "data": {"batch_id": "batch-1", "file_urls": ["https://upload.example/file?sig=secret"]}},
+                {"code": 0, "data": {"extract_result": [{"status": "done", "full_zip_url": "https://download.example/result.zip?sig=secret"}]}},
+            ]
+
+            def fake_download(client: CloudAPIClient, url: str, target: Path) -> Path:
+                with zipfile.ZipFile(target, "w") as bundle:
+                    bundle.writestr(
+                        "paper_content_list.json",
+                        json.dumps([{"type": "formula", "page_idx": 0, "bbox": [100, 100, 500, 200], "latex_text": "$a+b$"}]),
+                    )
+                return target
+
+            with patch.object(CloudAPIClient, "request_json", side_effect=responses), patch.object(CloudAPIClient, "request") as request_mock, patch.object(CloudAPIClient, "download", autospec=True, side_effect=fake_download):
+                index = MinerUExtractionEngine(config).analyze(pdf_path, root / "out")
+
+            self.assertTrue(request_mock.called)
+            self.assertEqual(index["parserConfigVersion"], "cloud-api-v1")
+            self.assertEqual(index["providerMode"], "cloud-api")
+            self.assertEqual(index["elements"][0]["latex"], "a+b")
+
     def test_analyze_normalizes_table_formula_and_figure(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -146,7 +181,137 @@ class MinerUExtractionEngineTests(unittest.TestCase):
             with self.assertRaises(EngineUnavailable):
                 engine.analyze(pdf_path, root / "out")
 
-    def test_hybrid_pipeline_uses_mineru_after_paddle_failure(self) -> None:
+    def test_parse_mineru_json_accepts_common_labels_and_one_based_page_numbers(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            raw_dir = root / "mineru_raw"
+            image_dir = raw_dir / "images"
+            image_dir.mkdir(parents=True)
+            (image_dir / "figure-1.png").write_bytes(b"png")
+            json_path = raw_dir / "layout.json"
+            json_path.write_text(
+                json.dumps(
+                    {
+                        "pages": [
+                            {
+                                "page_no": 1,
+                                "page_width": 2000,
+                                "page_height": 1000,
+                                "blocks": [
+                                    {
+                                        "type": "isolate_formula",
+                                        "bbox": [100, 100, 500, 200],
+                                        "latex_text": "$a+b$",
+                                    },
+                                    {
+                                        "type": "image_body",
+                                        "bbox": [600, 200, 900, 600],
+                                        "image": {"path": "images/figure-1.png"},
+                                        "caption": "Nested image path",
+                                    },
+                                ],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            pages = [{"page": 0, "width": 200.0, "height": 100.0, "rect": [0, 0, 200, 100]}]
+
+            elements = parse_mineru_json_files([json_path], pages, root, raw_dir)
+
+            self.assertEqual([element["page"] for element in elements], [0, 0])
+            self.assertEqual({element["type"] for element in elements}, {"formula", "figure"})
+            formula = next(element for element in elements if element["type"] == "formula")
+            self.assertEqual(formula["latex"], "a+b")
+            self.assertEqual(formula["bbox"], [10.0, 10.0, 50.0, 20.0])
+            figure = next(element for element in elements if element["type"] == "figure")
+            self.assertEqual(figure["caption"], "Nested image path")
+            self.assertTrue(figure["pngPath"].endswith("figure-1.png"))
+            self.assertTrue(Path(figure["pngPath"]).exists())
+
+    def test_discover_mineru_outputs_accepts_variant_layout_pdf_names(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            raw_dir = Path(temp)
+            layout_pdf = raw_dir / "sample_layout.pdf"
+            layout_pdf.write_bytes(b"%PDF-1.4")
+
+            discovered = discover_mineru_outputs(raw_dir)
+
+            self.assertEqual(discovered["layout_pdf"], layout_pdf)
+
+    def test_content_list_table_body_is_preferred_scaled_and_not_duplicated(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            content_path = root / "paper_content_list.json"
+            middle_path = root / "paper_middle.json"
+            table = {
+                "type": "table",
+                "page_idx": 0,
+                "bbox": [65, 80, 931, 268],
+                "table_caption": ["Table 1 Results"],
+                "table_body": "<table><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table>",
+            }
+            content_path.write_text(json.dumps([table]), encoding="utf-8")
+            middle_path.write_text(json.dumps({"pages": [{"page": 0, "blocks": [table, table]}]}), encoding="utf-8")
+            pages = [{"page": 0, "width": 595.0, "height": 779.0, "rect": [0, 0, 595, 779]}]
+
+            elements = parse_mineru_json_files([middle_path, content_path], pages, root, root)
+
+            self.assertEqual(len(elements), 1)
+            self.assertEqual(elements[0]["table"], [["A", "B"], ["1", "2"]])
+            self.assertEqual(elements[0]["caption"], "Table 1 Results")
+            self.assertEqual(elements[0]["bbox"], [38.675, 62.32, 553.945, 208.772])
+            self.assertEqual(elements[0]["metadata"]["tableSourceFormat"], "content_list")
+
+    def test_nonzero_cli_with_parseable_output_is_recovered_with_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            pdf_path = root / "sample.pdf"
+            write_blank_pdf(pdf_path)
+            config = MinerUConfig(True, "cli", "mineru", sys.executable, "", 900, "pipeline")
+
+            def fake_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+                engine_dir = Path(cmd[cmd.index("--output") + 1])
+                raw_dir = engine_dir / "mineru_raw"
+                raw_dir.mkdir(parents=True, exist_ok=True)
+                (raw_dir / "sample_content_list.json").write_text(
+                    json.dumps([{"type": "table", "page_idx": 0, "bbox": [100, 100, 900, 500], "table_body": "<table><tr><td>A</td><td>B</td></tr></table>"}]),
+                    encoding="utf-8",
+                )
+                return subprocess.CompletedProcess(cmd, 1, "service shutdown warning", "")
+
+            with patch("subprocess.run", side_effect=fake_run):
+                index = MinerUExtractionEngine(config).analyze(pdf_path, root / "out")
+
+            self.assertEqual(index["engine"], "mineru")
+            self.assertEqual(len(index["elements"]), 1)
+            self.assertEqual(index["engineErrors"][0]["code"], "NONZERO_WITH_OUTPUT")
+
+    def test_timeout_with_parseable_output_is_recovered_with_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            pdf_path = root / "sample.pdf"
+            write_blank_pdf(pdf_path)
+            config = MinerUConfig(True, "cli", "mineru", sys.executable, "", 1, "pipeline")
+
+            def fake_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+                engine_dir = Path(cmd[cmd.index("--output") + 1])
+                raw_dir = engine_dir / "mineru_raw"
+                raw_dir.mkdir(parents=True, exist_ok=True)
+                (raw_dir / "sample_content_list.json").write_text(
+                    json.dumps([{"type": "table", "page_idx": 0, "bbox": [100, 100, 900, 500], "table_body": "<table><tr><td>A</td><td>B</td></tr></table>"}]),
+                    encoding="utf-8",
+                )
+                raise subprocess.TimeoutExpired(cmd, 1)
+
+            with patch("subprocess.run", side_effect=fake_run):
+                index = MinerUExtractionEngine(config).analyze(pdf_path, root / "out")
+
+            self.assertEqual(len(index["elements"]), 1)
+            self.assertEqual(index["engineErrors"][0]["code"], "TIMEOUT_WITH_OUTPUT")
+
+    def test_explicit_mineru_pipeline_runs_only_mineru(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             pdf_path = root / "sample.pdf"
@@ -165,7 +330,7 @@ class MinerUExtractionEngineTests(unittest.TestCase):
                 engine_dir = Path(cmd[cmd.index("--output") + 1])
                 raw_dir = engine_dir / "mineru_raw"
                 raw_dir.mkdir(parents=True, exist_ok=True)
-                (raw_dir / "sample.md").write_text("MinerU fallback", encoding="utf-8")
+                (raw_dir / "sample.md").write_text("MinerU result", encoding="utf-8")
                 (raw_dir / "sample.json").write_text(
                     json.dumps(
                         {
@@ -184,14 +349,14 @@ class MinerUExtractionEngineTests(unittest.TestCase):
                 return subprocess.CompletedProcess(cmd, 0, "", "")
 
             pipeline = HybridExtractionPipeline(
-                engines=[FakeEngine("paddleocr_vl", RuntimeError("paddle failed")), MinerUExtractionEngine(config)],
+                engines=[FakeEngine("paddleocr_vl", RuntimeError("paddle must not run")), MinerUExtractionEngine(config)],
                 fallback_engine=FakeEngine("pymupdf"),
             )
             with patch("subprocess.run", side_effect=fake_run):
-                index = pipeline.analyze(pdf_path, root / "out", {"engine": "hybrid"})
+                index = pipeline.analyze(pdf_path, root / "out", {"engine": "mineru"})
 
             self.assertEqual(index["engine"], "fusion")
-            self.assertEqual(index["engineErrors"][0]["engine"], "paddleocr_vl")
+            self.assertFalse(any(error["engine"] == "paddleocr_vl" for error in index["engineErrors"]))
             self.assertTrue(any("mineru" in element.get("sourceEngines", []) for element in index["elements"]))
 
 

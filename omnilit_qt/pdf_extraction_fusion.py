@@ -9,6 +9,7 @@ from typing import Any
 from .pdf_extraction_caption import find_nearby_caption
 from .pdf_extraction_quality import apply_quality, quality_summary
 from .pdf_extraction_schema import ensure_version_3, normalize_bbox, normalize_element
+from .pdf_extraction_table_utils import non_empty_cell_ratio, table_shape
 
 
 def fuse_pymupdf_mineru_indexes(pymupdf_index: dict[str, Any], mineru_index: dict[str, Any], output_dir: Path) -> dict[str, Any]:
@@ -121,21 +122,50 @@ def fuse_pymupdf_mineru_indexes(pymupdf_index: dict[str, Any], mineru_index: dic
 
 
 def _fuse_table(pymupdf: dict[str, Any], mineru: dict[str, Any]) -> dict[str, Any]:
-    rows = mineru.get("table") or pymupdf.get("table") or []
+    table_choice = _choose_table_candidate(
+        [
+            ("pymupdf", pymupdf),
+            ("mineru", mineru),
+        ]
+    )
+    table_engine, table_element, table_score = table_choice
+    rows = table_element.get("table") or []
     item = _with_sources(pymupdf, ["pymupdf", "mineru"], mineru)
+    location_engine, location_element = _choose_location_candidate(
+        [
+            ("pymupdf", pymupdf),
+            ("mineru", mineru),
+        ]
+    )
+    if location_engine and location_element is not pymupdf:
+        item["bbox"] = normalize_bbox(location_element.get("bbox"))
+        item["pageSize"] = list(location_element.get("pageSize") or item.get("pageSize") or [])
+    row_count, col_count = table_shape(rows)
+    metadata = dict(item.get("metadata") or {})
+    metadata.update(
+        {
+            "tableSourceEngine": table_engine,
+            "tableEvidenceScore": round(table_score, 3),
+            "tableShape": [row_count, col_count],
+            "locationSourceEngine": location_engine,
+        }
+    )
     item.update(
         {
             "engine": "fusion",
             "table": rows,
-            "text": mineru.get("text") or pymupdf.get("text") or "",
-            "csvPath": mineru.get("csvPath") or pymupdf.get("csvPath") or "",
-            "jsonPath": mineru.get("jsonPath") or pymupdf.get("jsonPath") or "",
-            "html": mineru.get("html") or pymupdf.get("html") or "",
-            "markdown": mineru.get("markdown") or pymupdf.get("markdown") or "",
+            "text": table_element.get("text") or _table_text(rows) or pymupdf.get("text") or mineru.get("text") or "",
+            "csvPath": table_element.get("csvPath") or pymupdf.get("csvPath") or mineru.get("csvPath") or "",
+            "jsonPath": table_element.get("jsonPath") or pymupdf.get("jsonPath") or mineru.get("jsonPath") or "",
+            "html": table_element.get("html") or pymupdf.get("html") or mineru.get("html") or "",
+            "markdown": table_element.get("markdown") or pymupdf.get("markdown") or mineru.get("markdown") or "",
             "caption": mineru.get("caption") or pymupdf.get("caption") or "",
+            "metadata": metadata,
             "raw": {"pymupdf": pymupdf.get("raw") or {}, "mineru": mineru.get("raw") or {}},
         }
     )
+    if table_score < 0.58:
+        item["qualityFlags"] = list(dict.fromkeys(list(item.get("qualityFlags") or []) + ["weak_table_evidence"]))
     return item
 
 
@@ -155,17 +185,44 @@ def _fuse_figure(pymupdf: dict[str, Any], mineru: dict[str, Any]) -> dict[str, A
 
 
 def _fuse_formula(pymupdf: dict[str, Any], mineru: dict[str, Any]) -> dict[str, Any]:
-    latex = mineru.get("latex") or mineru.get("text") or pymupdf.get("latex") or pymupdf.get("text") or ""
+    text_engine, latex, text_score = _choose_formula_text(
+        [
+            ("pymupdf", pymupdf),
+            ("mineru", mineru),
+        ]
+    )
+    location_engine, location_element = _choose_location_candidate(
+        [
+            ("pymupdf", pymupdf),
+            ("mineru", mineru),
+        ]
+    )
+    match_score = _formula_match_score(pymupdf, mineru)
     item = _with_sources(pymupdf, ["pymupdf", "mineru"], mineru)
+    if location_engine and location_element is not pymupdf:
+        item["bbox"] = normalize_bbox(location_element.get("bbox"))
+        item["pageSize"] = list(location_element.get("pageSize") or item.get("pageSize") or [])
+    metadata = dict(item.get("metadata") or {})
+    metadata.update(
+        {
+            "formulaSourceEngine": text_engine,
+            "formulaTextScore": round(text_score, 3),
+            "formulaMatchScore": round(match_score, 3),
+            "locationSourceEngine": location_engine,
+        }
+    )
     item.update(
         {
             "engine": "fusion",
             "latex": latex,
             "text": latex,
             "markdown": mineru.get("markdown") or pymupdf.get("markdown") or "",
+            "metadata": metadata,
             "raw": {"pymupdf": pymupdf.get("raw") or {}, "mineru": mineru.get("raw") or {}},
         }
     )
+    if match_score < 0.35:
+        item["qualityFlags"] = list(dict.fromkeys(list(item.get("qualityFlags") or []) + ["weak_formula_match"]))
     return item
 
 
@@ -223,13 +280,118 @@ def _best_formula_match(element: dict[str, Any], candidates: list[dict[str, Any]
             continue
         if int(candidate.get("page") or 0) != int(element.get("page") or 0):
             continue
-        score = max(
-            _bbox_iou(element.get("bbox") or [], candidate.get("bbox") or []),
-            _text_similarity(element.get("text") or element.get("latex") or "", candidate.get("text") or candidate.get("latex") or ""),
-        )
+        score = _formula_match_score(element, candidate)
         if score > 0.35 and (best is None or score > best[0]):
             best = (score, candidate)
     return best[1] if best else None
+
+
+def _choose_table_candidate(candidates: list[tuple[str, dict[str, Any]]]) -> tuple[str, dict[str, Any], float]:
+    scored = [(_table_candidate_score(element), engine, element) for engine, element in candidates]
+    scored.sort(
+        key=lambda item: (
+            item[0],
+            "<table" in str(item[2].get("html") or "").lower(),
+            _valid_bbox({"bbox": item[2].get("bbox")}),
+            len(item[2].get("table") or []),
+        ),
+        reverse=True,
+    )
+    score, engine, element = scored[0] if scored else (0.0, "", {})
+    return engine, element, score
+
+
+def _table_candidate_score(element: dict[str, Any]) -> float:
+    rows = element.get("table") or []
+    row_count, col_count = table_shape(rows)
+    if row_count == 0 or col_count == 0:
+        return 0.0
+    widths = [len(row or []) for row in rows if row is not None]
+    dominant_width = max(set(widths), key=widths.count) if widths else 0
+    width_consistency = widths.count(dominant_width) / max(1, len(widths)) if dominant_width else 0.0
+    filled_ratio = non_empty_cell_ratio(rows)
+    numeric_or_unit_cells = sum(
+        1
+        for row in rows
+        for cell in row
+        if re.search(r"[-+]?\d|%|mAh|mg|cm|kg|mol|V|A|Wh|°C|K\b", str(cell or ""), flags=re.IGNORECASE)
+    )
+    numeric_ratio = numeric_or_unit_cells / max(1, row_count * col_count)
+    score = 0.0
+    score += min(0.22, row_count / 8.0 * 0.22)
+    score += min(0.18, col_count / 6.0 * 0.18)
+    score += width_consistency * 0.18
+    score += filled_ratio * 0.18
+    score += min(0.14, numeric_ratio * 0.28)
+    if element.get("caption"):
+        score += 0.06
+    if "<table" in str(element.get("html") or "").lower():
+        score += 0.1
+    if _valid_bbox(element):
+        score += 0.04
+    return max(0.0, min(1.0, score))
+
+
+def _choose_location_candidate(candidates: list[tuple[str, dict[str, Any]]]) -> tuple[str, dict[str, Any]]:
+    valid = [(engine, element) for engine, element in candidates if _valid_bbox(element)]
+    if not valid:
+        return "", {}
+    for engine, element in valid:
+        if engine == "pymupdf":
+            return engine, element
+    return valid[0]
+
+
+def _choose_formula_text(candidates: list[tuple[str, dict[str, Any]]]) -> tuple[str, str, float]:
+    scored: list[tuple[float, int, str, str]] = []
+    preference = {"mineru": 3, "paddleocr_vl": 2, "pymupdf": 1}
+    for engine, element in candidates:
+        text = str(element.get("latex") or element.get("text") or element.get("markdown") or "").strip()
+        if not text:
+            continue
+        score = 0.0
+        score += min(0.30, len(text) / 80.0 * 0.30)
+        if re.search(r"=|\\frac|\\sum|\\int|\^|_|[+\-*/]", text):
+            score += 0.28
+        if element.get("latex"):
+            score += 0.12
+        if re.search(r"\(\s*\d+[A-Za-z]?\s*\)\s*$", text):
+            score += 0.06
+        if _valid_bbox(element):
+            score += 0.08
+        score += preference.get(engine, 0) * 0.03
+        if _looks_like_sentence_formula_noise(text):
+            score -= 0.18
+        scored.append((score, preference.get(engine, 0), engine, text))
+    if not scored:
+        return "", "", 0.0
+    scored.sort(reverse=True)
+    score, _preference, engine, text = scored[0]
+    return engine, text, max(0.0, min(1.0, score))
+
+
+def _formula_match_score(left: dict[str, Any], right: dict[str, Any]) -> float:
+    return max(
+        _bbox_iou(left.get("bbox") or [], right.get("bbox") or []),
+        _text_similarity(left.get("text") or left.get("latex") or "", right.get("text") or right.get("latex") or ""),
+    )
+
+
+def _looks_like_sentence_formula_noise(text: str) -> bool:
+    value = str(text or "").strip()
+    words = re.findall(r"[A-Za-z]{3,}", value)
+    if len(words) >= 8 and re.search(r"\b(the|and|with|from|this|that|where|when|for)\b", value, flags=re.IGNORECASE):
+        return True
+    return bool(re.search(r"[.!?]\s*$", value) and len(words) >= 5)
+
+
+def _valid_bbox(element: dict[str, Any]) -> bool:
+    bbox = normalize_bbox(element.get("bbox"))
+    return len(bbox) >= 4 and bbox != [0.0, 0.0, 0.0, 0.0] and bbox[2] > bbox[0] and bbox[3] > bbox[1]
+
+
+def _table_text(rows: list[list[Any]]) -> str:
+    return "\n".join("\t".join(str(cell or "") for cell in row) for row in rows or [])
 
 
 def _overlaps_existing_table(element: dict[str, Any], elements: list[dict[str, Any]]) -> bool:

@@ -1750,8 +1750,13 @@ class QtOnlyTests(unittest.TestCase):
         self.assertIn("margins: 8", tooltip)
         self.assertIn("property int delay", tooltip)
         self.assertIn("property int timeout", tooltip)
+        self.assertIn("readonly property int horizontalPadding: 42", tooltip)
+        self.assertIn("labelMetrics.advanceWidth) + root.horizontalPadding", tooltip)
         self.assertIn("wrapMode: Text.Wrap", tooltip)
         self.assertNotIn("target.mapToItem(Overlay.overlay", tooltip)
+        logout_block = workspace[workspace.index("id: logoutButton"):workspace.index("Item { Layout.preferredHeight: 14 }")]
+        self.assertNotIn("ModernToolTip {", logout_block)
+        self.assertIn("text: root.navigationTooltip(index, modelData.label)", workspace)
 
     def test_pages_use_modern_tooltips_instead_of_native_attached_tooltips(self) -> None:
         qml_dir = ROOT / "ui" / "qml"

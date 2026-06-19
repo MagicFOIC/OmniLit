@@ -6,6 +6,7 @@ Rectangle {
     id: root
     property var elements: []
     property string selectedElementId: ""
+    property string filterType: "all"
     signal elementSelected(string elementId)
 
     color: theme.surface
@@ -26,11 +27,22 @@ Rectangle {
             font.weight: Font.Bold
         }
 
+        ComboBox {
+            id: filterBox
+            Layout.fillWidth: true
+            model: ["全部", "公式数据", "图数据", "表格数据"]
+            currentIndex: 0
+            onActivated: {
+                var values = ["all", "formula", "figure", "table"]
+                root.filterType = values[currentIndex] || "all"
+            }
+        }
+
         ListView {
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
-            model: root.elements || []
+            model: root.filteredElements()
             spacing: 5
             ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
@@ -49,8 +61,8 @@ Rectangle {
                 contentItem: RowLayout {
                     spacing: 8
                     Text {
-                        text: modelData.type === "table" ? "表" : modelData.type === "figure" ? "图" : "式"
-                        color: modelData.type === "table" ? theme.accent : modelData.type === "figure" ? theme.success : theme.error
+                        text: modelData.type === "table" ? "表" : root.isFigureType(modelData.type) ? "图" : "式"
+                        color: modelData.type === "table" ? theme.accent : root.isFigureType(modelData.type) ? theme.success : theme.error
                         font.weight: Font.Bold
                     }
                     ColumnLayout {
@@ -79,8 +91,8 @@ Rectangle {
         Text {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            visible: !root.elements || root.elements.length === 0
-            text: "暂无图、表或公式"
+            visible: root.filteredElements().length === 0
+            text: (!root.elements || root.elements.length === 0) ? "暂无图、表或公式" : "暂无匹配元素"
             color: theme.textMuted
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
@@ -102,7 +114,7 @@ Rectangle {
         var kind = String(element.type || "")
         var caption = String(element.caption || element.text || element.label || "").trim()
 
-        if (kind === "figure") {
+        if (root.isFigureType(kind)) {
             var match = /^\s*(fig(?:ure)?\.?|图)\s*([0-9]+[A-Za-z]?)/i.exec(caption)
             if (match && match.length >= 3)
                 return "Figure " + match[2]
@@ -115,6 +127,29 @@ Rectangle {
         }
 
         return String(element.label || element.id || "Element")
+    }
+
+    function isFigureType(kind) {
+        return String(kind || "") === "figure" || String(kind || "") === "chart"
+    }
+
+    function matchesFilter(element) {
+        if (!element || root.filterType === "all")
+            return true
+        var kind = String(element.type || "")
+        if (root.filterType === "figure")
+            return root.isFigureType(kind)
+        return kind === root.filterType
+    }
+
+    function filteredElements() {
+        var source = root.elements || []
+        var result = []
+        for (var index = 0; index < source.length; ++index) {
+            if (root.matchesFilter(source[index]))
+                result.push(source[index])
+        }
+        return result
     }
 
 }

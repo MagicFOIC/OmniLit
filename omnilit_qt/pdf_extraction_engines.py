@@ -47,9 +47,7 @@ class HybridExtractionPipeline:
 
     def analyze(self, pdf_path: Path, output_dir: Path, options: dict[str, Any] | None = None) -> dict[str, Any]:
         options = dict(options or {})
-        requested = normalize_engine_id(str(options.get("engine") or "auto"))
-        if requested == "hybrid":
-            requested = "auto"
+        requested = normalize_engine_id(str(options.get("engine") or "fast"))
         output_dir.mkdir(parents=True, exist_ok=True)
 
         base_index = self._run_fallback(pdf_path, output_dir, options)
@@ -57,22 +55,11 @@ class HybridExtractionPipeline:
             return _write_index(output_dir, base_index)
 
         if requested == "mineru":
-            return _write_index(output_dir, self._merge_optional_engine(base_index, "mineru", pdf_path, output_dir, options, requested))
-
-        if requested in {"paddleocr_vl", "auto"}:
-            paddle_index, paddle_error = self._run_optional_engine("paddleocr_vl", pdf_path, output_dir, options, requested)
-            if paddle_index is not None:
-                return _write_index(output_dir, merge_indexes(base_index, paddle_index, _ENGINE_ORDER))
-
-            if paddle_error:
-                base_index.setdefault("engineErrors", []).append(paddle_error)
-
             merged = self._merge_optional_engine(base_index, "mineru", pdf_path, output_dir, options, requested)
-            if _has_deep_engine(merged):
-                return _write_index(output_dir, merged)
+            return _write_index(output_dir, _mark_review_if_deep_failed(merged))
 
-            if requested == "paddleocr_vl":
-                _upgrade_missing_deep_warning(merged)
+        if requested == "paddleocr_vl":
+            merged = self._merge_optional_engine(base_index, "paddleocr_vl", pdf_path, output_dir, options, requested)
             return _write_index(output_dir, _mark_review_if_deep_failed(merged))
 
         base_index.setdefault("engineErrors", []).append(
@@ -113,8 +100,13 @@ class HybridExtractionPipeline:
             merged["engineErrors"].append(error or _not_initialized_error(engine_name, requested))
             return merged
         if engine_name == "mineru":
-            return fuse_pymupdf_mineru_indexes(base_index, index, output_dir)
-        return merge_indexes(base_index, index, prefer_engine_order=_ENGINE_ORDER)
+            merged = fuse_pymupdf_mineru_indexes(base_index, index, output_dir)
+        else:
+            merged = merge_indexes(base_index, index, prefer_engine_order=_ENGINE_ORDER)
+        for key in ("parserConfigVersion", "providerMode"):
+            if index.get(key):
+                merged[key] = index[key]
+        return merged
 
     def _run_optional_engine(
         self,
@@ -129,7 +121,7 @@ class HybridExtractionPipeline:
             return None, _not_initialized_error(engine_name, requested, code="NOT_CONFIGURED")
         try:
             if not engine.is_available():
-                if engine_name == "mineru" and requested in {"auto", "mineru", "paddleocr_vl"}:
+                if engine_name == "mineru" and requested == "mineru":
                     index = engine.analyze(pdf_path, output_dir, options)
                 else:
                     return None, _not_initialized_error(engine_name, requested)
@@ -172,14 +164,13 @@ def _not_initialized_error(engine: str, requested: str, code: str = "NOT_INITIAL
             "engine": engine,
             "level": level,
             "code": code,
-            "message": "PaddleOCR-VL 高精度引擎未初始化，已使用 MinerU 或 PyMuPDF 回退。",
+            "message": "PaddleOCR-VL 高精度引擎未初始化，已保留 PyMuPDF 快速解析结果。",
             "type": "EngineUnavailable",
         }
     if engine == "mineru":
-        level = "warning" if requested in {"mineru", "auto", "paddleocr_vl"} else "info"
         return {
             "engine": engine,
-            "level": level,
+            "level": "warning",
             "code": code,
             "message": "MinerU 深度解析组件未安装或初始化失败，已使用快速解析。",
             "type": "EngineUnavailable",
@@ -188,7 +179,7 @@ def _not_initialized_error(engine: str, requested: str, code: str = "NOT_INITIAL
         "engine": engine,
         "level": "warning",
         "code": code,
-        "message": f"{engine} 解析引擎未初始化，已使用可用回退。",
+        "message": f"{engine} 解析引擎未初始化，已保留 PyMuPDF 快速解析结果。",
         "type": "EngineUnavailable",
     }
 
@@ -196,10 +187,10 @@ def _not_initialized_error(engine: str, requested: str, code: str = "NOT_INITIAL
 def _friendly_message(engine: str, exc: Exception) -> str:
     text = str(exc or "").strip()
     if engine == "paddleocr_vl" and ("not available" in text.lower() or not text):
-        return "PaddleOCR-VL 高精度引擎未初始化，已使用 MinerU 或 PyMuPDF 回退。"
+        return "PaddleOCR-VL 高精度引擎未初始化，已保留 PyMuPDF 快速解析结果。"
     if engine == "mineru" and ("not available" in text.lower() or not text):
         return "MinerU 深度解析组件未安装或初始化失败，已使用快速解析。"
-    return text or f"{engine} 解析失败，已使用可用回退。"
+    return text or f"{engine} 解析失败，已保留 PyMuPDF 快速解析结果。"
 
 
 def _error_level(engine: str, requested: str, exc: Exception) -> str:
@@ -210,6 +201,9 @@ def _error_level(engine: str, requested: str, exc: Exception) -> str:
 
 
 def _error_code(exc: Exception) -> str:
+    explicit = str(getattr(exc, "code", "") or "").strip()
+    if explicit:
+        return explicit
     text = str(exc).lower()
     if "未初始化" in str(exc) or "not initialized" in text or "not available" in text:
         return "NOT_INITIALIZED"
@@ -221,12 +215,6 @@ def _error_code(exc: Exception) -> str:
 def _has_deep_engine(index: dict[str, Any]) -> bool:
     chain = {str(item) for item in index.get("engineChain") or []}
     return bool(chain.intersection({"mineru", "paddleocr_vl"}))
-
-
-def _upgrade_missing_deep_warning(index: dict[str, Any]) -> None:
-    for error in index.get("engineErrors") or []:
-        if isinstance(error, dict) and error.get("level") == "info":
-            error["level"] = "warning"
 
 
 def _mark_review_if_deep_failed(index: dict[str, Any]) -> dict[str, Any]:

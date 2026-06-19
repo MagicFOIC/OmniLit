@@ -1,64 +1,29 @@
-# PaddleOCR-VL setup for OmniLit
+# PaddleOCR-VL cloud API setup
 
-OmniLit does not install PaddleOCR-VL, PaddlePaddle, vLLM, or related model
-dependencies in the main application environment. The main app calls
-PaddleOCR-VL through an external Python worker, so the app can still start and
-tests can still pass when PaddleOCR-VL is not installed.
+OmniLit calls the official PaddleOCR document layout parsing API directly. A
+local PaddleOCR installation, model server, Docker container, and separate
+Python environment are not required by the reader.
 
-## Enable the adapter
+Open **System settings > PDF cloud parsing services**, enable PaddleOCR-VL, and
+save:
 
-Set these environment variables before starting OmniLit:
+- API URL: copy the endpoint shown by the **API** panel at
+  `https://aistudio.baidu.com/paddleocr`
+- API token: the token issued by the official online API
 
-```powershell
-$env:OMNILIT_PADDLEOCR_VL_ENABLED = "1"
-$env:OMNILIT_PADDLEOCR_VL_MODE = "service"
-$env:OMNILIT_PADDLEOCR_VL_URL = "http://127.0.0.1:8118/v1"
-$env:OMNILIT_PADDLEOCR_VL_MODEL = "PaddlePaddle/PaddleOCR-VL-1.6"
-$env:OMNILIT_PADDLEOCR_VL_PIPELINE_VERSION = "v1.6"
-$env:OMNILIT_PADDLEOCR_VL_PYTHON = "D:\Tool\Python\project\OmniLit\.venv_paddleocr\Scripts\python.exe"
-$env:OMNILIT_PADDLEOCR_VL_TIMEOUT = "900"
-```
-
-`OMNILIT_PADDLEOCR_VL_MODE` can be `service` or `subprocess`.
-
-## CPU/local Python environment
+On Windows the token is protected with DPAPI. The following environment
+variables override saved settings:
 
 ```powershell
-python -m venv .venv_paddleocr
-.venv_paddleocr\Scripts\activate
-python -m pip install paddlepaddle==3.2.1 -i https://www.paddlepaddle.org.cn/packages/stable/cpu/
-python -m pip install -U "paddleocr[doc-parser]"
+$env:OMNILIT_PADDLEOCR_VL_API_KEY = "..."
+$env:OMNILIT_PADDLEOCR_VL_URL = "https://your-issued-endpoint"
 ```
 
-Then point OmniLit at that interpreter:
+OmniLit performs a one-time import from
+`D:\Tool\Java\API\PaddleOCR.txt` when no saved token exists. The source file is
+not copied or deleted.
 
-```powershell
-$env:OMNILIT_PADDLEOCR_VL_ENABLED = "1"
-$env:OMNILIT_PADDLEOCR_VL_MODE = "subprocess"
-$env:OMNILIT_PADDLEOCR_VL_PYTHON = "D:\Tool\Python\project\OmniLit\.venv_paddleocr\Scripts\python.exe"
-```
-
-## GPU/vLLM service example
-
-```powershell
-python -m venv .venv_vlm
-.venv_vlm\Scripts\activate
-python -m pip install "paddleocr[doc-parser]"
-paddleocr install_genai_server_deps vllm
-paddleocr genai_server --model_name PaddleOCR-VL-1.6-0.9B --backend vllm --port 8118
-```
-
-Then run OmniLit with:
-
-```powershell
-$env:OMNILIT_PADDLEOCR_VL_ENABLED = "1"
-$env:OMNILIT_PADDLEOCR_VL_MODE = "service"
-$env:OMNILIT_PADDLEOCR_VL_URL = "http://127.0.0.1:8118/v1"
-$env:OMNILIT_PADDLEOCR_VL_PYTHON = "D:\Tool\Python\project\OmniLit\.venv_vlm\Scripts\python.exe"
-```
-
-The worker command OmniLit runs is equivalent to:
-
-```powershell
-python -m omnilit_qt.tools.paddleocr_vl_worker --input paper.pdf --output out --server-url http://127.0.0.1:8118/v1 --model PaddlePaddle/PaddleOCR-VL-1.6 --pipeline-version v1.6 --engine server --merge-tables --relevel-titles
-```
+The API response, Markdown, and returned images are saved under the document's
+PaddleOCR engine cache. Tables, formulas, and figures are normalized into the
+same version 3 extraction index used by the reader. API failure falls back to
+the PyMuPDF result.

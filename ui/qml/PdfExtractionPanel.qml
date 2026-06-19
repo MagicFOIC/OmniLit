@@ -19,6 +19,7 @@ Rectangle {
     property var captionTranslationsByElement: ({})
     property bool captionTranslating: false
     property string captionTranslatingKey: ""
+    property var runtimeEngineStatus: pdfExtractionController.engineStatus()
 
     signal exportCompleted(string elementKey, string path)
     signal elementFeedbackChanged(string elementKey, string text)
@@ -106,6 +107,16 @@ Rectangle {
                 text: "来源：" + root.engineLabel(root.element.engine) + root.sourceEnginesText(root.element) + "  ·  confidence " + root.confidenceText(root.element.confidence)
                 color: theme.textSecondary
                 wrapMode: Text.WrapAnywhere
+            }
+
+            Text {
+                Layout.fillWidth: true
+                visible: root.index.engineErrors && root.index.engineErrors.length > 0
+                text: root.engineErrorsText(root.index.engineErrors)
+                color: theme.warning
+                wrapMode: Text.WrapAnywhere
+                maximumLineCount: 3
+                elide: Text.ElideRight
             }
 
             Text {
@@ -406,6 +417,21 @@ Rectangle {
         for (var i = 0; i < item.sourceEngines.length; i++)
             labels.push(root.engineLabel(item.sourceEngines[i]))
         return "（" + labels.join(" + ") + "）"
+    }
+
+    function engineErrorsText(errors) {
+        if (!errors || errors.length === 0)
+            return ""
+        var messages = []
+        for (var i = 0; i < Math.min(errors.length, 3); i++) {
+            var item = errors[i] || {}
+            messages.push(String(item.message || item.code || item.engine || "解析引擎状态"))
+        }
+        return "解析引擎状态：" + messages.join("；")
+    }
+
+    function bootstrapRuntimeEngine(engine) {
+        return pdfExtractionController.bootstrapEngine(engine)
     }
 
     function tableStatsText() {

@@ -17,13 +17,15 @@ try:
 
     from omnilit_qt.app_controller import AppController
     from omnilit_qt.i18n import LocaleController
-    from omnilit_qt.literature_library_controller import LiteratureLibraryController
+    from omnilit_qt.literature_library_controller import LiteratureLibraryController, LibraryStateStore, classify_journal_type
 except ModuleNotFoundError:  # pragma: no cover - depends on local Qt runtime.
     fitz = None
     QCoreApplication = None
     AppController = None
     LocaleController = None
     LiteratureLibraryController = None
+    LibraryStateStore = None
+    classify_journal_type = None
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -35,6 +37,56 @@ def write_sample_pdf(path: Path) -> None:
     page.insert_text((32, 48), "Sample literature PDF")
     document.save(path)
     document.close()
+
+
+@unittest.skipUnless(LiteratureLibraryController is not None, "Qt dependencies are not installed")
+class LiteratureLibraryPureLogicTests(unittest.TestCase):
+    def test_journal_type_classification(self) -> None:
+        self.assertEqual(classify_journal_type({"literature_source": "arxiv", "title": "A"})[0], "preprint")
+        self.assertEqual(classify_journal_type({"literature_source": "doaj", "journal_title": "Battery Letters"})[0], "oa_journal")
+        self.assertEqual(classify_journal_type({"journal_title": "Annual Reviews of Materials"})[0], "review_journal")
+        self.assertEqual(classify_journal_type({"container_title": "Proceedings of the Battery Conference"})[0], "conference")
+        self.assertEqual(classify_journal_type({"journal_title": "Batteries"})[0], "field_journal")
+        self.assertEqual(classify_journal_type({})[0], "unknown")
+
+    def test_library_state_store_defaults_and_repairs_broken_json(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "library_state.json"
+            store = LibraryStateStore(path)
+            state = store.load()
+            self.assertTrue(path.exists())
+            self.assertIn("to_read", {project["id"] for project in state["projects"]})
+
+            path.write_text("{broken", encoding="utf-8")
+            repaired = store.load()
+            self.assertTrue((Path(temp) / "library_state.json.bak").exists())
+            self.assertIn("favorites", repaired)
+
+    def test_sorting_modes_without_qt_runtime(self) -> None:
+        class SortHarness:
+            _sort_records = LiteratureLibraryController._sort_records
+            _relevance_rank = staticmethod(LiteratureLibraryController._relevance_rank)
+            _relevance_score = staticmethod(LiteratureLibraryController._relevance_score)
+            _year_value = staticmethod(LiteratureLibraryController._year_value)
+
+        controller = SortHarness()
+        controller._sort_mode = "relevance_desc"
+        records = [
+            {"title": "Beta", "relevance_level": "weak", "relevance_score": 2, "year": "2024", "localPdfPath": ""},
+            {"title": "Alpha", "relevance_level": "strong", "relevance_score": 8, "year": "2021", "localPdfPath": ""},
+            {"title": "Gamma", "relevance_level": "medium", "relevance_score": 4, "year": "2025", "localPdfPath": "x.pdf"},
+        ]
+        self.assertEqual([item["title"] for item in controller._sort_records(records)], ["Alpha", "Gamma", "Beta"])
+        controller._sort_mode = "relevance_asc"
+        self.assertEqual([item["title"] for item in controller._sort_records(records)], ["Beta", "Gamma", "Alpha"])
+        controller._sort_mode = "year_desc"
+        self.assertEqual([item["title"] for item in controller._sort_records(records)], ["Gamma", "Beta", "Alpha"])
+        controller._sort_mode = "year_asc"
+        self.assertEqual([item["title"] for item in controller._sort_records(records)], ["Alpha", "Beta", "Gamma"])
+        controller._sort_mode = "downloaded_first"
+        self.assertEqual(controller._sort_records(records)[0]["title"], "Gamma")
+        controller._sort_mode = "title_asc"
+        self.assertEqual([item["title"] for item in controller._sort_records(records)], ["Alpha", "Beta", "Gamma"])
 
 
 @unittest.skipUnless(LiteratureLibraryController is not None and fitz is not None, "Qt/PyMuPDF dependencies are not installed")

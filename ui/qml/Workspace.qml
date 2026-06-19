@@ -10,10 +10,18 @@ Item {
     property string systemSettingsWorkdirDraft: ""
     property string systemSettingsMessage: ""
     property bool systemSettingsMessageIsError: false
+    property string mineruApiUrlDraft: ""
+    property string paddleocrApiUrlDraft: ""
+    property string mineruTokenDraft: ""
+    property string paddleocrTokenDraft: ""
     property var tourTargets: ({})
     onDrawerPageChanged: {
         if(drawerPage === 6) {
             root.systemSettingsWorkdirDraft = onboardingController.workdir
+            root.mineruApiUrlDraft = pdfExtractionController.mineruApiUrl
+            root.paddleocrApiUrlDraft = pdfExtractionController.paddleocrApiUrl
+            root.mineruTokenDraft = ""
+            root.paddleocrTokenDraft = ""
             root.systemSettingsMessage = ""
             root.systemSettingsMessageIsError = false
         }
@@ -444,11 +452,6 @@ Item {
                             }
                             Text { text: i18n.text("logout"); color: logoutButton.hovered ? theme.error : theme.accent; font.weight: Font.DemiBold }
                             Item { Layout.fillWidth: true }
-                        }
-                        ModernToolTip {
-                            target: logoutButton
-                            shown: logoutButton.hovered
-                            text: i18n.text("logout")
                         }
                     }
                     Item { Layout.preferredHeight: 14 }
@@ -991,6 +994,70 @@ Item {
                                     }
                                 }
                             }
+                        }
+                    }
+
+                    Card {
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 14
+                        Layout.rightMargin: 14
+                        implicitHeight: parserApiSettingsContent.implicitHeight + 32
+                        ColumnLayout {
+                            id: parserApiSettingsContent
+                            anchors.fill: parent
+                            anchors.margins: 16
+                            spacing: 10
+
+                            Text { Layout.fillWidth: true; text: i18n.text("parser_cloud_services"); color: theme.text; font.pixelSize: theme.baseFontSize + 3; font.weight: Font.Bold }
+                            Text { Layout.fillWidth: true; text: i18n.text("parser_cloud_services_detail"); color: theme.textMuted; wrapMode: Text.WordWrap }
+
+                            Text { text: "MinerU"; color: theme.text; font.weight: Font.DemiBold }
+                            ModernCheckBox { id: mineruApiEnabled; text: i18n.text("service_enabled"); checked: pdfExtractionController.mineruApiEnabled }
+                            TextField {
+                                Layout.fillWidth: true
+                                text: root.mineruApiUrlDraft
+                                placeholderText: i18n.text("api_url")
+                                onTextChanged: root.mineruApiUrlDraft = text
+                            }
+                            TextField {
+                                Layout.fillWidth: true
+                                echoMode: TextInput.Password
+                                text: root.mineruTokenDraft
+                                placeholderText: pdfExtractionController.mineruTokenConfigured ? i18n.text("token_saved_placeholder") : i18n.text("api_token")
+                                onTextChanged: root.mineruTokenDraft = text
+                            }
+                            Flow {
+                                Layout.fillWidth: true
+                                spacing: 8
+                                PillButton { text: i18n.text("save"); primary: true; onClicked: pdfExtractionController.saveParserService("mineru", root.mineruApiUrlDraft, root.mineruTokenDraft, mineruApiEnabled.checked) }
+                                PillButton { text: i18n.text("test_connection"); onClicked: pdfExtractionController.testParserService("mineru") }
+                                PillButton { text: i18n.text("clear_token"); onClicked: pdfExtractionController.clearParserServiceToken("mineru") }
+                            }
+
+                            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: theme.border }
+                            Text { text: "PaddleOCR-VL"; color: theme.text; font.weight: Font.DemiBold }
+                            ModernCheckBox { id: paddleApiEnabled; text: i18n.text("service_enabled"); checked: pdfExtractionController.paddleocrApiEnabled }
+                            TextField {
+                                Layout.fillWidth: true
+                                text: root.paddleocrApiUrlDraft
+                                placeholderText: i18n.text("api_url")
+                                onTextChanged: root.paddleocrApiUrlDraft = text
+                            }
+                            TextField {
+                                Layout.fillWidth: true
+                                echoMode: TextInput.Password
+                                text: root.paddleocrTokenDraft
+                                placeholderText: pdfExtractionController.paddleocrTokenConfigured ? i18n.text("token_saved_placeholder") : i18n.text("api_token")
+                                onTextChanged: root.paddleocrTokenDraft = text
+                            }
+                            Flow {
+                                Layout.fillWidth: true
+                                spacing: 8
+                                PillButton { text: i18n.text("save"); primary: true; onClicked: pdfExtractionController.saveParserService("paddleocr_vl", root.paddleocrApiUrlDraft, root.paddleocrTokenDraft, paddleApiEnabled.checked) }
+                                PillButton { text: i18n.text("test_connection"); onClicked: pdfExtractionController.testParserService("paddleocr_vl") }
+                                PillButton { text: i18n.text("clear_token"); onClicked: pdfExtractionController.clearParserServiceToken("paddleocr_vl") }
+                            }
+                            Text { Layout.fillWidth: true; visible: pdfExtractionController.parserSettingsStatus.length > 0; text: pdfExtractionController.parserSettingsStatus; color: theme.textMuted; wrapMode: Text.WordWrap }
                         }
                     }
                     Item { Layout.fillHeight: true }

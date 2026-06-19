@@ -103,7 +103,7 @@ class PdfExtractionControllerTests(unittest.TestCase):
             self.assertIn("PDF 文件已变化，请重新解析", controller.statusText)
             self.assertNotIn(record_id, controller._indexes)
 
-    def test_select_engine_loads_cached_result_without_starting_analysis(self) -> None:
+    def test_empty_engine_loads_fast_cached_result_without_starting_analysis(self) -> None:
         class FakePaths:
             def __init__(self, root: Path) -> None:
                 self.root = root
@@ -117,24 +117,46 @@ class PdfExtractionControllerTests(unittest.TestCase):
             pdf_path.write_bytes(b"current pdf bytes")
             controller = PdfExtractionController(None, FakePaths(root), None, None)
             record_id = "record-1"
-            cached_dir = controller._index_path(record_id, "auto").parent
+            cached_dir = controller._index_path(record_id, "fast").parent
             cached_dir.mkdir(parents=True, exist_ok=True)
             cached_index = {
                 "version": 3,
                 "sourcePath": str(pdf_path),
-                "engine": "fusion",
+                "engine": "pymupdf",
                 "pageCount": 1,
                 "pages": [{"page": 0, "width": 100, "height": 100}],
                 "elements": [{"id": "table_1", "type": "table", "page": 0, "bbox": [1, 2, 3, 4]}],
             }
-            controller._index_path(record_id, "auto").write_text(json.dumps(cached_index), encoding="utf-8")
+            controller._index_path(record_id, "fast").write_text(json.dumps(cached_index), encoding="utf-8")
 
             with patch.object(controller, "analyzeRecordWithEngine", side_effect=AssertionError("analysis should not start")):
-                self.assertTrue(controller.selectExtractionEngine(record_id, str(pdf_path), "auto"))
+                self.assertTrue(controller.selectExtractionEngine(record_id, str(pdf_path), ""))
 
-        self.assertEqual(controller.currentIndex["engine"], "fusion")
+        self.assertEqual(controller.currentIndex["engine"], "pymupdf")
         self.assertEqual(controller.elements[0]["id"], "table_1")
         self.assertIn("缓存", controller.statusText)
+
+    def test_cloud_engine_ignores_legacy_cache_without_config_marker(self) -> None:
+        class FakePaths:
+            def __init__(self, root: Path) -> None:
+                self.root = root
+
+            def data(self, *parts: str) -> Path:
+                return self.root.joinpath(*parts)
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            pdf_path = root / "current.pdf"
+            pdf_path.write_bytes(b"current pdf bytes")
+            controller = PdfExtractionController(None, FakePaths(root), None, None)
+            cached_path = controller._index_path("record-1", "mineru")
+            cached_path.parent.mkdir(parents=True, exist_ok=True)
+            cached_path.write_text(json.dumps({"version": 3, "sourcePath": str(pdf_path), "engine": "mineru", "pages": [], "elements": []}), encoding="utf-8")
+
+            with patch.object(controller, "analyzeRecordWithEngine", return_value=True) as analyze:
+                self.assertTrue(controller.selectExtractionEngine("record-1", str(pdf_path), "mineru"))
+
+            analyze.assert_called_once_with("record-1", str(pdf_path), "mineru")
 
 
 if __name__ == "__main__":

@@ -9,45 +9,68 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-from .pdf_extraction_caption import find_nearby_caption
-from .pdf_extraction_schema import normalize_element
+try:  # keep import-compatible with the existing package
+    from .pdf_extraction_caption import find_nearby_caption as _legacy_find_nearby_caption
+except Exception:  # pragma: no cover - direct module smoke tests
+    _legacy_find_nearby_caption = None
+
+try:
+    from .pdf_extraction_schema import normalize_element
+except Exception:  # pragma: no cover - direct module smoke tests
+    def normalize_element(element: dict[str, Any], fallback_engine: str = "") -> dict[str, Any]:
+        if fallback_engine and not element.get("engine"):
+            element = dict(element)
+            element["engine"] = fallback_engine
+        return element
+
+try:
+    from .pdf_extraction_quality import apply_quality
+except Exception:  # pragma: no cover - direct module smoke tests
+    def apply_quality(element: dict[str, Any]) -> dict[str, Any]:
+        return element
 
 
-MATH_PATTERN = re.compile(r"(=|≈|≠|≤|≥|∑|∫|√|π|α|β|γ|Δ|λ|μ|σ|θ|×|÷|\^|\\frac|[A-Za-z]\s*[=+\-*/]\s*)")
+MATH_PATTERN = re.compile(
+    r"(=|≈|≠|≤|≥|∑|∫|√|π|α|β|γ|Δ|λ|μ|σ|θ|×|÷|\^|\\frac|[A-Za-z]\s*[=+\-*/]\s*)"
+)
 EQUATION_NUMBER_PATTERN = re.compile(r"(\(\s*\d+[A-Za-z]?\s*\)|（\s*\d+[A-Za-z]?\s*）)\s*$")
-CAPTION_PATTERN = re.compile(r"^\s*(fig(?:ure)?\.?|图|table|表)\s*\d+", re.IGNORECASE)
+FORMULA_SYMBOL_PATTERN = re.compile(
+    r"(=|<=|>=|≈|≠|≤|≥|±|×|÷|∑|∫|√|∞|∂|∆|Δ|"
+    r"\\frac|\\sum|\\int|\\sqrt|\\alpha|\\beta|\\gamma|\\delta|\\mu|\\sigma|"
+    r"[\u0370-\u03ff]|[A-Za-z0-9]\s*[\^_]|[A-Za-z]\s*[=+\-*/]\s*)"
+)
+FORMULA_SENTENCE_WORDS = {
+    "the",
+    "and",
+    "with",
+    "from",
+    "this",
+    "that",
+    "where",
+    "when",
+    "for",
+    "into",
+    "were",
+    "was",
+    "are",
+    "can",
+    "should",
+}
+CAPTION_PATTERN = re.compile(r"^\s*(fig(?:ure)?[\.．]?|图|table|表)\s*\d+", re.IGNORECASE)
 FIGURE_CAPTION_PATTERN = re.compile(
-    r"^\s*(fig(?:ure)?[\.\．]?|图)\s*([0-9]+[A-Za-z]?)\b",
-    re.IGNORECASE,
+    r"^\s*(fig(?:ure)?[\.．]?|图)\s*([0-9]+[A-Za-z]?)\b", re.IGNORECASE
 )
 TABLE_CAPTION_PATTERN = re.compile(r"^\s*(table\s*\d+[A-Za-z]?|表\s*\d+)", re.IGNORECASE)
+FIGURE_LABEL_EXTRACT_PATTERN = re.compile(r"^\s*(?:fig(?:ure)?[\.．]?|图)\s*([0-9]+[A-Za-z]?)", re.IGNORECASE)
 DECORATIVE_FIGURE_TEXT_PATTERN = re.compile(
-    r"("
-    r"royal\s+society\s+of\s+chemistry|"
-    r"\brsc\s+advances\b|"
-    r"\bview\s+article\s+online\b|"
-    r"\bview\s+journal\b|"
-    r"\bview\s+issue\b|"
-    r"\bcheck\s+for\s+updates\b|"
-    r"\barticle\s+online\b|"
-    r"\bjournal\s+homepage\b|"
-    r"\bpaper\b|"
-    r"\bcommunication\b|"
-    r"\breview\s+article\b|"
-    r"\breceived\b|"
-    r"\baccepted\b|"
-    r"\bpublished\b|"
-    r"\bdoi\s*:|"
-    r"www\.|"
-    r"copyright|"
-    r"creative\s+commons"
-    r")",
+    r"(royal\s+society\s+of\s+chemistry|\brsc\s+advances\b|\bview\s+article\s+online\b|"
+    r"\bview\s+journal\b|\bview\s+issue\b|\bcheck\s+for\s+updates\b|\barticle\s+online\b|"
+    r"\bjournal\s+homepage\b|\bpaper\b|\bcommunication\b|\breview\s+article\b|\breceived\b|"
+    r"\baccepted\b|\bpublished\b|\bdoi\s*:|www\.|copyright|creative\s+commons|"
+    r"©|the\s+author\(s\)|downloaded\s+on)",
     re.IGNORECASE,
 )
-FIGURE_LABEL_EXTRACT_PATTERN = re.compile(
-    r"^\s*(?:fig(?:ure)?\.?|图)\s*([0-9]+[A-Za-z]?)",
-    re.IGNORECASE,
-)
+
 ENABLE_VECTOR_FIGURE_DETECTION = False
 MAX_VECTOR_DRAWINGS_PER_PAGE = 500
 
@@ -61,11 +84,20 @@ def sha256_file(path: str | Path) -> str:
 
 
 def analyze_pdf(pdf_path: str | Path, output_dir: str | Path) -> dict[str, Any]:
+    """Analyze a PDF with PyMuPDF and write OmniLit extraction artifacts.
+
+    Figure extraction deliberately uses a caption-anchored pipeline instead of
+    grabbing arbitrary nearby text.  It fixes the RSC Advances cases where the
+    previous logic selected footer/copyright text or a following table caption
+    as the figure legend.
+    """
+
     import fitz
 
     source = Path(pdf_path).expanduser().resolve()
     if not source.exists():
         raise FileNotFoundError(f"PDF 文件不存在：{source}")
+
     target = Path(output_dir)
     target.mkdir(parents=True, exist_ok=True)
     (target / "tables").mkdir(exist_ok=True)
@@ -73,6 +105,7 @@ def analyze_pdf(pdf_path: str | Path, output_dir: str | Path) -> dict[str, Any]:
 
     pages: list[dict[str, Any]] = []
     elements: list[dict[str, Any]] = []
+
     with fitz.open(source) as document:
         for page_index in range(len(document)):
             page = document.load_page(page_index)
@@ -91,7 +124,7 @@ def analyze_pdf(pdf_path: str | Path, output_dir: str | Path) -> dict[str, Any]:
 
             tables = extract_tables_pymupdf_multi_strategy(page, page_index, page_size, target, text_blocks)
             elements.extend(tables)
-            table_rects = [_rect_from_bbox(item["bbox"]) for item in tables]
+            table_rects = [_rect_from_bbox(item.get("bbox") or []) for item in tables]
             elements.extend(extract_figures_pymupdf_enhanced(page, table_rects, page_index, page_size, target))
             elements.extend(extract_formula_candidates_pymupdf(page, text_blocks, page_index, page_size, target))
 
@@ -114,6 +147,11 @@ def analyze_pdf(pdf_path: str | Path, output_dir: str | Path) -> dict[str, Any]:
     return index
 
 
+# ---------------------------------------------------------------------------
+# Text blocks
+# ---------------------------------------------------------------------------
+
+
 def _extract_text_blocks(page: Any) -> list[dict[str, Any]]:
     blocks: list[dict[str, Any]] = []
     for line in _text_lines(page):
@@ -121,9 +159,10 @@ def _extract_text_blocks(page: Any) -> list[dict[str, Any]]:
         bbox = line.get("bbox") or []
         if not text or len(bbox) < 4:
             continue
-        blocks.append({"bbox": [float(value) for value in bbox], "text": text, "blockNo": len(blocks)})
+        blocks.append({"bbox": [float(value) for value in bbox[:4]], "text": text, "blockNo": len(blocks)})
     if blocks:
         return blocks
+
     for raw in page.get_text("blocks") or []:
         if len(raw) >= 5 and str(raw[4] or "").strip():
             blocks.append(
@@ -134,6 +173,122 @@ def _extract_text_blocks(page: Any) -> list[dict[str, Any]]:
                 }
             )
     return blocks
+
+
+def _text_lines(page: Any) -> list[dict[str, Any]]:
+    lines: list[dict[str, Any]] = []
+    try:
+        raw = page.get_text("dict") or {}
+    except Exception:
+        return lines
+    for block_index, block in enumerate(raw.get("blocks", []) or []):
+        if not isinstance(block, dict) or block.get("type") != 0:
+            continue
+        for line_index, line in enumerate(block.get("lines", []) or []):
+            if not isinstance(line, dict):
+                continue
+            spans = line.get("spans", []) or []
+            parts: list[str] = []
+            sizes: list[float] = []
+            for span in spans:
+                if not isinstance(span, dict):
+                    continue
+                parts.append(str(span.get("text") or ""))
+                try:
+                    sizes.append(float(span.get("size") or 0))
+                except Exception:
+                    pass
+            text = re.sub(r"\s+", " ", "".join(parts)).strip()
+            bbox = _bbox_from_any(line.get("bbox"))
+            if text and len(bbox) >= 4:
+                lines.append(
+                    {
+                        "text": text,
+                        "bbox": bbox,
+                        "blockIndex": block_index,
+                        "lineIndex": line_index,
+                        "fontSize": sum(sizes) / len(sizes) if sizes else 0.0,
+                    }
+                )
+    return lines
+
+
+def _page_text_blocks_with_lines(page: Any) -> list[dict[str, Any]]:
+    """Return line-level text blocks with same-baseline fragments joined.
+
+    PyMuPDF may split a caption into separate blocks (for example ``Fig. 2``
+    and the following legend text).  Joining only same-baseline fragments lets
+    the caption matcher see the real legend while still preventing paragraph,
+    footer, and table-caption leakage.
+    """
+
+    return _merge_same_baseline_text_blocks(_text_lines(page))
+
+
+def _merge_same_baseline_text_blocks(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not lines:
+        return []
+    ordered = sorted(lines, key=lambda item: (float((item.get("bbox") or [0, 0, 0, 0])[1]), float((item.get("bbox") or [0, 0, 0, 0])[0])))
+    rows: list[list[dict[str, Any]]] = []
+    for line in ordered:
+        bbox = line.get("bbox") or []
+        if len(bbox) < 4:
+            continue
+        placed = False
+        cy = (float(bbox[1]) + float(bbox[3])) / 2.0
+        height = max(1.0, float(bbox[3]) - float(bbox[1]))
+        for row in rows:
+            rb = row[0].get("bbox") or []
+            rcy = (float(rb[1]) + float(rb[3])) / 2.0
+            rheight = max(1.0, float(rb[3]) - float(rb[1]))
+            if abs(cy - rcy) <= max(2.6, min(height, rheight) * 0.45):
+                row.append(line)
+                placed = True
+                break
+        if not placed:
+            rows.append([line])
+
+    merged: list[dict[str, Any]] = []
+    for row in rows:
+        row = sorted(row, key=lambda item: float((item.get("bbox") or [0, 0, 0, 0])[0]))
+        current: list[dict[str, Any]] = []
+        last_x1: float | None = None
+        for line in row:
+            bbox = line.get("bbox") or []
+            if last_x1 is None or float(bbox[0]) - last_x1 <= max(22.0, _median_font_size(row) * 3.2):
+                current.append(line)
+            else:
+                merged.append(_merge_text_line_group(current))
+                current = [line]
+            last_x1 = float(bbox[2])
+        if current:
+            merged.append(_merge_text_line_group(current))
+    return sorted(merged, key=lambda item: (float((item.get("bbox") or [0, 0, 0, 0])[1]), float((item.get("bbox") or [0, 0, 0, 0])[0])))
+
+
+def _median_font_size(lines: list[dict[str, Any]]) -> float:
+    sizes = sorted(float(line.get("fontSize") or 0.0) for line in lines if float(line.get("fontSize") or 0.0) > 0)
+    if not sizes:
+        return 7.0
+    mid = len(sizes) // 2
+    return sizes[mid] if len(sizes) % 2 else (sizes[mid - 1] + sizes[mid]) / 2.0
+
+
+def _merge_text_line_group(group: list[dict[str, Any]]) -> dict[str, Any]:
+    text = re.sub(r"\s+", " ", " ".join(str(item.get("text") or "").strip() for item in group)).strip()
+    bbox = _union_nonempty_bboxes([item.get("bbox") or [] for item in group])
+    return {
+        "text": text,
+        "bbox": bbox,
+        "lines": group,
+        "fontSize": _median_font_size(group),
+        "blockNo": min((int(item.get("blockIndex") or 0) for item in group), default=0),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Tables
+# ---------------------------------------------------------------------------
 
 
 def extract_tables_pymupdf_multi_strategy(
@@ -147,36 +302,39 @@ def extract_tables_pymupdf_multi_strategy(
     finder = getattr(page, "find_tables", None)
     if finder is None:
         return tables
+
     text_blocks = text_blocks or []
     table_captions = _table_caption_blocks(text_blocks)
-    strategies = [
-        {},
-        {"vertical_strategy": "lines", "horizontal_strategy": "lines"},
-        {"vertical_strategy": "lines", "horizontal_strategy": "lines", "snap_tolerance": 3, "join_tolerance": 3, "intersection_tolerance": 3},
+    strategies: list[tuple[dict[str, Any], dict[str, Any], list[float]]] = [
+        ({}, {}, []),
+        ({"vertical_strategy": "lines", "horizontal_strategy": "lines"}, {}, []),
+        ({"vertical_strategy": "lines", "horizontal_strategy": "lines", "snap_tolerance": 3, "join_tolerance": 3, "intersection_tolerance": 3}, {}, []),
     ]
-    seen_strategy: set[tuple[tuple[str, Any], ...]] = set()
+    text_strategy = {"vertical_strategy": "text", "horizontal_strategy": "text", "snap_tolerance": 4, "join_tolerance": 4, "intersection_tolerance": 4}
+    for caption_info, clip_bbox in _caption_table_clips(page, table_captions, page_size, text_blocks):
+        strategies.append((dict(text_strategy), caption_info, clip_bbox))
+    seen_strategy: set[tuple[Any, ...]] = set()
     table_index = 0
-    for params in strategies:
-        key = tuple(sorted(params.items()))
+    for params, caption_hint, clip_bbox in strategies:
+        key = (tuple(sorted(params.items())), tuple(round(value, 2) for value in clip_bbox))
         if key in seen_strategy:
             continue
         seen_strategy.add(key)
         try:
-            result = finder(**params)
+            result = finder(clip=_rect_from_bbox(clip_bbox), **params) if clip_bbox else finder(**params)
         except TypeError:
             continue
         except Exception:
             continue
         for table in getattr(result, "tables", []) or []:
             bbox = _bbox_from_any(getattr(table, "bbox", None))
-            if not bbox:
+            if len(bbox) < 4:
                 continue
-            rows = _safe_table_extract(table)
+            raw_rows = _safe_table_extract(table)
+            rows, normalization = _normalize_table_rows(raw_rows)
             if not rows:
                 continue
-            caption_info = _table_caption_for_bbox(bbox, text_blocks, page_size)
-            if table_captions and not caption_info:
-                continue
+            caption_info = caption_hint or _table_caption_for_bbox(bbox, text_blocks, page_size)
             if not _valid_table_candidate(rows, bbox, page_size, caption_info, params):
                 continue
             table_index += 1
@@ -190,7 +348,7 @@ def extract_tables_pymupdf_multi_strategy(
                     "page": page_index,
                     "bbox": bbox,
                     "pageSize": page_size,
-                    "label": f"Table {table_index}",
+                    "label": _table_label_from_caption(caption_info.get("text", "") if caption_info else "") or f"Table {table_index}",
                     "caption": caption_info.get("text", "") if caption_info else "",
                     "captionBBox": caption_info.get("bbox", []) if caption_info else [],
                     "text": _table_text(rows),
@@ -204,21 +362,28 @@ def extract_tables_pymupdf_multi_strategy(
                         "strategy": params or {"default": True},
                         "structuralScore": round(_table_structural_score(rows), 3),
                         "textStrategy": _is_text_table_strategy(params),
+                        "tableEvidenceScore": round(_table_evidence_score(rows, bbox, page_size, bool(caption_info), params), 3),
+                        "rawShape": [len(raw_rows), max((len(row) for row in raw_rows), default=0)],
+                        "normalization": normalization,
                     },
+                    "raw": {"rows": raw_rows} if normalization else {},
                 }
             )
 
     deduped = dedupe_tables_by_iou(tables)
     for next_index, table in enumerate(deduped, start=1):
-        element_id = f"p{page_index + 1}_table_{next_index}"
         rows = table.get("table") or []
+        label = _safe_file_label(str(table.get("label") or f"table_{next_index}")).lower()
+        element_id = f"p{page_index + 1}_table_{next_index}"
+        if label and label != f"table_{next_index}":
+            element_id = f"p{page_index + 1}_{label}"
         csv_path = output_dir / "tables" / f"{element_id}.csv"
         json_path = output_dir / "tables" / f"{element_id}.json"
         png_path = output_dir / "clips" / f"{element_id}.png"
         _write_table_csv(csv_path, rows)
         _write_table_json(json_path, rows)
-        crop_element_png(page, table["bbox"], png_path, zoom=2.5, padding=6)
-        table.update({"id": element_id, "label": f"Table {next_index}", "csvPath": str(csv_path), "jsonPath": str(json_path), "pngPath": str(png_path)})
+        crop_element_png(page, table.get("bbox") or [], png_path, zoom=2.5, padding=6)
+        table.update({"id": element_id, "csvPath": str(csv_path), "jsonPath": str(json_path), "pngPath": str(png_path)})
     return deduped
 
 
@@ -229,565 +394,938 @@ def _extract_tables(page: Any, page_index: int, page_size: list[float], output_d
 def dedupe_tables_by_iou(tables: list[dict[str, Any]], iou_threshold: float = 0.72) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for table in sorted(tables, key=_table_quality_key, reverse=True):
-        if any(int(existing.get("page") or 0) == int(table.get("page") or 0) and _bbox_iou(existing.get("bbox") or [], table.get("bbox") or []) >= iou_threshold for existing in result):
+        if any(
+            int(existing.get("page") or 0) == int(table.get("page") or 0)
+            and _bbox_iou(existing.get("bbox") or [], table.get("bbox") or []) >= iou_threshold
+            for existing in result
+        ):
             continue
         result.append(table)
     return _sort_elements(result)
 
 
-def _bbox_intersection_area(left: list[float], right: list[float]) -> float:
-    if len(left or []) < 4 or len(right or []) < 4:
+def _safe_table_extract(table: Any) -> list[list[str]]:
+    try:
+        rows = table.extract()
+    except Exception:
+        return []
+    cleaned: list[list[str]] = []
+    for row in rows or []:
+        if row is None:
+            continue
+        values = [re.sub(r"\s+", " ", str(cell or "")).strip() for cell in row]
+        if any(values):
+            cleaned.append(values)
+    if not cleaned:
+        return []
+    return cleaned
+
+
+def _normalize_table_rows(rows: list[list[str]]) -> tuple[list[list[str]], list[str]]:
+    cleaned = [[re.sub(r"\s+", " ", str(cell or "")).strip() for cell in row] for row in rows or []]
+    cleaned = [row for row in cleaned if any(row)]
+    if not cleaned:
+        return [], []
+    width = max(len(row) for row in cleaned)
+    cleaned = [row + [""] * (width - len(row)) for row in cleaned]
+    actions: list[str] = []
+
+    empty_columns = [column for column in range(width) if not any(row[column] for row in cleaned)]
+    for column in reversed(empty_columns):
+        for row in cleaned:
+            del row[column]
+    if empty_columns:
+        actions.append("drop_empty_columns")
+
+    column = 1
+    while cleaned and column < len(cleaned[0]):
+        if _looks_like_split_text_column(cleaned, column):
+            for row in cleaned:
+                row[column - 1] = " ".join(part for part in (row[column - 1], row[column]) if part).strip()
+                del row[column]
+            actions.append(f"merge_split_column_{column}")
+            continue
+        column += 1
+    if len(cleaned) >= 3 and _row_numeric_ratio(cleaned[0]) == 0 and _row_numeric_ratio(cleaned[1]) == 0 and _row_numeric_ratio(cleaned[2]) >= 0.5:
+        cleaned[0] = [" ".join(part for part in cells if part).strip() for cells in zip(cleaned[0], cleaned[1])]
+        del cleaned[1]
+        actions.append("merge_wrapped_header")
+    return cleaned, actions
+
+
+def _looks_like_split_text_column(rows: list[list[str]], column: int) -> bool:
+    if not rows or column <= 0 or column >= len(rows[0]):
+        return False
+    header = rows[0]
+    split_word = False
+    if header[column] or not header[column - 1]:
+        split_word = bool(re.search(r"[A-Za-z]$", header[column - 1]) and re.match(r"^[a-z]{3,}(?:\s|$)", header[column]))
+        if not split_word:
+            return False
+    values = [row[column] for row in rows[1:] if row[column]]
+    if len(values) < max(2, int((len(rows) - 1) * 0.4)):
+        return False
+    numeric = sum(1 for value in values if re.fullmatch(r"[-+−]?\d+(?:[.,]\d+)?%?", value))
+    alphabetic = sum(1 for value in values if re.search(r"[A-Za-z]{2,}", value))
+    paired = sum(1 for row in rows[1:] if row[column - 1] and row[column])
+    looks_textual = numeric / max(1, len(values)) <= 0.2 and alphabetic / max(1, len(values)) >= 0.5
+    return (split_word or looks_textual) and paired >= max(2, int((len(rows) - 1) * 0.4))
+
+
+def _row_numeric_ratio(row: list[str]) -> float:
+    values = [value for value in row if value]
+    if not values:
         return 0.0
-    x0 = max(float(left[0]), float(right[0]))
-    y0 = max(float(left[1]), float(right[1]))
-    x1 = min(float(left[2]), float(right[2]))
-    y1 = min(float(left[3]), float(right[3]))
-    if x1 <= x0 or y1 <= y0:
-        return 0.0
-    return (x1 - x0) * (y1 - y0)
+    numeric = sum(1 for value in values if re.search(r"[-+−]?\d", value))
+    return numeric / len(values)
 
 
-def _horizontal_overlap_ratio(left: list[float], right: list[float]) -> float:
-    if len(left or []) < 4 or len(right or []) < 4:
-        return 0.0
-
-    overlap = max(0.0, min(float(left[2]), float(right[2])) - max(float(left[0]), float(right[0])))
-    left_width = max(1.0, float(left[2]) - float(left[0]))
-    right_width = max(1.0, float(right[2]) - float(right[0]))
-
-    return overlap / min(left_width, right_width)
-
-
-def _bbox_width(bbox: list[float]) -> float:
+def _valid_table_candidate(
+    rows: list[list[str]],
+    bbox: list[float],
+    page_size: list[float],
+    caption_info: dict[str, Any] | None,
+    params: dict[str, Any],
+) -> bool:
     if len(bbox or []) < 4:
+        return False
+    page_width, page_height = _page_dimensions(page_size)
+    width = _bbox_width(bbox)
+    height = _bbox_height(bbox)
+    if page_width <= 0 or page_height <= 0 or width < 45 or height < 18:
+        return False
+    if width * height < 1200:
+        return False
+    row_count = len(rows)
+    col_count = max((len(row) for row in rows), default=0)
+    nonempty = sum(1 for row in rows for cell in row if str(cell).strip())
+    if row_count < 2 or col_count < 2 or nonempty < 4:
+        return False
+    score = _table_structural_score(rows)
+    if caption_info:
+        return score >= 0.15
+    if _is_text_table_strategy(params):
+        if not caption_info:
+            return False
+        area_ratio = width * height / max(1.0, page_width * page_height)
+        return score >= 0.35 and row_count >= 3 and nonempty >= 8 and area_ratio <= 0.58
+    return score >= 0.28
+
+
+def _table_evidence_score(
+    rows: list[list[str]], bbox: list[float], page_size: list[float], captioned: bool, params: dict[str, Any]
+) -> float:
+    score = _table_structural_score(rows) * 0.55
+    if captioned:
+        score += 0.3
+    if not _is_text_table_strategy(params):
+        score += 0.12
+    page_width, page_height = _page_dimensions(page_size)
+    if page_width > 0 and page_height > 0:
+        area_ratio = _bbox_area(bbox) / (page_width * page_height)
+        if area_ratio > 0.58:
+            score -= 0.35
+    return max(0.0, min(1.0, score))
+
+
+def _table_structural_score(rows: list[list[str]]) -> float:
+    if not rows:
         return 0.0
-    return max(0.0, float(bbox[2]) - float(bbox[0]))
+    widths = [len(row) for row in rows if row]
+    if not widths:
+        return 0.0
+    dominant = max(set(widths), key=widths.count)
+    same_width = widths.count(dominant) / max(1, len(widths))
+    nonempty_counts = [sum(1 for cell in row if str(cell).strip()) for row in rows]
+    filled_ratio = sum(nonempty_counts) / max(1, len(rows) * dominant)
+    numericish = sum(1 for row in rows for cell in row if re.search(r"[-+]?\d", str(cell)))
+    numeric_bonus = min(0.25, numericish / max(1, len(rows) * dominant) * 0.5)
+    return max(0.0, min(1.0, same_width * 0.45 + filled_ratio * 0.45 + numeric_bonus))
 
 
-def _bbox_height(bbox: list[float]) -> float:
+def _table_quality_key(table: dict[str, Any]) -> tuple[float, float, float]:
+    metadata = table.get("metadata") or {}
+    rows = float(metadata.get("rows") or len(table.get("table") or []))
+    cols = float(metadata.get("columns") or max((len(row) for row in table.get("table") or []), default=0))
+    score = float(metadata.get("structuralScore") or 0.0)
+    area = _bbox_area(table.get("bbox") or [])
+    caption_bonus = 0.2 if table.get("caption") else 0.0
+    return score + caption_bonus, rows * cols, area
+
+
+def _is_text_table_strategy(params: dict[str, Any] | None) -> bool:
+    params = params or {}
+    return params.get("vertical_strategy") == "text" or params.get("horizontal_strategy") == "text"
+
+
+def _table_text(rows: list[list[str]]) -> str:
+    return "\n".join("\t".join(str(cell or "") for cell in row) for row in rows)
+
+
+def _write_table_csv(path: Path, rows: list[list[str]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8-sig") as handle:
+        writer = csv.writer(handle)
+        writer.writerows(rows or [])
+
+
+def _write_table_json(path: Path, rows: list[list[str]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump({"rows": rows or []}, handle, ensure_ascii=False, indent=2)
+
+
+def _table_caption_blocks(text_blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [block for block in text_blocks or [] if TABLE_CAPTION_PATTERN.search(str(block.get("text") or "").strip())]
+
+
+def _caption_table_clips(
+    page: Any,
+    captions: list[dict[str, Any]],
+    page_size: list[float],
+    text_blocks: list[dict[str, Any]],
+) -> list[tuple[dict[str, Any], list[float]]]:
+    page_width, page_height = _page_dimensions(page_size)
+    if page_width <= 0 or page_height <= 0:
+        return []
+    rules = _horizontal_table_rules(page, page_size)
+    result: list[tuple[dict[str, Any], list[float]]] = []
+    for caption in captions:
+        caption_bbox = _bbox_from_any(caption.get("bbox"))
+        caption_text = _clean_caption_text(str(caption.get("text") or ""))
+        if len(caption_bbox) < 4 or not caption_text:
+            continue
+        col_x0, col_x1 = _column_bounds_for_bbox(caption_bbox, page_size)
+        if _bbox_width(caption_bbox) >= page_width * 0.55:
+            col_x0, col_x1 = 8.0, page_width - 8.0
+        nearby_rules = [
+            rule
+            for rule in rules
+            if rule[1] >= caption_bbox[3] - 2.0
+            and rule[1] <= caption_bbox[3] + page_height * 0.48
+            and _horizontal_overlap_ratio(rule, [col_x0, caption_bbox[1], col_x1, caption_bbox[3]]) >= 0.35
+        ]
+        nearby_rules.sort(key=lambda rule: rule[1])
+        top_rule = nearby_rules[0] if nearby_rules else []
+        lower_rules = [rule for rule in nearby_rules[1:] if rule[1] - (top_rule[3] if top_rule else caption_bbox[3]) >= 18.0]
+        bottom_rule = lower_rules[-1] if lower_rules else []
+        if bottom_rule and _has_table_text_just_below(bottom_rule, col_x0, col_x1, text_blocks):
+            bottom_rule = []
+        top = float(top_rule[3] + 0.5) if top_rule else float(caption_bbox[3] + 2.0)
+        bottom = float(bottom_rule[3] + 1.0) if bottom_rule else _infer_caption_table_bottom(top, col_x0, col_x1, text_blocks, page_height)
+        if top_rule:
+            col_x0 = max(0.0, top_rule[0] - 2.0)
+            col_x1 = min(page_width, top_rule[2] + 2.0)
+        if bottom <= top + 18.0:
+            continue
+        caption_info = {"text": caption_text[:360], "bbox": caption_bbox, "score": 0.95}
+        result.append((caption_info, [col_x0, top, col_x1, min(page_height, bottom)]))
+    return result
+
+
+def _horizontal_table_rules(page: Any, page_size: list[float]) -> list[list[float]]:
+    page_width, _page_height = _page_dimensions(page_size)
+    rules: list[list[float]] = []
+    try:
+        drawings = page.get_drawings() or []
+    except Exception:
+        drawings = []
+    for drawing in drawings:
+        bbox = _bbox_from_any(drawing.get("rect") if isinstance(drawing, dict) else None)
+        if len(bbox) < 4:
+            continue
+        if _bbox_width(bbox) >= max(90.0, page_width * 0.18) and _bbox_height(bbox) <= 4.0:
+            rules.append(bbox)
+    return sorted(rules, key=lambda bbox: (bbox[1], bbox[0]))
+
+
+def _infer_caption_table_bottom(top: float, x0: float, x1: float, text_blocks: list[dict[str, Any]], page_height: float) -> float:
+    lines = []
+    for block in text_blocks or []:
+        bbox = _bbox_from_any(block.get("bbox"))
+        if len(bbox) < 4 or bbox[1] < top or bbox[1] > top + page_height * 0.42:
+            continue
+        if _horizontal_overlap_ratio(bbox, [x0, bbox[1], x1, bbox[3]]) >= 0.35:
+            lines.append(bbox)
+    lines.sort(key=lambda bbox: bbox[1])
+    previous_bottom = top
+    for bbox in lines:
+        if bbox[1] - previous_bottom > 20.0 and previous_bottom > top + 18.0:
+            return min(page_height, previous_bottom + 3.0)
+        previous_bottom = max(previous_bottom, bbox[3])
+    return min(page_height, max(top + 32.0, previous_bottom + 3.0))
+
+
+def _has_table_text_just_below(rule: list[float], x0: float, x1: float, text_blocks: list[dict[str, Any]]) -> bool:
+    for block in text_blocks or []:
+        bbox = _bbox_from_any(block.get("bbox"))
+        if len(bbox) < 4 or bbox[1] < rule[3] + 1.0 or bbox[1] > rule[3] + 16.0:
+            continue
+        if _horizontal_overlap_ratio(bbox, [x0, bbox[1], x1, bbox[3]]) >= 0.35:
+            return True
+    return False
+
+
+def _table_caption_for_bbox(bbox: list[float], text_blocks: list[dict[str, Any]], page_size: list[float]) -> dict[str, Any]:
     if len(bbox or []) < 4:
-        return 0.0
-    return max(0.0, float(bbox[3]) - float(bbox[1]))
+        return {}
+    max_distance = max(24.0, float(page_size[1] if len(page_size) > 1 else 0.0) * 0.08)
+    candidates: list[tuple[float, dict[str, Any]]] = []
+    for block in text_blocks or []:
+        block_bbox = _bbox_from_any(block.get("bbox"))
+        text = _clean_caption_text(str(block.get("text") or ""))
+        if len(block_bbox) < 4 or not TABLE_CAPTION_PATTERN.search(text):
+            continue
+        if _bbox_iou(bbox, block_bbox) > 0.0 or _contains_bbox(bbox, block_bbox):
+            continue
+        overlap = max(0.0, min(bbox[2], block_bbox[2]) - max(bbox[0], block_bbox[0]))
+        if overlap < min(_bbox_width(bbox), _bbox_width(block_bbox)) * 0.16:
+            continue
+        above = float(bbox[1]) - float(block_bbox[3])
+        below = float(block_bbox[1]) - float(bbox[3])
+        distance = above if above >= 0 else below if below >= 0 else -1.0
+        if distance < 0 or distance > max_distance:
+            continue
+        direction_penalty = 0.0 if above >= 0 else 8.0
+        candidates.append((distance + direction_penalty, {"text": text[:360], "bbox": block_bbox, "score": 0.9}))
+    if not candidates:
+        return {}
+    candidates.sort(key=lambda item: item[0])
+    return candidates[0][1]
 
 
-def _bbox_gap(a: list[float], b: list[float]) -> tuple[float, float]:
-    """返回两个 bbox 的水平间距和垂直间距；相交则为 0。"""
-    if len(a or []) < 4 or len(b or []) < 4:
-        return 10**9, 10**9
-
-    hgap = max(0.0, max(float(a[0]), float(b[0])) - min(float(a[2]), float(b[2])))
-    vgap = max(0.0, max(float(a[1]), float(b[1])) - min(float(a[3]), float(b[3])))
-    return hgap, vgap
+def _table_label_from_caption(caption: str) -> str:
+    m = re.search(r"^\s*(Table|表)\s*([0-9]+[A-Za-z]?)", str(caption or ""), flags=re.IGNORECASE)
+    if not m:
+        return ""
+    prefix = "Table" if m.group(1).lower().startswith("table") else "表"
+    return f"{prefix} {m.group(2)}"
 
 
-def _column_bounds_for_bbox(bbox: list[float], page_size: list[float]) -> tuple[float, float]:
-    """估计 figure 所在的栏位边界。
+# ---------------------------------------------------------------------------
+# Figures
+# ---------------------------------------------------------------------------
 
-    双栏论文中，caption 应只在同一栏内搜索，避免抓到旁边栏正文。
+
+def extract_figures_pymupdf_enhanced(page: Any, *args: Any) -> list[dict[str, Any]]:
+    """Extract figures using strict figure-caption anchoring.
+
+    Supported call styles:
+    - current: ``(page, table_rects, page_index, page_size, output_dir)``
+    - legacy:  ``(page, text_blocks, table_rects, page_index, page_size, output_dir)``
+
+    The logic intentionally refuses to use arbitrary nearby text as a legend.
+    A legend must start with ``Fig.``, ``Figure`` or ``图``.  This prevents
+    footer text like ``RSC Adv., 2026...`` and following ``Table 4...`` captions
+    from being attached to graph images.
     """
-    if len(bbox or []) < 4 or len(page_size or []) < 2:
-        return 0.0, 0.0
 
-    page_width = float(page_size[0] or 0)
-    if page_width <= 0:
-        return 0.0, 0.0
+    if len(args) == 4:
+        table_rects, page_index, page_size, output_dir = args
+        text_blocks = _page_text_blocks_with_lines(page)
+    elif len(args) == 5:
+        maybe_text_blocks, table_rects, page_index, page_size, output_dir = args
+        # Preserve line/span information whenever possible.  The provided legacy
+        # blocks are kept only as a fallback for very old PyMuPDF versions.
+        text_blocks = _page_text_blocks_with_lines(page) or list(maybe_text_blocks or [])
+    else:
+        raise TypeError("extract_figures_pymupdf_enhanced expects 4 or 5 positional arguments after page")
 
-    x0, x1 = float(bbox[0]), float(bbox[2])
-    cx = (x0 + x1) / 2.0
+    table_rects = list(table_rects or [])
+    page_index = int(page_index)
+    page_size = [float(page_size[0]), float(page_size[1])] if len(page_size or []) >= 2 else [0.0, 0.0]
+    output_dir = Path(output_dir)
 
-    # 如果图比较宽，视为跨栏图，直接全页
-    if _bbox_width(bbox) >= page_width * 0.62:
-        return 0.0, page_width
+    visual_candidates = _collect_visual_bboxes(page, page_size)
+    figure_captions = _figure_caption_candidates(text_blocks, page_size)
+    figures: list[dict[str, Any]] = []
+    used_caption_numbers: set[str] = set()
 
-    center = page_width / 2.0
-    gutter_half = max(12.0, page_width * 0.025)
-    margin = 8.0
+    # Primary path: start from real figure captions and find the closest visual
+    # content above/near them.  This handles vector-only graphs and split captions.
+    for caption_info in figure_captions:
+        number = str(caption_info.get("number") or "").strip()
+        if number and number in used_caption_numbers:
+            continue
+        image_bbox = _figure_image_bbox_for_caption(
+            caption_info=caption_info,
+            visual_candidates=visual_candidates,
+            table_rects=table_rects,
+            text_blocks=text_blocks,
+            page_size=page_size,
+        )
+        if len(image_bbox) < 4 or not _reasonable_figure_bbox(image_bbox, page_size, allow_small=True):
+            continue
+        if _is_table_overlap(image_bbox, table_rects, threshold=0.32):
+            continue
+        caption_bbox = caption_info.get("bbox") or []
+        display_bbox = _clip_bbox(_union_nonempty_bboxes([image_bbox, caption_bbox]), page_size)
+        if len(display_bbox) < 4:
+            continue
+        caption_text = _clean_caption_text(str(caption_info.get("text") or ""))
+        if not _has_real_figure_caption(caption_text):
+            continue
+        used_caption_numbers.add(number)
+        figures.append(
+            _build_figure_element(
+                page=page,
+                page_index=page_index,
+                figure_index=len(figures) + 1,
+                page_size=page_size,
+                output_dir=output_dir,
+                image_bbox=image_bbox,
+                display_bbox=display_bbox,
+                caption_info={**caption_info, "text": caption_text},
+            )
+        )
 
-    # 左栏
-    if cx < center and x1 <= center + gutter_half:
-        return margin, center - gutter_half
+    # Secondary path: retain large caption-free images, but only when they are not
+    # decorative headers/footers and do not sit beside an unrelated table caption.
+    for bbox in _dedupe_bboxes(visual_candidates):
+        if _is_bbox_covered_by_figures(bbox, figures):
+            continue
+        if not _reasonable_figure_bbox(bbox, page_size):
+            continue
+        if _is_table_overlap(bbox, table_rects, threshold=0.35):
+            continue
+        caption_info = _best_caption_for_image_bbox(bbox, figure_captions, page_size, require_real=True)
+        caption_text = _clean_caption_text(str(caption_info.get("text") or "")) if caption_info else ""
+        skip, _reason = _should_skip_figure_candidate(bbox, page_index, page_size, text_blocks, caption_text)
+        if skip:
+            continue
+        if caption_info and caption_info.get("number") in used_caption_numbers:
+            continue
+        image_bbox = _refine_figure_image_bbox(bbox, visual_candidates, page_size)
+        display_bbox = _clip_bbox(_union_nonempty_bboxes([image_bbox, caption_info.get("bbox", []) if caption_info else []]), page_size)
+        if caption_info:
+            used_caption_numbers.add(str(caption_info.get("number") or ""))
+        figures.append(
+            _build_figure_element(
+                page=page,
+                page_index=page_index,
+                figure_index=len(figures) + 1,
+                page_size=page_size,
+                output_dir=output_dir,
+                image_bbox=image_bbox,
+                display_bbox=display_bbox,
+                caption_info=caption_info or {},
+            )
+        )
 
-    # 右栏
-    if cx >= center and x0 >= center - gutter_half:
-        return center + gutter_half, page_width - margin
-
-    return margin, page_width - margin
+    return _dedupe_figure_elements(figures)
 
 
-def _bbox_inside_column_ratio(bbox: list[float], col_x0: float, col_x1: float) -> float:
-    if len(bbox or []) < 4:
-        return 0.0
-    overlap = max(0.0, min(float(bbox[2]), col_x1) - max(float(bbox[0]), col_x0))
-    width = max(1.0, float(bbox[2]) - float(bbox[0]))
-    return overlap / width
+def _extract_figures(
+    page: Any,
+    page_index: int,
+    page_size: list[float],
+    output_dir: Path,
+    text_blocks: list[dict[str, Any]],
+    table_rects: list[Any],
+) -> list[dict[str, Any]]:
+    return extract_figures_pymupdf_enhanced(page, text_blocks, table_rects, page_index, page_size, output_dir)
 
 
-def _same_column(a: list[float], b: list[float], page_size: list[float]) -> bool:
-    ax0, ax1 = _column_bounds_for_bbox(a, page_size)
-    bx0, bx1 = _column_bounds_for_bbox(b, page_size)
-    return abs(ax0 - bx0) <= 10.0 and abs(ax1 - bx1) <= 10.0
+def _collect_visual_bboxes(page: Any, page_size: list[float]) -> list[list[float]]:
+    candidates: list[list[float]] = []
+    try:
+        for block in (page.get_text("dict") or {}).get("blocks", []) or []:
+            if isinstance(block, dict) and block.get("type") == 1:
+                bbox = _bbox_from_any(block.get("bbox"))
+                if _reasonable_visual_bbox(bbox, page_size):
+                    candidates.append(_clip_bbox(bbox, page_size))
+    except Exception:
+        pass
+
+    try:
+        for info in page.get_image_info(hashes=True, xrefs=True) or []:
+            bbox = _bbox_from_any(info.get("bbox"))
+            if _reasonable_visual_bbox(bbox, page_size):
+                candidates.append(_clip_bbox(bbox, page_size))
+    except Exception:
+        pass
+
+    drawings = []
+    try:
+        drawings = page.get_drawings() or []
+    except Exception:
+        drawings = []
+    if len(drawings) > MAX_VECTOR_DRAWINGS_PER_PAGE and not ENABLE_VECTOR_FIGURE_DETECTION:
+        drawings = []
+
+    drawing_bboxes: list[list[float]] = []
+    for drawing in drawings:
+        if not isinstance(drawing, dict):
+            continue
+        bbox = _bbox_from_any(drawing.get("rect"))
+        if not _reasonable_visual_bbox(bbox, page_size, allow_thin=True):
+            continue
+        if _is_visual_noise(bbox, page_size):
+            continue
+        drawing_bboxes.append(_clip_bbox(bbox, page_size))
+    candidates.extend(drawing_bboxes)
+    candidates.extend(_merge_nearby_bboxes(drawing_bboxes))
+    return _dedupe_bboxes([box for box in candidates if len(box) >= 4], iou_threshold=0.88)
 
 
-def _refine_figure_image_bbox(
-        seed_bbox: list[float],
-        visual_candidates: list[list[float]],
-        page_size: list[float],
+def _figure_caption_candidates(text_blocks: list[dict[str, Any]], page_size: list[float]) -> list[dict[str, Any]]:
+    blocks = sorted(text_blocks or [], key=lambda item: (float((item.get("bbox") or [0, 0, 0, 0])[1]), float((item.get("bbox") or [0, 0, 0, 0])[0])))
+    captions: list[dict[str, Any]] = []
+    used_indices: set[int] = set()
+    for idx, block in enumerate(blocks):
+        if idx in used_indices:
+            continue
+        bbox = _bbox_from_any(block.get("bbox"))
+        text = _clean_caption_text(str(block.get("text") or ""))
+        if len(bbox) < 4 or not text:
+            continue
+        match = FIGURE_CAPTION_PATTERN.search(text)
+        if not match:
+            continue
+        if DECORATIVE_FIGURE_TEXT_PATTERN.search(text) and len(text) < 32:
+            continue
+        if TABLE_CAPTION_PATTERN.search(text):
+            continue
+        number = match.group(2)
+        caption_text = text
+        caption_bbox = bbox
+        used_indices.add(idx)
+        # Attach only short continuation lines in the same column and just below
+        # the figure-caption start.  Stop before table captions, page footers or
+        # normal paragraph body.
+        continuation_count = 0
+        for next_idx in range(idx + 1, len(blocks)):
+            candidate = blocks[next_idx]
+            candidate_bbox = _bbox_from_any(candidate.get("bbox"))
+            candidate_text = _clean_caption_text(str(candidate.get("text") or ""))
+            if len(candidate_bbox) < 4 or not candidate_text:
+                continue
+            if candidate_bbox[1] < caption_bbox[1] - 2:
+                continue
+            if FIGURE_CAPTION_PATTERN.search(candidate_text) or TABLE_CAPTION_PATTERN.search(candidate_text):
+                break
+            if not _is_caption_continuation_line(caption_bbox, caption_text, candidate_bbox, candidate_text, page_size):
+                # Once we have moved clearly below the caption, stop scanning.
+                if candidate_bbox[1] - caption_bbox[3] > max(18.0, _bbox_height(caption_bbox) * 1.8):
+                    break
+                continue
+            caption_text = _clean_caption_text(f"{caption_text} {candidate_text}")
+            caption_bbox = _union_nonempty_bboxes([caption_bbox, candidate_bbox])
+            used_indices.add(next_idx)
+            continuation_count += 1
+            if continuation_count >= 4 or len(caption_text) >= 520:
+                break
+        captions.append(
+            {
+                "text": caption_text[:620],
+                "bbox": caption_bbox,
+                "number": number,
+                "score": 0.98,
+                "source": "caption_regex",
+            }
+        )
+    return _dedupe_caption_candidates(captions)
+
+
+def _is_caption_continuation_line(
+    caption_bbox: list[float],
+    caption_text: str,
+    line_bbox: list[float],
+    line_text: str,
+    page_size: list[float],
+) -> bool:
+    if len(caption_bbox or []) < 4 or len(line_bbox or []) < 4:
+        return False
+    if DECORATIVE_FIGURE_TEXT_PATTERN.search(line_text):
+        return False
+    if _is_page_header_or_footer_bbox(line_bbox, page_size):
+        return False
+    gap = float(line_bbox[1]) - float(caption_bbox[3])
+    if gap < -4.0 or gap > max(18.0, _bbox_height(caption_bbox) * 1.9):
+        return False
+    if not _same_column(caption_bbox, line_bbox, page_size):
+        return False
+    overlap = _horizontal_overlap_ratio(caption_bbox, line_bbox)
+    # Captions may be narrower than continuation lines.  Permit a similar left
+    # edge when overlap is modest.
+    left_aligned = abs(float(line_bbox[0]) - float(caption_bbox[0])) <= 18.0
+    short_caption_line = len(line_text) <= 220 and not re.match(r"^\s*[A-Z][a-z]+\s+[a-z]+\s+", line_text)
+    return (overlap >= 0.18 or left_aligned) and short_caption_line
+
+
+def _dedupe_caption_candidates(captions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for caption in sorted(captions, key=lambda item: (-len(str(item.get("text") or "")), float((item.get("bbox") or [0, 0, 0, 0])[1]))):
+        bbox = caption.get("bbox") or []
+        number = str(caption.get("number") or "")
+        duplicate = False
+        for existing in result:
+            if number and number == str(existing.get("number") or "") and _bbox_iou(bbox, existing.get("bbox") or []) > 0.08:
+                duplicate = True
+                break
+            if _bbox_iou(bbox, existing.get("bbox") or []) > 0.65:
+                duplicate = True
+                break
+        if not duplicate:
+            result.append(caption)
+    return sorted(result, key=lambda item: (float((item.get("bbox") or [0, 0, 0, 0])[1]), float((item.get("bbox") or [0, 0, 0, 0])[0])))
+
+
+def _figure_image_bbox_for_caption(
+    caption_info: dict[str, Any],
+    visual_candidates: list[list[float]],
+    table_rects: list[Any],
+    text_blocks: list[dict[str, Any]],
+    page_size: list[float],
 ) -> list[float]:
-    """把属于同一张图的相邻视觉候选合并，避免图裁剪不完整。"""
+    caption_bbox = _bbox_from_any(caption_info.get("bbox"))
+    if len(caption_bbox) < 4:
+        return []
+    page_width, page_height = _page_dimensions(page_size)
+    if page_width <= 0 or page_height <= 0:
+        return []
+
+    scored: list[tuple[float, list[float]]] = []
+    col_x0, col_x1 = _column_bounds_for_bbox(caption_bbox, page_size)
+    caption_cx = (caption_bbox[0] + caption_bbox[2]) / 2.0
+    for candidate in visual_candidates or []:
+        bbox = _bbox_from_any(candidate)
+        if len(bbox) < 4:
+            continue
+        if _is_table_overlap(bbox, table_rects, threshold=0.28):
+            continue
+        if _bbox_inside_column_ratio(bbox, col_x0, col_x1) < 0.50 and _horizontal_overlap_ratio(caption_bbox, bbox) < 0.12:
+            continue
+        above_distance = caption_bbox[1] - bbox[3]
+        below_distance = bbox[1] - caption_bbox[3]
+        horizontal_overlap = _horizontal_overlap_ratio(caption_bbox, bbox)
+        candidate_cx = (bbox[0] + bbox[2]) / 2.0
+        center_penalty = abs(candidate_cx - caption_cx) / max(1.0, page_width) * 45.0
+        width_ratio = min(_bbox_width(caption_bbox), _bbox_width(bbox)) / max(1.0, max(_bbox_width(caption_bbox), _bbox_width(bbox)))
+        if -8.0 <= above_distance <= max(130.0, page_height * 0.18):
+            score = above_distance + center_penalty - horizontal_overlap * 35.0 - width_ratio * 10.0
+            scored.append((score, bbox))
+        elif -8.0 <= below_distance <= max(70.0, page_height * 0.10):
+            # Less common, but some journals place captions above images.
+            score = below_distance + 36.0 + center_penalty - horizontal_overlap * 22.0
+            scored.append((score, bbox))
+
+    if scored:
+        scored.sort(key=lambda item: item[0])
+        seed = scored[0][1]
+        refined = _refine_figure_image_bbox(seed, [box for _, box in scored] + visual_candidates, page_size)
+        # Do not let the visual merge cross down into a following table caption.
+        return _trim_bbox_against_unrelated_text(refined, caption_bbox, text_blocks, page_size)
+
+    return _fallback_caption_inferred_bbox(caption_bbox, text_blocks, table_rects, page_size)
+
+
+def _fallback_caption_inferred_bbox(
+    caption_bbox: list[float],
+    text_blocks: list[dict[str, Any]],
+    table_rects: list[Any],
+    page_size: list[float],
+) -> list[float]:
+    page_width, page_height = _page_dimensions(page_size)
+    if page_width <= 0 or page_height <= 0 or len(caption_bbox or []) < 4:
+        return []
+    col_x0, col_x1 = _column_bounds_for_bbox(caption_bbox, page_size)
+    x0 = max(col_x0, caption_bbox[0] - 14.0)
+    x1 = min(col_x1, caption_bbox[2] + 14.0)
+    y1 = max(0.0, caption_bbox[1] - 4.0)
+    search_top = max(0.0, y1 - min(260.0, page_height * 0.34))
+
+    blockers: list[float] = []
+    for block in text_blocks or []:
+        bbox = _bbox_from_any(block.get("bbox"))
+        text = str(block.get("text") or "")
+        if len(bbox) < 4 or bbox[3] >= y1 or bbox[1] < search_top:
+            continue
+        if _bbox_inside_column_ratio(bbox, col_x0, col_x1) < 0.5:
+            continue
+        if FIGURE_CAPTION_PATTERN.search(text):
+            blockers.append(bbox[3])
+            continue
+        # A long text line right above the figure likely belongs to a paragraph
+        # before the graph; use it as the upper boundary, but ignore tiny axis labels.
+        if len(text) >= 20 and _bbox_width(bbox) >= (x1 - x0) * 0.35:
+            blockers.append(bbox[3])
+    if blockers:
+        search_top = min(y1 - 28.0, max(blockers) + 5.0)
+    bbox = _clip_bbox([x0, search_top, x1, y1], page_size)
+    if _is_table_overlap(bbox, table_rects, threshold=0.20):
+        return []
+    return bbox
+
+
+def _trim_bbox_against_unrelated_text(
+    image_bbox: list[float],
+    caption_bbox: list[float],
+    text_blocks: list[dict[str, Any]],
+    page_size: list[float],
+) -> list[float]:
+    if len(image_bbox or []) < 4 or len(caption_bbox or []) < 4:
+        return image_bbox
+    image = [float(v) for v in image_bbox[:4]]
+    col_x0, col_x1 = _column_bounds_for_bbox(caption_bbox, page_size)
+    for block in text_blocks or []:
+        bbox = _bbox_from_any(block.get("bbox"))
+        text = str(block.get("text") or "")
+        if len(bbox) < 4:
+            continue
+        if FIGURE_CAPTION_PATTERN.search(text):
+            continue
+        if _bbox_inside_column_ratio(bbox, col_x0, col_x1) < 0.5:
+            continue
+        # If an unrelated table caption or footer starts just below the image,
+        # make sure the pure image bbox stops above it.
+        if TABLE_CAPTION_PATTERN.search(text) and image[1] < bbox[1] < image[3] + 18.0:
+            image[3] = min(image[3], bbox[1] - 3.0)
+    return _clip_bbox(image, page_size)
+
+
+def _build_figure_element(
+    page: Any,
+    page_index: int,
+    figure_index: int,
+    page_size: list[float],
+    output_dir: Path,
+    image_bbox: list[float],
+    display_bbox: list[float],
+    caption_info: dict[str, Any],
+) -> dict[str, Any]:
+    caption = _clean_caption_text(str(caption_info.get("text") or ""))
+    number = _figure_number_from_caption(caption) or str(caption_info.get("number") or "")
+    label = f"Figure {number}" if number else f"Figure {figure_index}"
+    element_id = f"p{page_index + 1}_figure_{_safe_file_label(number or str(figure_index))}"
+    png_path = output_dir / "clips" / f"{element_id}.png"
+    image_meta = crop_element_png(page, display_bbox, png_path, zoom=2.5, padding=8)
+    return {
+        "id": element_id,
+        "type": "figure",
+        "page": page_index,
+        "bbox": display_bbox,
+        "pageSize": page_size,
+        "label": label,
+        "caption": caption,
+        "captionBBox": caption_info.get("bbox", []) if caption_info else [],
+        "text": caption,
+        "table": [],
+        "csvPath": "",
+        "jsonPath": "",
+        "pngPath": str(png_path) if image_meta else "",
+        "metadata": {
+            "width": round(_bbox_width(display_bbox), 2),
+            "height": round(_bbox_height(display_bbox), 2),
+            "imageBBox": image_bbox,
+            "captionNumber": number,
+            "captionSource": caption_info.get("source", "") if caption_info else "",
+            "captionScore": caption_info.get("score", 0.0) if caption_info else 0.0,
+            **image_meta,
+        },
+    }
+
+
+def _best_caption_for_image_bbox(
+    bbox: list[float],
+    captions: list[dict[str, Any]],
+    page_size: list[float],
+    require_real: bool = True,
+) -> dict[str, Any]:
+    if len(bbox or []) < 4:
+        return {}
+    candidates: list[tuple[float, dict[str, Any]]] = []
+    for caption in captions or []:
+        caption_bbox = _bbox_from_any(caption.get("bbox"))
+        caption_text = str(caption.get("text") or "")
+        if len(caption_bbox) < 4:
+            continue
+        if require_real and not _has_real_figure_caption(caption_text):
+            continue
+        if not _same_column(bbox, caption_bbox, page_size) and _horizontal_overlap_ratio(bbox, caption_bbox) < 0.12:
+            continue
+        below = caption_bbox[1] - bbox[3]
+        above = bbox[1] - caption_bbox[3]
+        if -8.0 <= below <= max(135.0, page_size[1] * 0.18):
+            score = below - _horizontal_overlap_ratio(bbox, caption_bbox) * 30.0
+            candidates.append((score, caption))
+        elif -8.0 <= above <= max(70.0, page_size[1] * 0.10):
+            score = above + 35.0 - _horizontal_overlap_ratio(bbox, caption_bbox) * 20.0
+            candidates.append((score, caption))
+    if not candidates:
+        return {}
+    candidates.sort(key=lambda item: item[0])
+    return candidates[0][1]
+
+
+def _caption_near_bbox(bbox: list[float], text_blocks: list[dict[str, Any]], page_size: list[float] | None = None) -> str:
+    page_size = page_size or [0.0, 0.0]
+    captions = _figure_caption_candidates(text_blocks, page_size)
+    info = _best_caption_for_image_bbox(bbox, captions, page_size, require_real=True)
+    return _clean_caption_text(str(info.get("text") or "")) if info else ""
+
+
+def _refine_figure_image_bbox(seed_bbox: list[float], visual_candidates: list[list[float]], page_size: list[float]) -> list[float]:
     seed = _bbox_from_any(seed_bbox)
     if len(seed) < 4:
-        return seed_bbox
-
+        return []
     refined = [float(v) for v in seed[:4]]
     changed = True
-
     while changed:
         changed = False
-
-        for cand in visual_candidates or []:
-            box = _bbox_from_any(cand)
-            if len(box) < 4:
+        for candidate in visual_candidates or []:
+            box = _bbox_from_any(candidate)
+            if len(box) < 4 or box == refined:
                 continue
-
-            if box == refined:
+            if not _same_column(refined, box, page_size) and _bbox_gap(refined, box)[0] > 24.0:
                 continue
-
-            if not _same_column(refined, box, page_size):
-                continue
-
             hgap, vgap = _bbox_gap(refined, box)
             h_overlap = _horizontal_overlap_ratio(refined, box)
-            v_overlap = _horizontal_overlap_ratio(
-                [refined[1], refined[0], refined[3], refined[2]],
-                [box[1], box[0], box[3], box[2]],
-            )
-
-            # 条件：
-            # 1. 有明显重叠，或者
-            # 2. 非常接近，且看起来属于同一视觉图块
+            v_overlap = _vertical_overlap_ratio(refined, box)
             should_merge = (
-                    _bbox_intersection_area(refined, box) > 0
-                    or (h_overlap > 0.35 and vgap <= 22.0)
-                    or (v_overlap > 0.30 and hgap <= 22.0)
-                    or (hgap <= 14.0 and vgap <= 14.0)
+                _bbox_intersection_area(refined, box) > 0
+                or (h_overlap > 0.35 and vgap <= 24.0)
+                or (v_overlap > 0.30 and hgap <= 24.0)
+                or (hgap <= 14.0 and vgap <= 14.0)
             )
-
             if not should_merge:
                 continue
-
             new_box = _union_nonempty_bboxes([refined, box])
             if len(new_box) < 4:
                 continue
-
+            # Prevent accidental cross-column/page-wide merges unless the seed is
+            # already clearly a cross-column figure.
+            page_width, page_height = _page_dimensions(page_size)
+            if page_width > 0 and _bbox_width(new_box) > page_width * 0.82 and _bbox_width(seed) < page_width * 0.58:
+                continue
+            if page_height > 0 and _bbox_height(new_box) > page_height * 0.55:
+                continue
             if new_box != refined:
                 refined = new_box
                 changed = True
-
-    # 最后留少量安全边距，避免坐标轴/边框被切掉
-    page_width = float(page_size[0] or 0) if len(page_size or []) >= 2 else 0.0
-    page_height = float(page_size[1] or 0) if len(page_size or []) >= 2 else 0.0
-
-    pad_x = 6.0
-    pad_y = 6.0
-
-    return [
-        max(0.0, refined[0] - pad_x),
-        max(0.0, refined[1] - pad_y),
-        min(page_width if page_width > 0 else refined[2], refined[2] + pad_x),
-        min(page_height if page_height > 0 else refined[3], refined[3] + pad_y),
-    ]
+    return _clip_bbox([refined[0] - 6.0, refined[1] - 6.0, refined[2] + 6.0, refined[3] + 6.0], page_size)
 
 
-def _expanded_bbox(bbox: list[float], margin: float) -> list[float]:
+def _should_skip_figure_candidate(
+    bbox: list[float],
+    page_index: int,
+    page_size: list[float],
+    text_blocks: list[dict[str, Any]],
+    caption: str,
+) -> tuple[bool, str]:
     if len(bbox or []) < 4:
-        return []
-    return [
-        float(bbox[0]) - margin,
-        float(bbox[1]) - margin,
-        float(bbox[2]) + margin,
-        float(bbox[3]) + margin,
-        ]
+        return True, "invalid_bbox"
+    if _has_real_figure_caption(caption):
+        return False, ""
+    page_width, page_height = _page_dimensions(page_size)
+    if page_width <= 0 or page_height <= 0:
+        return False, ""
+    width = _bbox_width(bbox)
+    height = _bbox_height(bbox)
+    if width <= 0 or height <= 0:
+        return True, "invalid_bbox_size"
+    page_area = max(1.0, page_width * page_height)
+    area_ratio = (width * height) / page_area
+    aspect = width / max(height, 1.0)
+    nearby_text = _text_near_or_inside_bbox(bbox, text_blocks)
+    has_decorative_text = bool(DECORATIVE_FIGURE_TEXT_PATTERN.search(nearby_text or ""))
+    is_header_or_footer = _is_page_header_or_footer_bbox(bbox, page_size)
+    is_first_page_title_band = _is_first_page_title_band_candidate(bbox, page_index, page_size, nearby_text)
+    if has_decorative_text and (is_header_or_footer or is_first_page_title_band):
+        return True, "decorative_header_or_title_text"
+    if is_first_page_title_band:
+        return True, "first_page_title_band_without_caption"
+    if is_header_or_footer and (has_decorative_text or height <= page_height * 0.16):
+        return True, "page_header_or_footer_without_caption"
+    if width >= page_width * 0.55 and height <= page_height * 0.16 and aspect >= 3.0 and (has_decorative_text or bbox[1] <= page_height * 0.35):
+        return True, "wide_shallow_banner_without_caption"
+    if area_ratio <= 0.018 and (is_header_or_footer or has_decorative_text):
+        return True, "small_logo_or_icon_without_caption"
+    return False, ""
 
 
-def _page_dimensions(page_size: list[float]) -> tuple[float, float]:
-    try:
-        page_width = float(page_size[0])
-        page_height = float(page_size[1])
-    except Exception:
-        return 0.0, 0.0
-    return page_width, page_height
+def _is_first_page_title_band_candidate(bbox: list[float], page_index: int, page_size: list[float], nearby_text: str) -> bool:
+    if page_index != 0:
+        return False
+    page_width, page_height = _page_dimensions(page_size)
+    if page_width <= 0 or page_height <= 0 or len(bbox or []) < 4:
+        return False
+    width = _bbox_width(bbox)
+    height = _bbox_height(bbox)
+    y0 = float(bbox[1])
+    if y0 > page_height * 0.35:
+        return False
+    wide = width >= page_width * 0.42
+    shallow = height <= page_height * 0.22
+    has_decorative_text = bool(DECORATIVE_FIGURE_TEXT_PATTERN.search(nearby_text or ""))
+    return has_decorative_text or (wide and shallow)
+
+
+def _dedupe_figure_elements(figures: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for fig in sorted(figures, key=_figure_quality_key, reverse=True):
+        bbox = fig.get("bbox") or []
+        number = str((fig.get("metadata") or {}).get("captionNumber") or "")
+        duplicate = False
+        for existing in result:
+            existing_number = str((existing.get("metadata") or {}).get("captionNumber") or "")
+            if number and existing_number and number == existing_number:
+                duplicate = True
+                break
+            if _bbox_iou(bbox, existing.get("bbox") or []) > 0.62:
+                duplicate = True
+                break
+        if not duplicate:
+            result.append(fig)
+    return _sort_elements(result)
+
+
+def _figure_quality_key(fig: dict[str, Any]) -> tuple[float, float, float]:
+    metadata = fig.get("metadata") or {}
+    caption_bonus = 1.0 if fig.get("caption") else 0.0
+    number_bonus = 0.4 if metadata.get("captionNumber") else 0.0
+    area = _bbox_area(fig.get("bbox") or [])
+    return caption_bonus + number_bonus + float(metadata.get("captionScore") or 0.0), area, -float(fig.get("page") or 0)
+
+
+def _is_bbox_covered_by_figures(bbox: list[float], figures: list[dict[str, Any]]) -> bool:
+    for fig in figures or []:
+        image_bbox = ((fig.get("metadata") or {}).get("imageBBox") or fig.get("bbox") or [])
+        if _bbox_iou(bbox, image_bbox) > 0.38 or _overlap_ratio(_rect_from_bbox(bbox), _rect_from_bbox(image_bbox)) > 0.72:
+            return True
+    return False
 
 
 def _has_real_figure_caption(caption: str) -> bool:
     return bool(FIGURE_CAPTION_PATTERN.search(str(caption or "").strip()))
 
 
-def _text_near_or_inside_bbox(
-        bbox: list[float],
-        text_blocks: list[dict[str, Any]],
-        margin: float = 28.0,
-) -> str:
-    if len(bbox or []) < 4:
-        return ""
-
-    expanded = _expanded_bbox(bbox, margin)
-    collected: list[str] = []
-
-    for block in text_blocks or []:
-        if not isinstance(block, dict):
-            continue
-
-        block_bbox = _bbox_from_any(block.get("bbox"))
-        if len(block_bbox) < 4:
-            continue
-
-        text = str(block.get("text") or "").strip().replace("\n", " ")
-        if not text:
-            continue
-
-        if _bbox_intersection_area(expanded, block_bbox) > 0:
-            collected.append(text)
-
-    return " ".join(collected)[:1200]
+def _figure_number_from_caption(caption: str) -> str:
+    match = FIGURE_LABEL_EXTRACT_PATTERN.search(str(caption or "").strip())
+    return match.group(1) if match else ""
 
 
-def _is_page_header_or_footer_bbox(bbox: list[float], page_size: list[float]) -> bool:
-    page_width, page_height = _page_dimensions(page_size)
-    if page_width <= 0 or page_height <= 0 or len(bbox or []) < 4:
-        return False
-
-    y0 = float(bbox[1])
-    y1 = float(bbox[3])
-
-    return y1 <= page_height * 0.18 or y0 >= page_height * 0.92
+def _clean_caption_text(text: str) -> str:
+    cleaned = re.sub(r"\s+", " ", str(text or "").replace("\n", " ")).strip()
+    cleaned = re.sub(r"^(?:Figure|Fig)\s+", "Fig. ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"^Fig\.\s*", "Fig. ", cleaned, flags=re.IGNORECASE)
+    return cleaned
 
 
-def _is_first_page_title_band_candidate(
-        bbox: list[float],
-        page_index: int,
-        page_size: list[float],
-        nearby_text: str,
-) -> bool:
-    if page_index != 0:
-        return False
-
-    page_width, page_height = _page_dimensions(page_size)
-    if page_width <= 0 or page_height <= 0 or len(bbox or []) < 4:
-        return False
-
-    width = float(bbox[2]) - float(bbox[0])
-    height = float(bbox[3]) - float(bbox[1])
-    y0 = float(bbox[1])
-
-    in_first_page_top = y0 <= page_height * 0.35
-    if not in_first_page_top:
-        return False
-
-    wide = width >= page_width * 0.42
-    shallow = height <= page_height * 0.22
-    has_decorative_text = bool(DECORATIVE_FIGURE_TEXT_PATTERN.search(nearby_text or ""))
-
-    return has_decorative_text or (wide and shallow)
+# ---------------------------------------------------------------------------
+# Formula candidates
+# ---------------------------------------------------------------------------
 
 
-def _should_skip_figure_candidate(
-        bbox: list[float],
-        page_index: int,
-        page_size: list[float],
-        text_blocks: list[dict[str, Any]],
-        caption: str,
-) -> tuple[bool, str]:
-    if len(bbox or []) < 4:
-        return True, "invalid_bbox"
-
-    if _has_real_figure_caption(caption):
-        return False, ""
-
-    page_width, page_height = _page_dimensions(page_size)
-    if page_width <= 0 or page_height <= 0:
-        return False, ""
-
-    width = float(bbox[2]) - float(bbox[0])
-    height = float(bbox[3]) - float(bbox[1])
-    if width <= 0 or height <= 0:
-        return True, "invalid_bbox_size"
-
-    page_area = max(1.0, page_width * page_height)
-    area_ratio = (width * height) / page_area
-    aspect = width / max(height, 1.0)
-
-    nearby_text = _text_near_or_inside_bbox(bbox, text_blocks)
-    has_decorative_text = bool(DECORATIVE_FIGURE_TEXT_PATTERN.search(nearby_text or ""))
-    is_header_or_footer = _is_page_header_or_footer_bbox(bbox, page_size)
-    is_first_page_title_band = _is_first_page_title_band_candidate(
-        bbox=bbox,
-        page_index=page_index,
-        page_size=page_size,
-        nearby_text=nearby_text,
-    )
-
-    if has_decorative_text and (is_header_or_footer or is_first_page_title_band):
-        return True, "decorative_header_or_title_text"
-
-    if is_first_page_title_band:
-        return True, "first_page_title_band_without_caption"
-
-    if is_header_or_footer and (has_decorative_text or height <= page_height * 0.16):
-        return True, "page_header_or_footer_without_caption"
-
-    if (
-            width >= page_width * 0.55
-            and height <= page_height * 0.16
-            and aspect >= 3.0
-            and (has_decorative_text or float(bbox[1]) <= page_height * 0.35)
-    ):
-        return True, "wide_shallow_banner_without_caption"
-
-    if area_ratio <= 0.018 and (is_header_or_footer or has_decorative_text):
-        return True, "small_logo_or_icon_without_caption"
-
-    return False, ""
-
-
-def _page_text_blocks_with_lines(page: Any) -> list[dict[str, Any]]:
-    """读取页面文本块，并保留 PyMuPDF 的 line/span 信息。
-
-    用于 figure caption 提取，避免 Fig. 2 和后面的图例文字被拆成不同文本块后丢失。
-    """
-    blocks: list[dict[str, Any]] = []
-
-    try:
-        raw = page.get_text("dict") or {}
-    except Exception:
-        return blocks
-
-    for block in raw.get("blocks", []) or []:
-        if not isinstance(block, dict) or block.get("type") != 0:
-            continue
-
-        block_bbox = _bbox_from_any(block.get("bbox"))
-        if len(block_bbox) < 4:
-            continue
-
-        lines = block.get("lines", []) or []
-        line_texts: list[str] = []
-
-        for line in lines:
-            if not isinstance(line, dict):
-                continue
-
-            spans = line.get("spans", []) or []
-            parts: list[str] = []
-
-            for span in spans:
-                if not isinstance(span, dict):
-                    continue
-                parts.append(str(span.get("text") or ""))
-
-            line_text = re.sub(r"\s+", " ", "".join(parts)).strip()
-            if line_text:
-                line_texts.append(line_text)
-
-        block_text = re.sub(r"\s+", " ", " ".join(line_texts)).strip()
-        if not block_text:
-            continue
-
-        blocks.append(
-            {
-                "bbox": block_bbox,
-                "text": block_text,
-                "lines": lines,
-            }
-        )
-
-    return blocks
-
-
-def extract_figures_pymupdf_enhanced(
-        page: Any,
-        table_rects: list[Any],
-        page_index: int,
-        page_size: list[float],
-        output_dir: Path,
+def extract_formula_candidates_pymupdf(
+    page: Any, text_blocks: list[dict[str, Any]], page_index: int, page_size: list[float], output_dir: Path
 ) -> list[dict[str, Any]]:
-    figures: list[dict[str, Any]] = []
-
-    # 这里保留 line/span 信息，用于提取 Fig. x 后面的完整图例文字
-    text_blocks = _page_text_blocks_with_lines(page)
-
-    # candidates：最终用于判断“哪些东西可能是图”的候选框
-    # raw_visual_candidates：页面上所有视觉候选框，用于后面把被切碎的同一张图合并完整
-    candidates: list[list[float]] = []
-    raw_visual_candidates: list[list[float]] = []
-
-    # 1. PDF image block 候选
-    for block in (page.get_text("dict") or {}).get("blocks", []):
-        if block.get("type") == 1:
-            bbox = _bbox_from_any(block.get("bbox"))
-            if len(bbox) >= 4:
-                candidates.append(bbox)
-                raw_visual_candidates.append(bbox)
-
-    # 2. PyMuPDF image_info 候选
-    try:
-        for info in page.get_image_info(hashes=True, xrefs=True) or []:
-            bbox = _bbox_from_any(info.get("bbox"))
-            if len(bbox) >= 4:
-                candidates.append(bbox)
-                raw_visual_candidates.append(bbox)
-    except Exception:
-        pass
-
-    # 3. vector drawing 候选
-    drawings = []
-    try:
-        drawings = page.get_drawings() or []
-    except Exception:
-        drawings = []
-
-    if len(drawings) > MAX_VECTOR_DRAWINGS_PER_PAGE and not ENABLE_VECTOR_FIGURE_DETECTION:
-        drawings = []
-
-    drawing_bboxes: list[list[float]] = []
-    for drawing in drawings:
-        rect = drawing.get("rect")
-        bbox = _bbox_from_any(rect)
-        if len(bbox) < 4:
-            continue
-
-        width = bbox[2] - bbox[0]
-        height = bbox[3] - bbox[1]
-        area = width * height
-
-        if width < 35 or height < 25 or area < 1800:
-            continue
-
-        drawing_bboxes.append(bbox)
-        raw_visual_candidates.append(bbox)
-
-    merged_drawing_bboxes = _merge_nearby_bboxes(drawing_bboxes)
-    candidates.extend(merged_drawing_bboxes)
-
-    for merged_bbox in merged_drawing_bboxes:
-        if len(merged_bbox) >= 4:
-            raw_visual_candidates.append(merged_bbox)
-
-    # 4. 由 caption 反推图区域的候选
-    caption_anchored_bboxes = _caption_anchored_figure_bboxes(text_blocks, page_size, table_rects)
-    candidates.extend(caption_anchored_bboxes)
-
-    for anchored_bbox in caption_anchored_bboxes:
-        if len(anchored_bbox) >= 4:
-            raw_visual_candidates.append(anchored_bbox)
-
-    # 5. 初步过滤明显不合理的候选框
-    filtered: list[list[float]] = []
-    for bbox in candidates:
-        if not _reasonable_figure_bbox(bbox, page_size):
-            continue
-
-        if any(_overlap_ratio(_rect_from_bbox(bbox), table_rect) > 0.35 for table_rect in table_rects):
-            continue
-
-        filtered.append(bbox)
-
-    # 6. 正式生成 figure
-    for bbox in _dedupe_bboxes(filtered):
-        # 关键：先用 raw_visual_candidates 修正图像 bbox，避免只截到半张图
-        image_bbox = _refine_figure_image_bbox(
-            seed_bbox=bbox,
-            visual_candidates=raw_visual_candidates,
-            page_size=page_size,
-        )
-
-        if not _reasonable_figure_bbox(image_bbox, page_size):
-            continue
-
-        # caption 也用修正后的 image_bbox 去找
-        caption_info = _expanded_figure_caption_info(
-            figure_bbox=image_bbox,
-            text_blocks=text_blocks,
-            page_size=page_size,
-        )
-        caption = str(caption_info.get("text", "") or "").strip()
-
-        # 兜底：如果新版 caption 提取失败，回退旧逻辑，避免右侧显示“暂无图例文字”
-        if not caption:
-            fallback_caption_info = find_nearby_caption(image_bbox, text_blocks, page_size, "figure")
-            if fallback_caption_info:
-                caption_info = fallback_caption_info
-                caption = str(fallback_caption_info.get("text", "") or "").strip()
-
-        if not caption:
-            caption = _caption_near_bbox(image_bbox, text_blocks)
-
-        skip, _reason = _should_skip_figure_candidate(
-            bbox=image_bbox,
-            page_index=page_index,
-            page_size=page_size,
-            text_blocks=text_blocks,
-            caption=caption,
-        )
-        if skip:
-            continue
-
-        figure_index = len(figures) + 1
-        caption_bbox = caption_info.get("bbox", []) if caption_info else []
-
-        element_id = f"p{page_index + 1}_figure_{figure_index}"
-        png_path = output_dir / "clips" / f"{element_id}.png"
-
-        # 关键：只裁剪图像本体，不把 caption 和页脚合并进图片
-        image_meta = crop_element_png(page, image_bbox, png_path, zoom=2.5, padding=6)
-
-        figure_label = _figure_label_from_caption(caption, figure_index)
-
-        figures.append(
-            {
-                "id": element_id,
-                "type": "figure",
-                "page": page_index,
-                "bbox": image_bbox,
-                "pageSize": page_size,
-                "label": figure_label,
-                "caption": caption,
-                "captionBBox": caption_bbox,
-                "text": caption,
-                "table": [],
-                "csvPath": "",
-                "jsonPath": "",
-                "pngPath": str(png_path),
-                "metadata": {
-                    "width": round(image_bbox[2] - image_bbox[0], 2),
-                    "height": round(image_bbox[3] - image_bbox[1], 2),
-                    "imageBBox": image_bbox,
-                    "captionBBox": caption_bbox,
-                    **image_meta,
-                },
-            }
-        )
-
-    return figures
-
-
-def _extract_figures(
-        page: Any,
-        page_index: int,
-        page_size: list[float],
-        output_dir: Path,
-        text_blocks: list[dict[str, Any]],
-        table_rects: list[Any],
-) -> list[dict[str, Any]]:
-    return extract_figures_pymupdf_enhanced(page, table_rects, page_index, page_size, output_dir)
-
-
-def extract_formula_candidates_pymupdf(page: Any, text_blocks: list[dict[str, Any]], page_index: int, page_size: list[float], output_dir: Path) -> list[dict[str, Any]]:
     formulas: list[dict[str, Any]] = []
-    page_width = float(page.rect.width)
+    page_width = float(getattr(page.rect, "width", page_size[0] if page_size else 0.0))
     lines = _merge_formula_lines(_text_lines(page), page_width)
     for line_index, line in enumerate(lines, start=1):
-        text = line["text"].strip()
-        bbox = line["bbox"]
+        text = str(line.get("text") or "").strip()
+        bbox = _bbox_from_any(line.get("bbox"))
         if not _looks_like_formula(text, bbox, page_width):
             continue
         if not _is_isolated_formula_line(line, lines, page.rect):
@@ -805,6 +1343,7 @@ def extract_formula_candidates_pymupdf(page: Any, text_blocks: list[dict[str, An
                 "pageSize": page_size,
                 "label": f"Formula {len(formulas) + 1}",
                 "caption": "",
+                "captionBBox": [],
                 "text": text,
                 "table": [],
                 "csvPath": "",
@@ -820,18 +1359,45 @@ def _extract_formulas(page: Any, page_index: int, page_size: list[float], output
     return extract_formula_candidates_pymupdf(page, _extract_text_blocks(page), page_index, page_size, output_dir)
 
 
-def _text_lines(page: Any) -> list[dict[str, Any]]:
-    lines: list[dict[str, Any]] = []
-    for block in (page.get_text("dict") or {}).get("blocks", []):
-        if block.get("type") != 0:
+def _merge_formula_lines(lines: list[dict[str, Any]], page_width: float) -> list[dict[str, Any]]:
+    if not lines:
+        return []
+    ordered = sorted(lines, key=lambda line: (float((line.get("bbox") or [0, 0, 0, 0])[1]), float((line.get("bbox") or [0, 0, 0, 0])[0])))
+    merged: list[dict[str, Any]] = []
+    idx = 0
+    while idx < len(ordered):
+        line = ordered[idx]
+        text = str(line.get("text") or "").strip()
+        bbox = _bbox_from_any(line.get("bbox"))
+        if len(bbox) < 4:
+            idx += 1
             continue
-        for line in block.get("lines", []) or []:
-            spans = line.get("spans", []) or []
-            text = "".join(str(span.get("text", "")) for span in spans).strip()
-            bbox = _bbox_from_any(line.get("bbox"))
-            if text and bbox:
-                lines.append({"text": text, "bbox": bbox})
-    return lines
+        current = {**line, "text": text, "bbox": bbox}
+        lookahead = idx + 1
+        continuation_count = 0
+        while lookahead < len(ordered):
+            candidate = ordered[lookahead]
+            candidate_text = str(candidate.get("text") or "").strip()
+            candidate_bbox = _bbox_from_any(candidate.get("bbox"))
+            if len(candidate_bbox) < 4 or not candidate_text:
+                lookahead += 1
+                continue
+            if _same_line_equation_number(current.get("bbox") or [], candidate_text, candidate_bbox, page_width):
+                current["text"] = f"{current.get('text', '')} {candidate_text}".strip()
+                current["bbox"] = _union_nonempty_bboxes([current.get("bbox") or [], candidate_bbox])
+                lookahead += 1
+                continue
+            if not _same_formula_group(current, candidate, page_width):
+                break
+            current["text"] = f"{current.get('text', '')} {candidate_text}".strip()
+            current["bbox"] = _union_nonempty_bboxes([current.get("bbox") or [], candidate_bbox])
+            continuation_count += 1
+            lookahead += 1
+            if continuation_count >= 3 or len(str(current.get("text") or "")) > 240:
+                break
+        merged.append(current)
+        idx = lookahead
+    return merged
 
 
 def _looks_like_formula(text: str, bbox: list[float], page_width: float) -> bool:
@@ -841,772 +1407,284 @@ def _looks_like_formula(text: str, bbox: list[float], page_width: float) -> bool
     lowered = text.strip().lower()
     if FIGURE_CAPTION_PATTERN.search(text) or TABLE_CAPTION_PATTERN.search(text):
         return False
-    if lowered.startswith(("where ", "when ", "for ", "table ", "figure ", "fig. ", "fig ")):
+    if lowered.startswith(("where ", "when ", "for ", "table ", "figure ", "fig.")):
         return False
-    has_math = bool(MATH_PATTERN.search(text))
-    has_number = bool(EQUATION_NUMBER_PATTERN.search(text))
-    if not has_number:
+    if _looks_like_sentence_formula_noise(text):
         return False
-    strong_math = _strong_formula_signal(text)
-    center = (bbox[0] + bbox[2]) / 2.0
-    centered = abs(center - page_width / 2.0) < page_width * 0.22
-    short = (bbox[2] - bbox[0]) < page_width * 0.78
-    numbered_position = has_number and (bbox[2] > page_width * 0.5 or centered)
-    alpha_count = sum(1 for char in compact if char.isalpha())
-    word_count = len(re.findall(r"[A-Za-z]{3,}", text))
-    if word_count > 10 and not has_number:
+    if not (MATH_PATTERN.search(text) or FORMULA_SYMBOL_PATTERN.search(text) or EQUATION_NUMBER_PATTERN.search(text)):
         return False
-    if word_count > 4 and not has_number and not any(token in text for token in ("∂", "∇", "∫", "∑", "\\frac", "\\sum", "\\int")):
+    width = _bbox_width(bbox)
+    if page_width > 0 and width > page_width * 0.85 and len(text.split()) > 12:
         return False
-    return has_math and short and numbered_position and (strong_math or alpha_count <= max(10, len(compact) // 2))
+    math_chars = sum(1 for char in text if char in "=≈≠≤≥±∑∫√∞παβγΔλμσθ×÷+-*/^_()[]{}")
+    digit_chars = sum(1 for char in text if char.isdigit())
+    alpha_words = len(re.findall(r"[A-Za-z]{3,}", text))
+    latex_tokens = len(re.findall(r"\\[A-Za-z]+", text))
+    return (math_chars + digit_chars + latex_tokens >= 2) and alpha_words <= 10
 
 
-def _strong_formula_signal(text: str) -> bool:
-    compact = re.sub(r"\s+", "", text)
-    if any(token in text for token in ("∂", "∇", "∫", "∑", "√", "\\frac", "\\sum", "\\int", "≤", "≥", "≈", "≠")):
-        return True
-    if re.search(r"[A-Za-z]\s*[=≈]\s*[-+]?[\dA-Za-z]", text):
-        return True
-    if re.search(r"[A-Za-z0-9\)\]]\s*[+\-*/×÷]\s*[A-Za-z0-9\(]", text) and len(compact) <= 90:
-        return True
-    if EQUATION_NUMBER_PATTERN.search(text) and re.search(r"[=+\-*/×÷^_]", text):
-        return True
-    return False
+def _same_line_equation_number(formula_bbox: list[float], text: str, bbox: list[float], page_width: float) -> bool:
+    if len(formula_bbox or []) < 4 or len(bbox or []) < 4:
+        return False
+    if not EQUATION_NUMBER_PATTERN.search(text):
+        return False
+    return abs(float(formula_bbox[1]) - float(bbox[1])) <= 9.0 and (page_width <= 0 or float(bbox[0]) > page_width * 0.50)
+
+
+def _same_formula_group(current: dict[str, Any], candidate: dict[str, Any], page_width: float) -> bool:
+    current_bbox = _bbox_from_any(current.get("bbox"))
+    candidate_bbox = _bbox_from_any(candidate.get("bbox"))
+    if len(current_bbox) < 4 or len(candidate_bbox) < 4:
+        return False
+    current_text = str(current.get("text") or "")
+    candidate_text = str(candidate.get("text") or "")
+    if FIGURE_CAPTION_PATTERN.search(candidate_text) or TABLE_CAPTION_PATTERN.search(candidate_text):
+        return False
+    if _looks_like_sentence_formula_noise(candidate_text):
+        return False
+    gap = float(candidate_bbox[1]) - float(current_bbox[3])
+    if gap < -3.0 or gap > 13.0:
+        return False
+    if page_width > 0:
+        current_center = (current_bbox[0] + current_bbox[2]) / 2.0
+        candidate_center = (candidate_bbox[0] + candidate_bbox[2]) / 2.0
+        center_close = abs(current_center - candidate_center) <= page_width * 0.16
+    else:
+        center_close = True
+    aligned = abs(float(current_bbox[0]) - float(candidate_bbox[0])) <= 32.0 or _horizontal_overlap_ratio(current_bbox, candidate_bbox) >= 0.20
+    combined = f"{current_text} {candidate_text}"
+    return (center_close or aligned) and bool(FORMULA_SYMBOL_PATTERN.search(combined))
+
+
+def _looks_like_sentence_formula_noise(text: str) -> bool:
+    value = str(text or "").strip()
+    words = [word.lower() for word in re.findall(r"[A-Za-z]{3,}", value)]
+    if len(words) < 6:
+        return False
+    return bool(FORMULA_SENTENCE_WORDS.intersection(words)) or value.endswith((".", "!", "?"))
 
 
 def _is_isolated_formula_line(line: dict[str, Any], lines: list[dict[str, Any]], page_rect: Any) -> bool:
-    bbox = line.get("bbox") or []
+    bbox = _bbox_from_any(line.get("bbox"))
     if len(bbox) < 4:
         return False
-    same_column_lines = []
+    text = str(line.get("text") or "")
+    if EQUATION_NUMBER_PATTERN.search(text):
+        return True
+    above_gap = below_gap = 999.0
     for other in lines:
-        other_bbox = other.get("bbox") or []
-        if other is line or len(other_bbox) < 4:
+        if other is line:
             continue
-        overlap = max(0.0, min(bbox[2], other_bbox[2]) - max(bbox[0], other_bbox[0]))
-        if overlap >= min(bbox[2] - bbox[0], other_bbox[2] - other_bbox[0]) * 0.12:
-            same_column_lines.append(other_bbox)
-    above_gap = float(bbox[1]) - float(page_rect.y0)
-    below_gap = float(page_rect.y1) - float(bbox[3])
-    for other_bbox in same_column_lines:
+        other_bbox = _bbox_from_any(other.get("bbox"))
+        if len(other_bbox) < 4:
+            continue
+        if _horizontal_overlap_ratio(bbox, other_bbox) < 0.12:
+            continue
         if other_bbox[3] <= bbox[1]:
             above_gap = min(above_gap, bbox[1] - other_bbox[3])
         if other_bbox[1] >= bbox[3]:
             below_gap = min(below_gap, other_bbox[1] - bbox[3])
-    line_height = max(8.0, float(bbox[3]) - float(bbox[1]))
-    return above_gap >= line_height * 0.45 and below_gap >= line_height * 0.35
+    return above_gap >= 3.5 and below_gap >= 3.5
 
 
-def _safe_table_extract(table: Any) -> list[list[str]]:
-    try:
-        rows = table.extract()
-    except Exception:
-        rows = []
-    cleaned: list[list[str]] = []
-    for row in rows or []:
-        cleaned.append([str(cell or "").strip() for cell in (row or [])])
-    return [row for row in cleaned if any(cell for cell in row)]
+# ---------------------------------------------------------------------------
+# Image cropping and schema
+# ---------------------------------------------------------------------------
 
 
-def _valid_table_candidate(
-    rows: list[list[str]],
-    bbox: list[float],
-    page_size: list[float],
-    caption_info: dict[str, Any] | None,
-    strategy: dict[str, Any],
-) -> bool:
+def crop_element_png(page: Any, bbox: list[float], output_path: str | Path, zoom: float = 2.5, padding: float = 6.0) -> dict[str, Any]:
     if len(bbox or []) < 4:
-        return False
-    row_count = len(rows)
-    col_count = max((len(row or []) for row in rows), default=0)
-    if row_count < 2 or col_count < 2:
-        return False
-    width = float(bbox[2]) - float(bbox[0])
-    height = float(bbox[3]) - float(bbox[1])
-    page_area = max(1.0, float(page_size[0] or 0) * float(page_size[1] or 0))
-    if width < 80 or height < 24 or (width * height) / page_area < 0.003:
-        return False
-    structural_score = _table_structural_score(rows)
-    has_caption = bool(caption_info and TABLE_CAPTION_PATTERN.search(str(caption_info.get("text") or "")))
-    text_strategy = _is_text_table_strategy(strategy)
-    if text_strategy and _looks_like_body_text_table(rows):
-        return False
-    if has_caption and structural_score >= 0.12:
-        return True
-    if text_strategy:
-        return row_count >= 3 and col_count >= 3 and structural_score >= 0.38
-    return structural_score >= 0.22
-
-
-def _table_caption_blocks(text_blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [block for block in text_blocks or [] if TABLE_CAPTION_PATTERN.search(str(block.get("text") or "").strip())]
-
-
-def _is_text_table_strategy(strategy: dict[str, Any]) -> bool:
-    return str(strategy.get("vertical_strategy") or "") == "text" or str(strategy.get("horizontal_strategy") or "") == "text"
-
-
-def _looks_like_body_text_table(rows: list[list[str]]) -> bool:
-    if not rows:
-        return False
-    total = 0
-    sentence_like = 0
-    singleton = 0
-    for row in rows:
-        cells = [str(cell or "").strip() for cell in row or [] if str(cell or "").strip()]
-        if not cells:
-            continue
-        row_text = " ".join(cells)
-        total += 1
-        if len(cells[0]) <= 1:
-            singleton += 1
-        if len(row_text) > 45 and len(re.findall(r"[A-Za-z]{4,}", row_text)) >= 5:
-            sentence_like += 1
-    return total > 0 and (sentence_like / total >= 0.25 or singleton / total >= 0.35)
-
-
-def _table_structural_score(rows: list[list[str]]) -> float:
-    if not rows:
-        return 0.0
-    row_count = len(rows)
-    col_count = max((len(row or []) for row in rows), default=0)
-    if row_count == 0 or col_count == 0:
-        return 0.0
-    non_empty = 0
-    numericish = 0
-    short_cells = 0
-    total = 0
-    lengths_by_row: list[int] = []
-    for row in rows:
-        cells = [str(cell or "").strip() for cell in row or []]
-        lengths_by_row.append(len(cells))
-        for cell in cells:
-            if not cell:
-                continue
-            total += 1
-            non_empty += 1
-            if _looks_numericish(cell):
-                numericish += 1
-            if len(cell) <= 80:
-                short_cells += 1
-    density = non_empty / max(1, row_count * col_count)
-    numeric_ratio = numericish / max(1, total)
-    short_ratio = short_cells / max(1, total)
-    width_consistency = lengths_by_row.count(col_count) / max(1, row_count)
-    shape_bonus = min(0.24, row_count * col_count / 60.0)
-    return density * 0.32 + numeric_ratio * 0.24 + short_ratio * 0.18 + width_consistency * 0.18 + shape_bonus
-
-
-def _looks_numericish(text: str) -> bool:
-    value = str(text or "").strip()
-    if not value:
-        return False
-    if re.search(r"[-+]?\d+(?:\.\d+)?(?:\s*(?:%|[A-Za-z]+(?:\s*[-/]\s*[A-Za-z]+)?))?", value):
-        return True
-    return bool(re.search(r"^[<>≤≥~≈±−–—]?\s*\d", value))
-
-
-def _write_table_csv(path: Path, rows: list[list[str]]) -> None:
-    with path.open("w", encoding="utf-8-sig", newline="") as handle:
-        writer = csv.writer(handle)
-        writer.writerows(rows)
-
-
-def _write_table_json(path: Path, rows: list[list[str]]) -> None:
-    with path.open("w", encoding="utf-8") as handle:
-        json.dump({"rows": rows}, handle, ensure_ascii=False, indent=2)
-
-
-def _table_text(rows: list[list[str]]) -> str:
-    return "\n".join("\t".join(row) for row in rows)
-
-
-def crop_element_png(page: Any, bbox: list[float], output_path: Path, zoom: float = 2.5, padding: float = 6) -> dict[str, int]:
-    import fitz
-
+        return {}
     try:
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        clip = fitz.Rect(_pad_bbox(bbox, page.rect, padding))
-        if output_path.exists():
+        import fitz
+
+        rect = fitz.Rect(float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
+        page_rect = page.rect
+        rect = rect + (-padding, -padding, padding, padding)
+        rect = rect & page_rect
+        if rect.is_empty or rect.width <= 1 or rect.height <= 1:
             return {}
-        scale = max(1.0, float(zoom or 2.5))
-        pixmap = page.get_pixmap(matrix=fitz.Matrix(scale, scale), clip=clip, alpha=False)
-        pixmap.save(str(output_path))
-        return {"imageWidth": int(pixmap.width), "imageHeight": int(pixmap.height)}
-    except Exception:
-        return {}
-
-
-def _render_clip(page: Any, bbox: list[float], path: Path) -> dict[str, int]:
-    return crop_element_png(page, bbox, path, zoom=2.5, padding=6)
-
-
-def _caption_near_bbox(bbox: list[float], text_blocks: list[dict[str, Any]]) -> str:
-    below: list[tuple[float, str]] = []
-    above: list[tuple[float, str]] = []
-    for block in text_blocks:
-        block_bbox = block.get("bbox") or []
-        text = str(block.get("text") or "").strip().replace("\n", " ")
-        if not text:
-            continue
-        distance_below = float(block_bbox[1]) - bbox[3]
-        distance_above = bbox[1] - float(block_bbox[3])
-        horizontal_overlap = max(0.0, min(bbox[2], block_bbox[2]) - max(bbox[0], block_bbox[0]))
-        if horizontal_overlap <= 0:
-            continue
-        if 0 <= distance_below <= 55:
-            below.append((distance_below, text))
-        if 0 <= distance_above <= 35:
-            above.append((distance_above, text))
-    for _distance, text in sorted(below + above, key=lambda item: item[0]):
-        if FIGURE_CAPTION_PATTERN.search(text):
-            return text[:240]
-
-    return ""
-
-
-FIGURE_CAPTION_LABEL_PATTERN = re.compile(
-    r"^\s*(?:fig(?:ure)?[\.\．]?|图)\s*([0-9]+[A-Za-z]?)\b",
-    re.IGNORECASE,
-)
-
-CAPTION_FOOTER_NOISE_PATTERN = re.compile(
-    r"("
-    r"©|copyright|the\s+author\(s\)|published\s+by|royal\s+society\s+of\s+chemistry|"
-    r"rsc\s+adv\.|rsc\s+advances|view\s+article\s+online|view\s+journal|view\s+issue|"
-    r"doi\s*:|creative\s+commons"
-    r")",
-    re.IGNORECASE,
-)
-
-
-def _normalize_inline_text(text: str) -> str:
-    return re.sub(r"\s+", " ", str(text or "")).strip()
-
-
-def _union_nonempty_bboxes(boxes: list[list[float]]) -> list[float]:
-    valid: list[list[float]] = []
-    for box in boxes or []:
-        normalized = _bbox_from_any(box)
-        if len(normalized) >= 4:
-            valid.append([float(v) for v in normalized[:4]])
-
-    if not valid:
-        return []
-
-    return [
-        min(box[0] for box in valid),
-        min(box[1] for box in valid),
-        max(box[2] for box in valid),
-        max(box[3] for box in valid),
-    ]
-
-
-def _line_entries_from_text_blocks(text_blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """把 text block 拆成 line entry，后续按视觉行合并。"""
-    entries: list[dict[str, Any]] = []
-
-    for block in text_blocks or []:
-        if not isinstance(block, dict):
-            continue
-
-        lines = block.get("lines", []) or []
-        if lines:
-            for line in lines:
-                if not isinstance(line, dict):
-                    continue
-
-                spans = line.get("spans", []) or []
-                parts: list[str] = []
-                span_boxes: list[list[float]] = []
-
-                for span in spans:
-                    if not isinstance(span, dict):
-                        continue
-                    text = str(span.get("text") or "")
-                    if text:
-                        parts.append(text)
-
-                    span_bbox = _bbox_from_any(span.get("bbox"))
-                    if len(span_bbox) >= 4:
-                        span_boxes.append(span_bbox)
-
-                text = _normalize_inline_text("".join(parts))
-                bbox = _union_nonempty_bboxes(span_boxes) or _bbox_from_any(line.get("bbox"))
-
-                if text and len(bbox) >= 4:
-                    entries.append(
-                        {
-                            "text": text,
-                            "bbox": bbox,
-                            "x0": float(bbox[0]),
-                            "y0": float(bbox[1]),
-                            "x1": float(bbox[2]),
-                            "y1": float(bbox[3]),
-                            "cy": (float(bbox[1]) + float(bbox[3])) / 2.0,
-                            "height": max(1.0, float(bbox[3]) - float(bbox[1])),
-                        }
-                    )
-            continue
-
-        # 兜底：如果只有 block 级 text/bbox，也保留，但精度会低于 line 级。
-        text = _normalize_inline_text(block.get("text", ""))
-        bbox = _bbox_from_any(block.get("bbox"))
-        if text and len(bbox) >= 4:
-            entries.append(
-                {
-                    "text": text,
-                    "bbox": bbox,
-                    "x0": float(bbox[0]),
-                    "y0": float(bbox[1]),
-                    "x1": float(bbox[2]),
-                    "y1": float(bbox[3]),
-                    "cy": (float(bbox[1]) + float(bbox[3])) / 2.0,
-                    "height": max(1.0, float(bbox[3]) - float(bbox[1])),
-                }
-            )
-
-    entries.sort(key=lambda item: (item["cy"], item["x0"]))
-    return entries
-
-
-def _merge_visual_text_rows(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """合并同一视觉行上的碎片，例如 'Fig. 2' 和 'Maximum temperature...'。"""
-    if not entries:
-        return []
-
-    rows: list[list[dict[str, Any]]] = []
-
-    for entry in entries:
-        placed = False
-        for row in rows:
-            row_cy = sum(item["cy"] for item in row) / max(1, len(row))
-            row_height = max(item["height"] for item in row)
-            tolerance = max(3.5, row_height * 0.45)
-
-            if abs(entry["cy"] - row_cy) <= tolerance:
-                row.append(entry)
-                placed = True
-                break
-
-        if not placed:
-            rows.append([entry])
-
-    merged_rows: list[dict[str, Any]] = []
-
-    for row in rows:
-        row.sort(key=lambda item: item["x0"])
-        texts = [_normalize_inline_text(item["text"]) for item in row if _normalize_inline_text(item["text"])]
-        boxes = [item["bbox"] for item in row if len(item.get("bbox", [])) >= 4]
-        bbox = _union_nonempty_bboxes(boxes)
-
-        if not texts or len(bbox) < 4:
-            continue
-
-        text = _normalize_inline_text(" ".join(texts))
-        merged_rows.append(
-            {
-                "text": text,
-                "bbox": bbox,
-                "x0": float(bbox[0]),
-                "y0": float(bbox[1]),
-                "x1": float(bbox[2]),
-                "y1": float(bbox[3]),
-                "cy": (float(bbox[1]) + float(bbox[3])) / 2.0,
-                "height": max(1.0, float(bbox[3]) - float(bbox[1])),
-            }
-        )
-
-    merged_rows.sort(key=lambda item: (item["y0"], item["x0"]))
-    return merged_rows
-
-
-def _caption_sentence_complete(text: str) -> bool:
-    value = _normalize_inline_text(text)
-    if not value:
-        return False
-
-    return bool(re.search(r"[。.!?]\s*$", value))
-
-
-def _is_probable_body_or_heading_after_caption(text: str) -> bool:
-    value = _normalize_inline_text(text)
-    if not value:
-        return True
-
-    if CAPTION_FOOTER_NOISE_PATTERN.search(value):
-        return True
-
-    if TABLE_CAPTION_PATTERN.search(value):
-        return True
-
-    if FIGURE_CAPTION_LABEL_PATTERN.search(value):
-        return True
-
-    # 章节标题，例如 3.2. Current density uniformity analysis
-    if re.match(r"^\s*\d+(?:\.\d+)*\.?\s+[A-Z]", value):
-        return True
-
-    return False
-
-
-def _expanded_figure_caption_info(
-        figure_bbox: list[float],
-        text_blocks: list[dict[str, Any]],
-        page_size: list[float],
-) -> dict[str, Any]:
-    """从 PDF 文本行中提取 Fig.x 后面的完整图例文字。"""
-    if len(figure_bbox or []) < 4 or len(page_size or []) < 2:
-        return {"text": "", "bbox": []}
-
-    page_width = float(page_size[0] or 0)
-    page_height = float(page_size[1] or 0)
-    if page_width <= 0 or page_height <= 0:
-        return {"text": "", "bbox": []}
-
-    fx0, fy0, fx1, fy1 = [float(v) for v in figure_bbox[:4]]
-
-    # 关键改动：
-    # 旧版只在图底部附近找，太窄；
-    # 新版允许在图框内部下半部分、图下方一小段寻找 caption。
-    col_x0, col_x1 = _column_bounds_for_bbox(figure_bbox, page_size)
-    # caption 只允许在 figure 同一栏内搜索
-    search_x0 = col_x0
-    search_x1 = col_x1
-
-    # caption 通常在图底部附近或图下方一小段
-    search_y0 = max(0.0, fy1 - 26.0)
-    search_y1 = min(page_height, fy1 + max(54.0, page_height * 0.075))
-
-    search_bbox = [search_x0, search_y0, search_x1, search_y1]
-    rows = _merge_visual_text_rows(_line_entries_from_text_blocks(text_blocks))
-
-    candidate_rows: list[dict[str, Any]] = []
-
-    for row in rows:
-        text = _normalize_inline_text(row.get("text", ""))
-        if not text:
-            continue
-
-        if CAPTION_FOOTER_NOISE_PATTERN.search(text):
-            continue
-
-        row_bbox = _bbox_from_any(row.get("bbox"))
-        if len(row_bbox) < 4:
-            continue
-
-        row_center_y = float(row["cy"])
-        if row_center_y < search_y0 or row_center_y > search_y1:
-            continue
-
-        # 关键改动：
-        # 不再只看 center_x，改成看横向重叠。
-        # 因为 caption 往往比图宽，或 Fig. 2 标签和后文被拆成多个 span。
-        if _bbox_inside_column_ratio(row_bbox, col_x0, col_x1) < 0.72:
-            continue
-
-        if FIGURE_CAPTION_LABEL_PATTERN.search(text):
-            candidate_rows.append(row)
-
-    if not candidate_rows:
-        return {"text": "", "bbox": []}
-
-    # 优先选择最靠近图底部的 Fig.x 行。
-    anchor = min(candidate_rows, key=lambda item: abs(float(item["cy"]) - fy1))
-
-    try:
-        anchor_index = rows.index(anchor)
-    except ValueError:
-        text = _normalize_inline_text(anchor.get("text", ""))
-        return {"text": text[:900], "bbox": _bbox_from_any(anchor.get("bbox"))}
-
-    caption_rows: list[dict[str, Any]] = [anchor]
-    merged_text = _normalize_inline_text(anchor.get("text", ""))
-    anchor_bbox = _bbox_from_any(anchor.get("bbox"))
-
-    # 如果第一行已经完整，例如：
-    # Fig. 2 Maximum temperature for different carbon shell thicknesses.
-    # 直接停止，不再向下抓正文。
-    if not _caption_sentence_complete(merged_text):
-        previous = anchor
-
-        for row in rows[anchor_index + 1:]:
-            text = _normalize_inline_text(row.get("text", ""))
-            if not text:
-                continue
-
-            row_bbox = _bbox_from_any(row.get("bbox"))
-            if len(row_bbox) < 4:
-                continue
-
-            if float(row["cy"]) > search_y1:
-                break
-
-            if CAPTION_FOOTER_NOISE_PATTERN.search(text):
-                break
-
-            if TABLE_CAPTION_PATTERN.search(text):
-                break
-
-            if FIGURE_CAPTION_LABEL_PATTERN.search(text):
-                break
-
-            if re.match(r"^\s*\d+(?:\.\d+)*\.?\s+[A-Z]", text):
-                break
-
-            # 新增：必须仍在当前 figure 所在栏位内，防止抓到旁边栏正文
-            if _bbox_inside_column_ratio(row_bbox, col_x0, col_x1) < 0.72:
-                break
-
-            vertical_gap = float(row["y0"]) - float(previous["y1"])
-            allowed_gap = max(4.5, float(previous["height"]) * 0.80)
-
-            # caption 换行通常很紧；超过这个间距就认为进入正文
-            if vertical_gap > allowed_gap:
-                break
-
-            # 新增：caption 续行不应该突然跑到很远的横向位置
-            if len(anchor_bbox) >= 4:
-                if abs(float(row["x0"]) - float(anchor_bbox[0])) > 26.0:
-                    break
-
-            caption_rows.append(row)
-            previous = row
-            merged_text = _normalize_inline_text(merged_text + " " + text)
-
-            if _caption_sentence_complete(merged_text):
-                break
-
-            if len(merged_text) >= 900:
-                break
-
-    caption_text = _normalize_inline_text(
-        " ".join(_normalize_inline_text(row.get("text", "")) for row in caption_rows)
-    )
-    caption_bbox = _union_nonempty_bboxes([row.get("bbox", []) for row in caption_rows])
-
-    if not FIGURE_CAPTION_LABEL_PATTERN.search(caption_text):
-        return {"text": "", "bbox": []}
-
-    return {
-        "text": caption_text[:900],
-        "bbox": caption_bbox,
-    }
-
-
-def _is_probable_section_heading(text: str) -> bool:
-    value = _normalize_inline_text(text)
-    if not value:
-        return False
-
-    if re.match(r"^\s*\d+(\.\d+)*\.?\s+[A-Z]", value):
-        return True
-
-    if len(value) <= 80 and value.isupper():
-        return True
-
-    return False
-
-
-
-def _figure_label_from_caption(caption: str, fallback_index: int) -> str:
-    text = str(caption or "").strip()
-    match = FIGURE_LABEL_EXTRACT_PATTERN.search(text)
-    if match:
-        return f"Figure {match.group(1)}"
-    return f"Figure {fallback_index}"
-
-
-def _table_caption_for_bbox(bbox: list[float], text_blocks: list[dict[str, Any]], page_size: list[float]) -> dict[str, Any]:
-    if len(bbox or []) < 4:
-        return {}
-    max_distance = max(24.0, float(page_size[1] if len(page_size) > 1 else 0.0) * 0.08)
-    candidates: list[tuple[float, dict[str, Any]]] = []
-    for block in text_blocks or []:
-        block_bbox = block.get("bbox") or []
-        text = str(block.get("text") or "").strip().replace("\n", " ")
-        if len(block_bbox) < 4 or not TABLE_CAPTION_PATTERN.search(text):
-            continue
-        if _bbox_iou(bbox, block_bbox) > 0.0 or _contains_bbox(bbox, block_bbox):
-            continue
-        overlap = max(0.0, min(bbox[2], block_bbox[2]) - max(bbox[0], block_bbox[0]))
-        if overlap < min(bbox[2] - bbox[0], block_bbox[2] - block_bbox[0]) * 0.18:
-            continue
-        above = bbox[1] - block_bbox[3]
-        below = block_bbox[1] - bbox[3]
-        distance = above if above >= 0 else below if below >= 0 else -1.0
-        if distance < 0 or distance > max_distance:
-            continue
-        direction_penalty = 0.0 if above >= 0 else 8.0
-        candidates.append((distance + direction_penalty, {"text": text[:300], "bbox": [float(v) for v in block_bbox], "score": 0.9}))
-    if not candidates:
-        return {}
-    candidates.sort(key=lambda item: item[0])
-    return candidates[0][1]
-
-
-def _caption_anchored_figure_bboxes(
-    text_blocks: list[dict[str, Any]],
-    page_size: list[float],
-    table_rects: list[Any],
-) -> list[list[float]]:
-    result: list[list[float]] = []
-    if len(page_size or []) < 2:
-        return result
-    page_width = float(page_size[0] or 0)
-    page_height = float(page_size[1] or 0)
-    if page_width <= 0 or page_height <= 0:
-        return result
-    text_rects = [_rect_from_bbox(block.get("bbox") or [0, 0, 0, 0]) for block in text_blocks or [] if len(block.get("bbox") or []) >= 4]
-    for block in text_blocks or []:
-        caption_bbox = block.get("bbox") or []
-        caption_text = str(block.get("text") or "").strip().replace("\n", " ")
-        if len(caption_bbox) < 4 or not FIGURE_CAPTION_PATTERN.search(caption_text):
-            continue
-        candidates = [
-            [caption_bbox[0], max(0.0, caption_bbox[1] - page_height * 0.42), caption_bbox[2], max(0.0, caption_bbox[1] - 4)],
-            [page_width * 0.08, max(0.0, caption_bbox[1] - page_height * 0.42), page_width * 0.92, max(0.0, caption_bbox[1] - 4)],
-        ]
-        for candidate in candidates:
-            refined = _trim_candidate_against_text(candidate, text_rects, caption_bbox, page_size)
-            if not _reasonable_figure_bbox(refined, page_size):
-                continue
-            rect = _rect_from_bbox(refined)
-            if any(_overlap_ratio(rect, table_rect) > 0.25 for table_rect in table_rects):
-                continue
-            result.append(refined)
-            break
-    return result
-
-
-def _trim_candidate_against_text(
-    candidate: list[float],
-    text_rects: list[Any],
-    caption_bbox: list[float],
-    page_size: list[float],
-) -> list[float]:
-    x0, y0, x1, y1 = [float(value) for value in candidate]
-    blockers: list[float] = []
-    candidate_rect = _rect_from_bbox([x0, y0, x1, y1])
-    for rect in text_rects:
-        bbox = _bbox_from_any(rect)
-        if not bbox or abs(float(bbox[1]) - float(caption_bbox[1])) < 1 and abs(float(bbox[3]) - float(caption_bbox[3])) < 1:
-            continue
-        overlap_x = max(0.0, min(x1, bbox[2]) - max(x0, bbox[0]))
-        if overlap_x < (x1 - x0) * 0.18:
-            continue
-        if bbox[1] >= y0 and bbox[3] <= y1 and bbox[3] < caption_bbox[1]:
-            blockers.append(float(bbox[3]))
-        if _overlap_ratio(_rect_from_bbox(bbox), candidate_rect) > 0.25:
-            if bbox[3] < caption_bbox[1]:
-                blockers.append(float(bbox[3]))
-    if blockers:
-        y0 = max(y0, max(blockers) + 4)
-    min_height = max(36.0, float(page_size[1] or 0) * 0.05)
-    if y1 - y0 < min_height:
-        y0 = max(0.0, y1 - min_height)
-    return [max(0.0, x0), max(0.0, y0), min(float(page_size[0] or x1), x1), min(float(page_size[1] or y1), y1)]
-
-
-def _dedupe_elements(elements: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
-    unique: list[dict[str, Any]] = []
-    seen: set[tuple[int, str, int, int, int, int]] = set()
-    for element in elements:
-        bbox = element.get("bbox") or [0, 0, 0, 0]
-        key = (
-            int(element.get("page", 0)),
-            str(element.get("type", "")),
-            round(float(bbox[0])),
-            round(float(bbox[1])),
-            round(float(bbox[2])),
-            round(float(bbox[3])),
-        )
-        if key in seen:
-            continue
-        seen.add(key)
-        unique.append(element)
-    return unique
-
-
-def _complete_element_schema(elements: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+        matrix = fitz.Matrix(float(zoom), float(zoom))
+        pix = page.get_pixmap(matrix=matrix, clip=rect, alpha=False)
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        pix.save(str(output_path))
+        return {
+            "pixelWidth": int(pix.width),
+            "pixelHeight": int(pix.height),
+            "imageWidth": int(pix.width),
+            "imageHeight": int(pix.height),
+            "clipBBox": _rect_list(rect),
+            "zoom": float(zoom),
+        }
+    except Exception as exc:
+        return {"cropError": str(exc)}
+
+
+def _complete_element_schema(elements: list[dict[str, Any]]) -> list[dict[str, Any]]:
     completed: list[dict[str, Any]] = []
-    confidence_by_type = {"table": 0.75, "figure": 0.65, "formula": 0.55}
-    for element in elements:
-        kind = str(element.get("type") or "")
-        item = normalize_element(element, "pymupdf")
-        item["engine"] = "pymupdf"
-        item["confidence"] = float(item.get("confidence") or confidence_by_type.get(kind, 0.5))
-        item["needsReview"] = bool(item.get("needsReview") or kind == "formula")
+    for index, element in enumerate(elements):
+        item = dict(element)
+        item.setdefault("id", f"element_{index + 1}")
+        item.setdefault("type", "unknown")
+        item.setdefault("page", 0)
+        item.setdefault("bbox", [])
+        item.setdefault("pageSize", [])
+        item.setdefault("label", item.get("type", "element"))
+        item.setdefault("caption", "")
+        item.setdefault("captionBBox", [])
+        item.setdefault("text", item.get("caption", ""))
+        item.setdefault("table", [])
+        item.setdefault("csvPath", "")
+        item.setdefault("jsonPath", "")
+        item.setdefault("pngPath", "")
+        item.setdefault("metadata", {})
+        try:
+            item = normalize_element(item, "pymupdf")
+        except Exception:
+            pass
+        item = apply_quality(item)
         completed.append(item)
     return completed
 
 
-def _sort_elements(elements: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    type_order = {"table": 0, "figure": 1, "formula": 2}
+def _dedupe_elements(elements: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for element in _sort_elements(elements):
+        bbox = element.get("bbox") or []
+        etype = element.get("type")
+        page = int(element.get("page") or 0)
+        duplicate = False
+        for existing in result:
+            if existing.get("type") != etype or int(existing.get("page") or 0) != page:
+                continue
+            threshold = 0.72 if etype == "table" else 0.68 if etype == "figure" else 0.8
+            if _bbox_iou(bbox, existing.get("bbox") or []) >= threshold:
+                duplicate = True
+                break
+        if not duplicate:
+            result.append(element)
+    return result
+
+
+def _sort_elements(elements: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    type_order = {"title": 0, "text": 1, "formula": 2, "figure": 3, "table": 4}
     return sorted(
-        elements,
-        key=lambda element: (
-            int(element.get("page", 0)),
-            type_order.get(str(element.get("type") or ""), 99),
-            float((element.get("bbox") or [0, 0, 0, 0])[1]),
-            float((element.get("bbox") or [0, 0, 0, 0])[0]),
+        list(elements),
+        key=lambda item: (
+            int(item.get("page") or 0),
+            float((item.get("bbox") or [0, 0, 0, 0])[1]) if len(item.get("bbox") or []) >= 4 else 0.0,
+            float((item.get("bbox") or [0, 0, 0, 0])[0]) if len(item.get("bbox") or []) >= 4 else 0.0,
+            type_order.get(str(item.get("type") or ""), 99),
         ),
     )
 
 
-def _dedupe_bboxes(candidates: Iterable[list[float]]) -> list[list[float]]:
-    result: list[list[float]] = []
-    for bbox in sorted(candidates, key=_bbox_area, reverse=True):
-        rect = _rect_from_bbox(bbox)
-        if any(max(_overlap_ratio(rect, _rect_from_bbox(existing)), _overlap_ratio(_rect_from_bbox(existing), rect)) > 0.45 for existing in result):
-            continue
-        result.append(bbox)
-    return result
+# ---------------------------------------------------------------------------
+# Geometry helpers
+# ---------------------------------------------------------------------------
+
+
+def _bbox_from_any(value: Any) -> list[float]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)) and len(value) >= 4:
+        try:
+            return [float(value[0]), float(value[1]), float(value[2]), float(value[3])]
+        except Exception:
+            return []
+    attrs = ("x0", "y0", "x1", "y1")
+    if all(hasattr(value, attr) for attr in attrs):
+        try:
+            return [float(value.x0), float(value.y0), float(value.x1), float(value.y1)]
+        except Exception:
+            return []
+    return []
+
+
+def _rect_list(rect: Any) -> list[float]:
+    return _bbox_from_any(rect)
+
+
+def _rect_from_bbox(bbox: list[float]) -> Any:
+    try:
+        import fitz
+
+        if len(bbox or []) >= 4:
+            return fitz.Rect(float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
+    except Exception:
+        pass
+    return [float(v) for v in bbox[:4]] if len(bbox or []) >= 4 else []
+
+
+def _page_dimensions(page_size: list[float]) -> tuple[float, float]:
+    try:
+        page_width = float(page_size[0])
+        page_height = float(page_size[1])
+    except Exception:
+        return 0.0, 0.0
+    return page_width, page_height
+
+
+def _clip_bbox(bbox: list[float], page_size: list[float]) -> list[float]:
+    if len(bbox or []) < 4:
+        return []
+    page_width, page_height = _page_dimensions(page_size)
+    x0 = max(0.0, float(bbox[0]))
+    y0 = max(0.0, float(bbox[1]))
+    x1 = float(bbox[2])
+    y1 = float(bbox[3])
+    if page_width > 0:
+        x1 = min(page_width, x1)
+    if page_height > 0:
+        y1 = min(page_height, y1)
+    if x1 <= x0 or y1 <= y0:
+        return []
+    return [x0, y0, x1, y1]
+
+
+def _bbox_width(bbox: list[float]) -> float:
+    if len(bbox or []) < 4:
+        return 0.0
+    return max(0.0, float(bbox[2]) - float(bbox[0]))
+
+
+def _bbox_height(bbox: list[float]) -> float:
+    if len(bbox or []) < 4:
+        return 0.0
+    return max(0.0, float(bbox[3]) - float(bbox[1]))
 
 
 def _bbox_area(bbox: list[float]) -> float:
-    if len(bbox or []) < 4:
-        return 0.0
-    return max(0.0, float(bbox[2]) - float(bbox[0])) * max(0.0, float(bbox[3]) - float(bbox[1]))
+    return _bbox_width(bbox) * _bbox_height(bbox)
 
 
-def _union_bboxes(candidates: Iterable[list[float]]) -> list[float]:
-    boxes = [box for box in candidates if len(box or []) >= 4]
-    if not boxes:
-        return []
-    return [
-        min(float(box[0]) for box in boxes),
-        min(float(box[1]) for box in boxes),
-        max(float(box[2]) for box in boxes),
-        max(float(box[3]) for box in boxes),
-    ]
-
-
-def _table_quality_key(table: dict[str, Any]) -> tuple[int, float, float, int, int, float]:
-    rows = table.get("table") or []
-    row_count = len(rows)
-    col_count = max((len(row or []) for row in rows), default=0)
-    non_empty = sum(1 for row in rows for cell in row if str(cell or "").strip())
-    bbox = table.get("bbox") or [0, 0, 0, 0]
-    area = max(0.0, float(bbox[2]) - float(bbox[0])) * max(0.0, float(bbox[3]) - float(bbox[1]))
-    metadata = table.get("metadata") if isinstance(table.get("metadata"), dict) else {}
-    line_based = 0 if metadata.get("textStrategy") else 1
-    structural_score = float(metadata.get("structuralScore") or 0.0)
-    return line_based, structural_score, float(table.get("confidence") or 0.0), row_count, col_count, area
-
-
-def _bbox_iou(left: list[float], right: list[float]) -> float:
+def _bbox_intersection_area(left: list[float], right: list[float]) -> float:
     if len(left or []) < 4 or len(right or []) < 4:
         return 0.0
     x0 = max(float(left[0]), float(right[0]))
     y0 = max(float(left[1]), float(right[1]))
     x1 = min(float(left[2]), float(right[2]))
     y1 = min(float(left[3]), float(right[3]))
-    intersection = max(0.0, x1 - x0) * max(0.0, y1 - y0)
-    left_area = max(0.0, float(left[2]) - float(left[0])) * max(0.0, float(left[3]) - float(left[1]))
-    right_area = max(0.0, float(right[2]) - float(right[0])) * max(0.0, float(right[3]) - float(right[1]))
-    union = left_area + right_area - intersection
-    return intersection / union if union > 0 else 0.0
+    if x1 <= x0 or y1 <= y0:
+        return 0.0
+    return (x1 - x0) * (y1 - y0)
+
+
+def _bbox_iou(left: list[float], right: list[float]) -> float:
+    inter = _bbox_intersection_area(left, right)
+    if inter <= 0:
+        return 0.0
+    union = _bbox_area(left) + _bbox_area(right) - inter
+    return inter / union if union > 0 else 0.0
+
+
+def _overlap_ratio(left_rect: Any, right_rect: Any) -> float:
+    left = _bbox_from_any(left_rect)
+    right = _bbox_from_any(right_rect)
+    inter = _bbox_intersection_area(left, right)
+    denom = min(_bbox_area(left), _bbox_area(right))
+    return inter / denom if denom > 0 else 0.0
 
 
 def _contains_bbox(outer: list[float], inner: list[float], tolerance: float = 1.0) -> bool:
@@ -1620,105 +1698,235 @@ def _contains_bbox(outer: list[float], inner: list[float], tolerance: float = 1.
     )
 
 
-def _merge_nearby_bboxes(candidates: list[list[float]]) -> list[list[float]]:
-    merged: list[list[float]] = []
-    for bbox in candidates:
-        expanded = [bbox[0] - 4, bbox[1] - 4, bbox[2] + 4, bbox[3] + 4]
-        matched = False
-        for index, existing in enumerate(merged):
-            if _bbox_iou(expanded, existing) > 0.02 or _bboxes_touch(expanded, existing):
-                merged[index] = [
-                    min(existing[0], bbox[0]),
-                    min(existing[1], bbox[1]),
-                    max(existing[2], bbox[2]),
-                    max(existing[3], bbox[3]),
-                ]
-                matched = True
-                break
-        if not matched:
-            merged.append(list(bbox))
-    return merged
+def _horizontal_overlap_ratio(left: list[float], right: list[float]) -> float:
+    if len(left or []) < 4 or len(right or []) < 4:
+        return 0.0
+    overlap = max(0.0, min(float(left[2]), float(right[2])) - max(float(left[0]), float(right[0])))
+    return overlap / max(1.0, min(_bbox_width(left), _bbox_width(right)))
 
 
-def _bboxes_touch(left: list[float], right: list[float]) -> bool:
-    horizontal_gap = max(0.0, max(left[0], right[0]) - min(left[2], right[2]))
-    vertical_gap = max(0.0, max(left[1], right[1]) - min(left[3], right[3]))
-    overlap_x = min(left[2], right[2]) > max(left[0], right[0])
-    overlap_y = min(left[3], right[3]) > max(left[1], right[1])
-    return (overlap_x and vertical_gap <= 8) or (overlap_y and horizontal_gap <= 8)
+def _vertical_overlap_ratio(left: list[float], right: list[float]) -> float:
+    if len(left or []) < 4 or len(right or []) < 4:
+        return 0.0
+    overlap = max(0.0, min(float(left[3]), float(right[3])) - max(float(left[1]), float(right[1])))
+    return overlap / max(1.0, min(_bbox_height(left), _bbox_height(right)))
 
 
-def _reasonable_figure_bbox(bbox: list[float], page_size: list[float]) -> bool:
+def _bbox_gap(a: list[float], b: list[float]) -> tuple[float, float]:
+    if len(a or []) < 4 or len(b or []) < 4:
+        return 10**9, 10**9
+    hgap = max(0.0, max(float(a[0]), float(b[0])) - min(float(a[2]), float(b[2])))
+    vgap = max(0.0, max(float(a[1]), float(b[1])) - min(float(a[3]), float(b[3])))
+    return hgap, vgap
+
+
+def _union_nonempty_bboxes(bboxes: Iterable[list[float]]) -> list[float]:
+    boxes = [list(map(float, box[:4])) for box in bboxes if len(box or []) >= 4 and _bbox_width(box) > 0 and _bbox_height(box) > 0]
+    if not boxes:
+        return []
+    return [min(box[0] for box in boxes), min(box[1] for box in boxes), max(box[2] for box in boxes), max(box[3] for box in boxes)]
+
+
+def _union_bboxes(bboxes: Iterable[list[float]]) -> list[float]:
+    return _union_nonempty_bboxes(bboxes)
+
+
+def _expanded_bbox(bbox: list[float], margin: float) -> list[float]:
     if len(bbox or []) < 4:
+        return []
+    return [float(bbox[0]) - margin, float(bbox[1]) - margin, float(bbox[2]) + margin, float(bbox[3]) + margin]
+
+
+def _pad_bbox(bbox: list[float], page_rect: Any, padding: float) -> list[float]:
+    if len(bbox or []) < 4:
+        return []
+    page_bbox = _bbox_from_any(page_rect)
+    x0 = float(bbox[0]) - padding
+    y0 = float(bbox[1]) - padding
+    x1 = float(bbox[2]) + padding
+    y1 = float(bbox[3]) + padding
+    if len(page_bbox) >= 4:
+        x0 = max(page_bbox[0], x0)
+        y0 = max(page_bbox[1], y0)
+        x1 = min(page_bbox[2], x1)
+        y1 = min(page_bbox[3], y1)
+    return [x0, y0, x1, y1] if x1 > x0 and y1 > y0 else []
+
+
+def _merge_nearby_bboxes(bboxes: list[list[float]], gap: float = 18.0) -> list[list[float]]:
+    result: list[list[float]] = []
+    for bbox in sorted([_bbox_from_any(box) for box in bboxes if len(_bbox_from_any(box)) >= 4], key=lambda box: (box[1], box[0])):
+        merged = False
+        for idx, existing in enumerate(result):
+            hgap, vgap = _bbox_gap(existing, bbox)
+            if _bbox_intersection_area(existing, bbox) > 0 or (hgap <= gap and _vertical_overlap_ratio(existing, bbox) > 0.22) or (vgap <= gap and _horizontal_overlap_ratio(existing, bbox) > 0.22):
+                result[idx] = _union_nonempty_bboxes([existing, bbox])
+                merged = True
+                break
+        if not merged:
+            result.append(bbox)
+    changed = True
+    while changed:
+        changed = False
+        compact: list[list[float]] = []
+        for bbox in result:
+            for idx, existing in enumerate(compact):
+                hgap, vgap = _bbox_gap(existing, bbox)
+                if _bbox_intersection_area(existing, bbox) > 0 or (hgap <= gap and _vertical_overlap_ratio(existing, bbox) > 0.22) or (vgap <= gap and _horizontal_overlap_ratio(existing, bbox) > 0.22):
+                    compact[idx] = _union_nonempty_bboxes([existing, bbox])
+                    changed = True
+                    break
+            else:
+                compact.append(bbox)
+        result = compact
+    return result
+
+
+def _dedupe_bboxes(bboxes: list[list[float]], iou_threshold: float = 0.72) -> list[list[float]]:
+    result: list[list[float]] = []
+    for bbox in sorted([_bbox_from_any(box) for box in bboxes if len(_bbox_from_any(box)) >= 4], key=_bbox_area, reverse=True):
+        if any(_bbox_iou(bbox, existing) >= iou_threshold or _overlap_ratio(_rect_from_bbox(bbox), _rect_from_bbox(existing)) >= 0.92 for existing in result):
+            continue
+        result.append(bbox)
+    return sorted(result, key=lambda box: (box[1], box[0]))
+
+
+def _column_bounds_for_bbox(bbox: list[float], page_size: list[float]) -> tuple[float, float]:
+    if len(bbox or []) < 4 or len(page_size or []) < 2:
+        return 0.0, 0.0
+    page_width = float(page_size[0] or 0)
+    if page_width <= 0:
+        return 0.0, 0.0
+    x0, x1 = float(bbox[0]), float(bbox[2])
+    cx = (x0 + x1) / 2.0
+    if _bbox_width(bbox) >= page_width * 0.62:
+        return 0.0, page_width
+    center = page_width / 2.0
+    gutter_half = max(12.0, page_width * 0.025)
+    margin = 8.0
+    if cx < center and x1 <= center + gutter_half:
+        return margin, center - gutter_half
+    if cx >= center and x0 >= center - gutter_half:
+        return center + gutter_half, page_width - margin
+    return margin, page_width - margin
+
+
+def _bbox_inside_column_ratio(bbox: list[float], col_x0: float, col_x1: float) -> float:
+    if len(bbox or []) < 4:
+        return 0.0
+    overlap = max(0.0, min(float(bbox[2]), col_x1) - max(float(bbox[0]), col_x0))
+    return overlap / max(1.0, _bbox_width(bbox))
+
+
+def _same_column(a: list[float], b: list[float], page_size: list[float]) -> bool:
+    ax0, ax1 = _column_bounds_for_bbox(a, page_size)
+    bx0, bx1 = _column_bounds_for_bbox(b, page_size)
+    if abs(ax0 - bx0) <= 10.0 and abs(ax1 - bx1) <= 10.0:
+        return True
+    return _horizontal_overlap_ratio(a, b) >= 0.32
+
+
+def _reasonable_visual_bbox(bbox: list[float], page_size: list[float], allow_thin: bool = False) -> bool:
+    bbox = _bbox_from_any(bbox)
+    if len(bbox) < 4:
         return False
-    width = float(bbox[2]) - float(bbox[0])
-    height = float(bbox[3]) - float(bbox[1])
-    if width < 32 or height < 24:
+    width = _bbox_width(bbox)
+    height = _bbox_height(bbox)
+    page_width, page_height = _page_dimensions(page_size)
+    if width <= 0 or height <= 0:
         return False
-    page_area = max(1.0, float(page_size[0] or 0) * float(page_size[1] or 0))
-    area = width * height
-    ratio = max(width / max(height, 1.0), height / max(width, 1.0))
-    if area / page_area < 0.006 or ratio > 12:
+    if allow_thin:
+        if width < 8 or height < 8 or width * height < 120:
+            return False
+    elif width < 28 or height < 20 or width * height < 900:
         return False
-    if bbox[3] < float(page_size[1]) * 0.06 or bbox[1] > float(page_size[1]) * 0.94:
+    if page_width > 0 and width > page_width * 0.98:
+        return False
+    if page_height > 0 and height > page_height * 0.85:
         return False
     return True
 
 
-def _merge_formula_lines(lines: list[dict[str, Any]], page_width: float) -> list[dict[str, Any]]:
-    merged: list[dict[str, Any]] = []
-    current: dict[str, Any] | None = None
-    for line in lines:
-        text = str(line.get("text") or "").strip()
-        bbox = line.get("bbox") or []
-        if current is not None and bbox and 0 <= float(bbox[1]) - float(current["bbox"][3]) <= 10:
-            combined = f"{current['text']} {text}".strip()
-            if _looks_like_formula(combined, [min(current["bbox"][0], bbox[0]), current["bbox"][1], max(current["bbox"][2], bbox[2]), bbox[3]], page_width):
-                current = {
-                    "text": combined,
-                    "bbox": [min(current["bbox"][0], bbox[0]), current["bbox"][1], max(current["bbox"][2], bbox[2]), bbox[3]],
-                }
-                continue
-        if current is not None:
-            merged.append(current)
-        current = {"text": text, "bbox": bbox}
-    if current is not None:
-        merged.append(current)
-    return merged
+def _reasonable_figure_bbox(bbox: list[float], page_size: list[float], allow_small: bool = False) -> bool:
+    bbox = _bbox_from_any(bbox)
+    if len(bbox) < 4:
+        return False
+    page_width, page_height = _page_dimensions(page_size)
+    width = _bbox_width(bbox)
+    height = _bbox_height(bbox)
+    area = width * height
+    if width <= 0 or height <= 0:
+        return False
+    min_area = 1000.0 if allow_small else 1800.0
+    min_width = 24.0 if allow_small else 35.0
+    min_height = 18.0 if allow_small else 25.0
+    if width < min_width or height < min_height or area < min_area:
+        return False
+    if page_width > 0 and width > page_width * 0.98:
+        return False
+    if page_height > 0 and height > page_height * 0.75:
+        return False
+    aspect = width / max(height, 1.0)
+    if aspect > 9.5 or aspect < 0.08:
+        return False
+    return True
 
 
-def _bbox_from_any(value: Any) -> list[float]:
-    if value is None:
-        return []
-    if hasattr(value, "x0"):
-        return [float(value.x0), float(value.y0), float(value.x1), float(value.y1)]
-    if isinstance(value, (list, tuple)) and len(value) >= 4:
-        return [float(value[0]), float(value[1]), float(value[2]), float(value[3])]
-    return []
+def _is_visual_noise(bbox: list[float], page_size: list[float]) -> bool:
+    if len(bbox or []) < 4:
+        return True
+    page_width, page_height = _page_dimensions(page_size)
+    width = _bbox_width(bbox)
+    height = _bbox_height(bbox)
+    if width <= 1 or height <= 1:
+        return True
+    # Page rules, headers and footers are often long shallow vector rectangles.
+    if page_width > 0 and width > page_width * 0.55 and height < 4.0:
+        return True
+    if page_height > 0 and height > page_height * 0.50 and width < 4.0:
+        return True
+    return False
 
 
-def _rect_list(rect: Any) -> list[float]:
-    return [float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1)]
+def _is_table_overlap(bbox: list[float], table_rects: list[Any], threshold: float = 0.35) -> bool:
+    if len(bbox or []) < 4:
+        return False
+    for table_rect in table_rects or []:
+        table_bbox = _bbox_from_any(table_rect)
+        if len(table_bbox) < 4:
+            continue
+        if _overlap_ratio(_rect_from_bbox(bbox), _rect_from_bbox(table_bbox)) > threshold:
+            return True
+    return False
 
 
-def _rect_from_bbox(bbox: list[float]) -> Any:
-    import fitz
-
-    return fitz.Rect(float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
-
-
-def _overlap_ratio(left: Any, right: Any) -> float:
-    area = max(0.0, left.get_area())
-    if area <= 0:
-        return 0.0
-    intersection = left & right
-    return max(0.0, intersection.get_area()) / area
+def _is_page_header_or_footer_bbox(bbox: list[float], page_size: list[float]) -> bool:
+    page_width, page_height = _page_dimensions(page_size)
+    if page_width <= 0 or page_height <= 0 or len(bbox or []) < 4:
+        return False
+    y0 = float(bbox[1])
+    y1 = float(bbox[3])
+    return y1 <= page_height * 0.12 or y0 >= page_height * 0.90
 
 
-def _pad_bbox(bbox: list[float], page_rect: Any, padding: float) -> list[float]:
-    return [
-        max(float(page_rect.x0), math.floor(bbox[0] - padding)),
-        max(float(page_rect.y0), math.floor(bbox[1] - padding)),
-        min(float(page_rect.x1), math.ceil(bbox[2] + padding)),
-        min(float(page_rect.y1), math.ceil(bbox[3] + padding)),
-    ]
+def _text_near_or_inside_bbox(bbox: list[float], text_blocks: list[dict[str, Any]], margin: float = 28.0) -> str:
+    if len(bbox or []) < 4:
+        return ""
+    expanded = _expanded_bbox(bbox, margin)
+    collected: list[str] = []
+    for block in text_blocks or []:
+        block_bbox = _bbox_from_any(block.get("bbox"))
+        if len(block_bbox) < 4:
+            continue
+        text = str(block.get("text") or "").strip().replace("\n", " ")
+        if not text:
+            continue
+        if _bbox_intersection_area(expanded, block_bbox) > 0:
+            collected.append(text)
+    return " ".join(collected)[:1200]
+
+
+def _safe_file_label(label: str) -> str:
+    label = re.sub(r"\s+", "_", str(label or "").strip().lower())
+    label = re.sub(r"[^a-z0-9_\-\.\u4e00-\u9fff]+", "", label)
+    return label[:48] or "item"

@@ -613,7 +613,7 @@ class TranslationController(QObject):
                     pass
                 self.snippetTranslationFinished.emit(key, "", False, message)
 
-        thread = threading.Thread(target=_worker, daemon=True)
+        thread = threading.Thread(target=_worker, daemon=False)
         thread.start()
 
     def _glossary_paths(self, raw: Any) -> list[Path]:

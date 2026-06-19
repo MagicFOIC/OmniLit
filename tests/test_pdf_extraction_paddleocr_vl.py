@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+from omnilit_qt.pdf_cloud_client import CloudAPIClient
 from omnilit_qt.pdf_extraction_engines import HybridExtractionPipeline
 from omnilit_qt.pdf_extraction_paddleocr_vl import (
     EngineUnavailable,
@@ -33,6 +34,41 @@ class FakeFallbackEngine:
 
 
 class PaddleOCRVLExtractionEngineTests(unittest.TestCase):
+    def test_cloud_api_normalizes_layout_response_and_saves_images(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            pdf_path = root / "sample.pdf"
+            pdf_path.write_bytes(b"%PDF-1.4 mocked")
+            config = PaddleOCRVLConfig(True, "api", "https://paddle.example/layout-parsing", "model", "v1.6", "", 30, "token-value")
+            response = {
+                "errorCode": 0,
+                "result": {
+                    "layoutParsingResults": [
+                        {
+                            "page": 0,
+                            "prunedResult": {
+                                "blocks": [
+                                    {"label": "table", "coordinate": [1, 2, 30, 40], "markdown": "|A|B|\n|---|---|\n|1|2|"},
+                                    {"label": "formula", "coordinate": [5, 50, 60, 70], "latex": "x+y"},
+                                    {"label": "figure", "coordinate": [10, 75, 80, 100], "caption": "Figure 1"},
+                                ]
+                            },
+                            "markdown": {"text": "# Paper"},
+                            "outputImages": {"figure.png": "cG5n"},
+                        }
+                    ]
+                },
+            }
+
+            with patch.object(CloudAPIClient, "request_json", return_value=response) as request_mock:
+                index = PaddleOCRVLExtractionEngine(config).analyze(pdf_path, root / "out")
+
+            self.assertTrue(request_mock.called)
+            self.assertEqual(index["parserConfigVersion"], "cloud-api-v1")
+            self.assertEqual({item["type"] for item in index["elements"]}, {"table", "formula", "figure"})
+            figure = next(item for item in index["elements"] if item["type"] == "figure")
+            self.assertTrue(Path(figure["pngPath"]).exists())
+
     def test_is_available_false_when_mode_off(self) -> None:
         with patch.dict("os.environ", {"OMNILIT_PADDLEOCR_VL_MODE": "off"}, clear=True):
             engine = PaddleOCRVLExtractionEngine()

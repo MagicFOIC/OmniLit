@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from .pdf_extraction_schema import normalize_bbox
@@ -10,6 +11,7 @@ def score_table(element: dict[str, Any]) -> tuple[float, list[str]]:
     rows = element.get("table") or []
     row_count, col_count = table_shape(rows)
     ratio = non_empty_cell_ratio(rows)
+    metadata = element.get("metadata") or {}
     flags: list[str] = []
     score = 0.35
     if row_count >= 2:
@@ -29,6 +31,21 @@ def score_table(element: dict[str, Any]) -> tuple[float, list[str]]:
         flags.append("weak_table_shape")
     if _has_source_pair(element):
         score += 0.12
+    evidence = _optional_float(metadata.get("tableEvidenceScore"))
+    if evidence is not None:
+        score += max(-0.08, min(0.10, (evidence - 0.58) * 0.25))
+        if evidence < 0.45:
+            flags.append("weak_table_evidence")
+    if ratio < 0.35 and row_count >= 2 and col_count >= 2:
+        flags.append("sparse_table_cells")
+    bbox = normalize_bbox(element.get("bbox"))
+    area_ratio = _area_ratio(bbox, element.get("pageSize") or [])
+    if metadata.get("textStrategy") and not element.get("caption"):
+        score -= 0.3
+        flags.append("unanchored_text_table")
+    if area_ratio > 0.58:
+        score -= 0.24
+        flags.append("page_sized_table")
     _page_bbox_flags(element, flags)
     return _finalize(score, flags)
 
@@ -65,6 +82,7 @@ def score_figure(element: dict[str, Any]) -> tuple[float, list[str]]:
 def score_formula(element: dict[str, Any]) -> tuple[float, list[str]]:
     flags: list[str] = []
     latex = str(element.get("latex") or element.get("text") or "").strip()
+    metadata = element.get("metadata") or {}
     score = 0.35
     if latex:
         score += 0.22
@@ -82,6 +100,16 @@ def score_formula(element: dict[str, Any]) -> tuple[float, list[str]]:
         score += 0.05
     if _has_source_pair(element):
         score += 0.1
+    elif str(element.get("engine") or "") in {"pymupdf", "mineru", "paddleocr_vl"}:
+        flags.append("single_engine_formula")
+    match_score = _optional_float(metadata.get("formulaMatchScore"))
+    if match_score is not None:
+        score += max(-0.08, min(0.08, (match_score - 0.35) * 0.20))
+        if match_score < 0.35:
+            flags.append("weak_formula_match")
+    if _looks_like_sentence_formula_noise(latex):
+        score -= 0.16
+        flags.append("sentence_like_formula")
     _page_bbox_flags(element, flags)
     return _finalize(score, flags)
 
@@ -165,3 +193,21 @@ def _page_bbox_flags(element: dict[str, Any], flags: list[str]) -> None:
 def _looks_numbered(text: str) -> bool:
     stripped = text.strip()
     return stripped.endswith(")") and "(" in stripped[-8:]
+
+
+def _optional_float(value: Any) -> float | None:
+    try:
+        if value is None or value == "":
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _looks_like_sentence_formula_noise(text: str) -> bool:
+    value = str(text or "").strip()
+    words = [word.lower() for word in re.findall(r"[A-Za-z]{3,}", value)]
+    if len(words) < 6:
+        return False
+    common = {"the", "and", "with", "from", "this", "that", "where", "when", "for", "into", "were", "was"}
+    return bool(common.intersection(words)) or value.endswith((".", "!", "?"))

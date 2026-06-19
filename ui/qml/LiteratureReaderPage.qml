@@ -21,15 +21,13 @@ Item {
     property string allExportedPath: ""
     property var elementExportPaths: ({})
     property var elementFeedbackTexts: ({})
-    property string selectedEngine: "auto"
+    property string selectedEngine: "fast"
     property bool deferPageRendering: false
     property var engineStatusInfo: ({})
     readonly property var analysisModes: [
-        { engine: "auto", label: "自动解析（推荐）" },
         { engine: "fast", label: "快速解析（PyMuPDF）" },
         { engine: "mineru", label: "深度解析（MinerU）" },
-        { engine: "paddleocr_vl", label: "高精度解析（PaddleOCR-VL）" },
-        { engine: "hybrid", label: "混合解析（PaddleOCR-VL + MinerU fallback）" }
+        { engine: "paddleocr_vl", label: "高精度解析（PaddleOCR-VL）" }
     ]
 
     signal backRequested()
@@ -64,6 +62,8 @@ Item {
     onVisibleChanged: {
         if (visible)
             root.scheduleOpenRecord()
+        else if (pdfExtractionController.loading)
+            pdfExtractionController.cancelAnalysis()
     }
 
     Connections {
@@ -73,7 +73,7 @@ Item {
             if (recordId === root.recordId) {
                 root.recalculateFitWidthZoom()
                 root.renderRevision += 1
-                root.operationStatus = pdfExtractionController.currentEngine === "pymupdf" ? "快速解析已完成。可点击自动解析提取公式、表格和图表结构。" : "解析完成。"
+                root.operationStatus = pdfExtractionController.currentEngine === "pymupdf" ? "快速解析已完成。可按需选择 MinerU 或 PaddleOCR-VL 深度解析。" : "解析完成。"
             }
         }
 
@@ -141,7 +141,7 @@ Item {
                     enabled: !pdfExtractionController.loading
                     onActivated: {
                         var item = root.analysisModes[currentIndex]
-                        root.selectedEngine = item ? item.engine : "auto"
+                        root.selectedEngine = item ? item.engine : "fast"
                         root.selectEngine(root.selectedEngine)
                     }
                 }
@@ -223,9 +223,12 @@ Item {
                             }
 
                             PillButton {
-                                visible: !modelData.available && modelData.installable
-                                text: modelData.key === "mineru" ? "一键初始化" : "初始化"
-                                onClicked: pdfExtractionController.bootstrapEngine(modelData.key)
+                                visible: modelData.key !== "pymupdf" && !modelData.available
+                                text: "配置服务"
+                                onClicked: {
+                                    pdfExtractionController.bootstrapEngine(modelData.key)
+                                    root.operationStatus = "请在系统设置中配置 " + modelData.label + " API。"
+                                }
                             }
                         }
                     }
@@ -432,12 +435,17 @@ Item {
     function selectEngine(engine) {
         if (root.recordId === "" || root.pdfPath === "")
             return
-        root.operationStatus = root.selectedEngine === "auto" ? "正在自动解析..." : ""
+        var nextEngine = engine || root.selectedEngine
+        root.operationStatus = ""
         root.lastExportPath = ""
         root.allExportedPath = ""
         root.elementExportPaths = ({})
         root.elementFeedbackTexts = ({})
-        pdfExtractionController.selectExtractionEngine(root.recordId, root.pdfPath, engine || root.selectedEngine)
+        if (nextEngine === "mineru")
+            root.operationStatus = "MinerU 深度解析正在准备..."
+        else if (nextEngine === "paddleocr_vl")
+            root.operationStatus = "PaddleOCR-VL 高精度解析正在准备..."
+        pdfExtractionController.selectExtractionEngine(root.recordId, root.pdfPath, nextEngine)
     }
 
     function exportAll() {
@@ -617,8 +625,6 @@ Item {
             return "PaddleOCR-VL"
         if (value === "mineru")
             return "MinerU"
-        if (value === "hybrid")
-            return "Hybrid"
         return value || "unknown"
     }
 

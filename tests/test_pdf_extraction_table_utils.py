@@ -14,6 +14,13 @@ class PdfExtractionTableUtilsTests(unittest.TestCase):
         rows = html_table_to_rows("<table><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table>")
         self.assertEqual(rows, [["A", "B"], ["1", "2"]])
 
+    def test_html_table_expands_rowspan_and_colspan(self) -> None:
+        rows = html_table_to_rows(
+            "<table><tr><th rowspan='2'>Material</th><th colspan='2'>Value</th></tr>"
+            "<tr><th>Min</th><th>Max</th></tr><tr><td>Sulfur</td><td>1</td><td>2</td></tr></table>"
+        )
+        self.assertEqual(rows, [["Material", "Value", ""], ["Material", "Min", "Max"], ["Sulfur", "1", "2"]])
+
     def test_empty_table_does_not_crash(self) -> None:
         self.assertEqual(markdown_table_to_rows(""), [])
         self.assertEqual(html_table_to_rows("<table></table>"), [])

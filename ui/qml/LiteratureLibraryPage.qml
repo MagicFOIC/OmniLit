@@ -24,6 +24,10 @@ Item {
 
     readonly property var relevanceValues: ["all", "keyword_only", "loose", "balanced", "strict", "very_strict"]
     readonly property var statusValues: ["all", "downloaded", "no_candidate", "failed", "not_open_access", "not_pdf", "request_error"]
+    readonly property var sortValues: ["relevance_desc", "relevance_asc", "year_desc", "year_asc", "downloaded_first", "title_asc"]
+    readonly property var sortLabels: ["相关性 高→低", "相关性 低→高", "年份 新→旧", "年份 旧→新", "已下载优先", "标题 A-Z"]
+    readonly property var journalTypeValues: ["all", "flagship", "field_journal", "review_journal", "oa_journal", "preprint", "conference", "unknown"]
+    readonly property var journalTypeLabels: ["全部期刊类型", "综合/高影响力", "专业领域", "综述类", "开放获取", "预印本", "会议/论文集", "未识别"]
     readonly property var relevanceLabels: ["全部相关性", "关键词提及即可", "宽松及以上", "均衡及以上", "严格及以上", "极严格"]
     readonly property var statusLabels: ["全部 PDF 状态", "已下载", "无候选", "下载失败", "非开放获取", "非 PDF", "请求失败"]
 
@@ -79,7 +83,7 @@ Item {
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 58
+            Layout.preferredHeight: 72
             radius: theme.radiusMedium
             color: theme.surface
             border.color: theme.border
@@ -113,6 +117,35 @@ Item {
                     currentIndex: 0
                     enabled: !literatureLibraryController.loading
                     onCurrentIndexChanged: root.applyFilters()
+                }
+                ComboBox {
+                    id: sortFilter
+                    Layout.preferredWidth: 150
+                    model: root.sortLabels
+                    currentIndex: 0
+                    enabled: !literatureLibraryController.loading
+                    onCurrentIndexChanged: root.applyFilters()
+                }
+                ComboBox {
+                    id: journalTypeFilter
+                    Layout.preferredWidth: 150
+                    model: root.journalTypeLabels
+                    currentIndex: 0
+                    enabled: !literatureLibraryController.loading
+                    onCurrentIndexChanged: root.applyFilters()
+                }
+                ComboBox {
+                    id: projectFilter
+                    Layout.preferredWidth: 150
+                    model: root.favoriteProjectFilterLabels()
+                    currentIndex: 0
+                    enabled: !literatureLibraryController.loading
+                    onCurrentIndexChanged: root.applyFilters()
+                }
+                PillButton {
+                    text: "新建收藏分类"
+                    enabled: !literatureLibraryController.loading
+                    onClicked: createProjectPopup.open()
                 }
                 PillButton {
                     id: keywordGroupButton
@@ -195,6 +228,27 @@ Item {
                         }
                     }
 
+                    RowLayout {
+                        Layout.fillWidth: true
+                        visible: literatureLibraryController.compareCount > 0
+                        spacing: 8
+                        Label {
+                            text: "对比组 " + literatureLibraryController.compareCount + "/4"
+                            color: theme.accent
+                            background: Rectangle { color: theme.accentSofter; radius: 5 }
+                            padding: 5
+                        }
+                        PillButton {
+                            text: "查看对比"
+                            onClicked: comparePopup.open()
+                        }
+                        PillButton {
+                            text: "清空"
+                            onClicked: literatureLibraryController.clearCompare()
+                        }
+                        Item { Layout.fillWidth: true }
+                    }
+
                     ListView {
                         id: literatureList
                         Layout.fillWidth: true
@@ -216,6 +270,8 @@ Item {
                             root.updateSelection()
                         }
                         delegate: Rectangle {
+                            id: recordDelegate
+                            property var record: modelData
                             width: literatureList.width
                             height: 164
                             radius: 8
@@ -275,6 +331,12 @@ Item {
                                         background: Rectangle { color: theme.surfaceSoft; radius: 5 }
                                         padding: 5
                                     }
+                                    Label {
+                                        text: modelData.journalTypeLabel || "未识别"
+                                        color: theme.textSecondary
+                                        background: Rectangle { color: theme.surfaceSoft; radius: 5 }
+                                        padding: 5
+                                    }
                                     Item { Layout.fillWidth: true }
                                     Text {
                                         text: modelData.source || ""
@@ -286,6 +348,15 @@ Item {
                                     Layout.fillWidth: true
                                     spacing: 6
                                     PillButton {
+                                        id: favoriteButton
+                                        text: modelData.isFavorite ? "已收藏" : "收藏"
+                                        onClicked: favoriteMenu.open()
+                                    }
+                                    PillButton {
+                                        text: modelData.inCompare ? "移出对比" : "加入对比"
+                                        onClicked: literatureLibraryController.toggleCompare(modelData.recordId)
+                                    }
+                                    PillButton {
                                         text: "解析阅读"
                                         visible: !!modelData.localPdfPath
                                         enabled: !!modelData.localPdfPath
@@ -293,10 +364,22 @@ Item {
                                     }
                                     Text {
                                         Layout.fillWidth: true
-                                        text: modelData.keywordsText || modelData.contentSummary || ""
+                                        text: (modelData.favoriteProjectNamesText ? modelData.favoriteProjectNamesText + "  路  " : "") + (modelData.journalName || modelData.source || "")
                                         color: theme.textMuted
                                         elide: Text.ElideRight
                                         font.pixelSize: 11
+                                    }
+                                    Menu {
+                                        id: favoriteMenu
+                                        Repeater {
+                                            model: literatureLibraryController.favoriteProjects
+                                            MenuItem {
+                                                text: modelData.name || ""
+                                                checkable: true
+                                                checked: root.containsValue(recordDelegate.record.favoriteProjectIds, modelData.id)
+                                                onTriggered: literatureLibraryController.toggleFavorite(recordDelegate.record.recordId, modelData.id)
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -478,10 +561,41 @@ Item {
     }
 
     function applyFilters() {
-        literatureLibraryController.setFilters(root.relevanceValues[relevanceFilter.currentIndex],
-                                               root.statusValues[pdfStatusFilter.currentIndex],
-                                               query.text,
-                                               root.selectedKeywordGroups)
+        literatureLibraryController.setLibraryFilters({
+            "relevance": root.relevanceValues[relevanceFilter.currentIndex],
+            "pdf_status": root.statusValues[pdfStatusFilter.currentIndex],
+            "query": query.text,
+            "sort": root.sortValues[sortFilter.currentIndex],
+            "journal_type": root.journalTypeValues[journalTypeFilter.currentIndex],
+            "project_id": root.favoriteProjectFilterId(),
+            "keyword_groups": root.selectedKeywordGroups
+        })
+    }
+
+    function containsValue(values, value) {
+        if(!values)
+            return false
+        for(let i = 0; i < values.length; i++) {
+            if(String(values[i]) === String(value))
+                return true
+        }
+        return false
+    }
+
+    function favoriteProjectFilterLabels() {
+        let labels = ["全部文献"]
+        for(let i = 0; i < literatureLibraryController.favoriteProjects.length; i++)
+            labels.push("收藏：" + literatureLibraryController.favoriteProjects[i].name)
+        return labels
+    }
+
+    function favoriteProjectFilterId() {
+        if(projectFilter.currentIndex <= 0)
+            return "all"
+        let index = projectFilter.currentIndex - 1
+        if(index >= 0 && index < literatureLibraryController.favoriteProjects.length)
+            return literatureLibraryController.favoriteProjects[index].id
+        return "all"
     }
 
     function selectedKeywordGroupsText() {
@@ -697,6 +811,181 @@ Item {
                 color: theme.textMuted
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
+            }
+        }
+    }
+
+    Popup {
+        id: createProjectPopup
+        parent: Overlay.overlay
+        modal: true
+        focus: true
+        width: Math.min(360, root.width - 64)
+        height: 160
+        x: (root.width - width) / 2
+        y: (root.height - height) / 2
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        padding: 0
+
+        background: Rectangle {
+            color: theme.surface
+            radius: theme.radiusMedium
+            border.color: theme.border
+        }
+
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 16
+            spacing: 10
+
+            Text {
+                Layout.fillWidth: true
+                text: "新建收藏分类"
+                color: theme.text
+                font.weight: Font.Bold
+            }
+            TextField {
+                id: newProjectName
+                Layout.fillWidth: true
+                placeholderText: "分类名称"
+                selectByMouse: true
+                onAccepted: {
+                    literatureLibraryController.createFavoriteProject(text)
+                    text = ""
+                    createProjectPopup.close()
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Item { Layout.fillWidth: true }
+                PillButton {
+                    text: "取消"
+                    onClicked: createProjectPopup.close()
+                }
+                PillButton {
+                    text: "创建"
+                    primary: true
+                    enabled: newProjectName.text.trim().length > 0
+                    onClicked: {
+                        literatureLibraryController.createFavoriteProject(newProjectName.text)
+                        newProjectName.text = ""
+                        createProjectPopup.close()
+                    }
+                }
+            }
+        }
+    }
+
+    Popup {
+        id: comparePopup
+        parent: Overlay.overlay
+        modal: true
+        focus: true
+        width: Math.min(900, root.width - 64)
+        height: Math.min(560, root.height - 64)
+        x: (root.width - width) / 2
+        y: (root.height - height) / 2
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        padding: 0
+
+        background: Rectangle {
+            color: theme.surface
+            radius: theme.radiusMedium
+            border.color: theme.border
+        }
+
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 16
+            spacing: 10
+
+            RowLayout {
+                Layout.fillWidth: true
+                Text {
+                    Layout.fillWidth: true
+                    text: "文献对比 " + literatureLibraryController.compareCount + "/4"
+                    color: theme.text
+                    font.pixelSize: theme.baseFontSize + 5
+                    font.weight: Font.Bold
+                    elide: Text.ElideRight
+                }
+                PillButton {
+                    text: "清空对比"
+                    enabled: literatureLibraryController.compareCount > 0
+                    onClicked: literatureLibraryController.clearCompare()
+                }
+                PillButton {
+                    text: "关闭"
+                    onClicked: comparePopup.close()
+                }
+            }
+
+            ScrollView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                ColumnLayout {
+                    width: comparePopup.width - 32
+                    spacing: 8
+                    Repeater {
+                        model: literatureLibraryController.compareRecords
+                        delegate: Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 176
+                            radius: 8
+                            color: theme.surfaceSoft
+                            border.color: theme.border
+                            ColumnLayout {
+                                anchors.fill: parent
+                                anchors.margins: 10
+                                spacing: 5
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: modelData.title || "Untitled"
+                                        color: theme.text
+                                        font.weight: Font.DemiBold
+                                        elide: Text.ElideRight
+                                    }
+                                    PillButton {
+                                        text: "移出"
+                                        onClicked: literatureLibraryController.removeCompare(modelData.recordId)
+                                    }
+                                }
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: (modelData.authorsText || "Unknown authors") + "  路  " + (modelData.year || "n.d.")
+                                    color: theme.textMuted
+                                    elide: Text.ElideRight
+                                }
+                                GridLayout {
+                                    Layout.fillWidth: true
+                                    columns: 4
+                                    columnSpacing: 8
+                                    rowSpacing: 4
+                                    Text { text: "类型"; color: theme.textMuted }
+                                    Text { text: modelData.journalTypeLabel || "-"; color: theme.text; elide: Text.ElideRight; Layout.fillWidth: true }
+                                    Text { text: "期刊"; color: theme.textMuted }
+                                    Text { text: modelData.journalName || modelData.source || "-"; color: theme.text; elide: Text.ElideRight; Layout.fillWidth: true }
+                                    Text { text: "相关性"; color: theme.textMuted }
+                                    Text { text: (modelData.relevanceLabel || "-") + " / " + String(modelData.relevance_score || 0); color: theme.accent; elide: Text.ElideRight; Layout.fillWidth: true }
+                                    Text { text: "PDF"; color: theme.textMuted }
+                                    Text { text: modelData.downloaded ? "已下载" : "未下载"; color: modelData.downloaded ? theme.success : theme.warning; elide: Text.ElideRight; Layout.fillWidth: true }
+                                    Text { text: "关键词"; color: theme.textMuted }
+                                    Text { text: modelData.matchedKeywordsText || "-"; color: theme.text; elide: Text.ElideRight; Layout.fillWidth: true }
+                                    Text { text: "命中字段"; color: theme.textMuted }
+                                    Text { text: modelData.matchedFieldsText || "-"; color: theme.text; elide: Text.ElideRight; Layout.fillWidth: true }
+                                    Text { text: "DOI"; color: theme.textMuted }
+                                    Text { text: modelData.doi || "-"; color: theme.text; elide: Text.ElideRight; Layout.fillWidth: true }
+                                    Text { text: "本地 PDF"; color: theme.textMuted }
+                                    Text { text: modelData.localPdfPath || "-"; color: theme.text; elide: Text.ElideRight; Layout.fillWidth: true }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }

@@ -11,6 +11,7 @@ Item {
     property int delay: 0
     property int timeout: 0
     property int maxWidth: 320
+    readonly property int horizontalPadding: 42
     property bool active: false
     Theme { id: theme }
 
@@ -52,7 +53,7 @@ Item {
         visible: root.active && !!root.target && root.text.length > 0
         x: !root.target ? 0 : root.placement === "bottom" ? (root.target.width - width) / 2 : root.target.width + root.gap
         y: !root.target ? 0 : root.placement === "bottom" ? root.target.height + root.gap : (root.target.height - height) / 2
-        width: Math.min(root.maxWidth, labelMetrics.advanceWidth + 28)
+        width: Math.min(root.maxWidth, Math.ceil(labelMetrics.advanceWidth) + root.horizontalPadding)
         height: Math.max(34, label.paintedHeight + 18)
 
         enter: Transition {
