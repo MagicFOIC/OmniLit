@@ -68,6 +68,11 @@ Workspace/Translate/out/
 Workspace/Translate/*.pdf
 Workspace/ui/avatar-*
 Workspace/updates/
+Workspace/Download/library_state.json
+Workspace/Literature/graphs/
+Workspace/Literature/extractions/
+Workspace/task_state/
+Workspace/updates/
 
 qml_preview_*.png
 smoke_exe/
