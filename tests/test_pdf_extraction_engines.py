@@ -47,7 +47,7 @@ class PdfExtractionEngineTests(unittest.TestCase):
         class CloudEngine(FakeEngine):
             def analyze(self, pdf_path: Path, output_dir: Path, options: dict[str, Any] | None = None) -> dict[str, Any]:
                 index = super().analyze(pdf_path, output_dir, options)
-                index["parserConfigVersion"] = "cloud-api-v1"
+                index["parserConfigVersion"] = "cloud-api-v2"
                 index["providerMode"] = "cloud-api"
                 return index
 
@@ -59,7 +59,7 @@ class PdfExtractionEngineTests(unittest.TestCase):
 
             index = pipeline.analyze(pdf_path, root / "out", {"engine": "paddleocr_vl"})
 
-            self.assertEqual(index["parserConfigVersion"], "cloud-api-v1")
+            self.assertEqual(index["parserConfigVersion"], "cloud-api-v2")
             self.assertEqual(index["providerMode"], "cloud-api")
 
     def test_pymupdf_engine_outputs_version_3(self) -> None:

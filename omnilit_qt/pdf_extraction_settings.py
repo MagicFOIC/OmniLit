@@ -3,7 +3,6 @@ from __future__ import annotations
 import importlib.util
 import os
 import re
-from pathlib import Path
 from typing import Any
 
 from .secrets import protect_secret, unprotect_secret
@@ -13,14 +12,10 @@ SECRET_PATTERN = re.compile(r"(?i)\b(api[_-]?key|token|password|secret|authoriza
 JWT_PATTERN = re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b")
 SIGNED_URL_PATTERN = re.compile(r"(https?://[^\s?#]+)\?[^\s]+", re.IGNORECASE)
 
-PARSER_CONFIG_VERSION = "cloud-api-v1"
+PARSER_CONFIG_VERSION = "cloud-api-v2"
 MINERU_API_URL_DEFAULT = "https://mineru.net/api/v4"
-PADDLEOCR_API_URL_DEFAULT = ""
+PADDLEOCR_API_URL_DEFAULT = "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs"
 PARSER_SETTING_PREFIX = "pdf_parser/"
-LEGACY_TOKEN_PATHS = {
-    "mineru": Path(r"D:\Tool\Java\API\Mineru.txt"),
-    "paddleocr_vl": Path(r"D:\Tool\Java\API\PaddleOCR.txt"),
-}
 
 
 def redact_sensitive_text(value: Any) -> str:
@@ -49,8 +44,20 @@ def parser_service_enabled(store: Any | None, engine: str) -> bool:
 
 def parser_api_url(store: Any | None, engine: str) -> str:
     if engine == "mineru":
-        return os.environ.get("OMNILIT_MINERU_API_URL", "").strip() or parser_setting(store, "mineru/api_url", MINERU_API_URL_DEFAULT).strip() or MINERU_API_URL_DEFAULT
+        value = os.environ.get("OMNILIT_MINERU_API_URL", "").strip() or parser_setting(store, "mineru/api_url", MINERU_API_URL_DEFAULT).strip() or MINERU_API_URL_DEFAULT
+        return normalize_parser_api_url(engine, value)
     return os.environ.get("OMNILIT_PADDLEOCR_VL_URL", "").strip() or parser_setting(store, "paddleocr_vl/api_url", PADDLEOCR_API_URL_DEFAULT).strip() or PADDLEOCR_API_URL_DEFAULT
+
+
+def normalize_parser_api_url(engine: str, api_url: str) -> str:
+    value = str(api_url or "").strip().rstrip("/")
+    if engine != "mineru":
+        return value
+    # The MinerU client uses the batch API and appends these routes itself.
+    for suffix in ("/file-urls/batch", "/extract/task"):
+        if value.lower().endswith(suffix):
+            return value[: -len(suffix)].rstrip("/")
+    return value
 
 
 def parser_api_token(store: Any | None, engine: str) -> str:
@@ -68,7 +75,7 @@ def parser_api_token(store: Any | None, engine: str) -> str:
 
 
 def save_parser_service(store: Any, engine: str, api_url: str, token: str, enabled: bool) -> None:
-    set_parser_setting(store, f"{engine}/api_url", api_url.strip())
+    set_parser_setting(store, f"{engine}/api_url", normalize_parser_api_url(engine, api_url))
     set_parser_setting(store, f"{engine}/enabled", "1" if enabled else "0")
     if token.strip():
         set_parser_setting(store, f"{engine}/token", protect_secret(token.strip()))
@@ -77,26 +84,6 @@ def save_parser_service(store: Any, engine: str, api_url: str, token: str, enabl
 def clear_parser_token(store: Any, engine: str) -> None:
     if hasattr(store, "delete_setting"):
         store.delete_setting(PARSER_SETTING_PREFIX + f"{engine}/token")
-
-
-def import_legacy_parser_tokens(store: Any | None) -> dict[str, bool]:
-    result = {"mineru": False, "paddleocr_vl": False}
-    if store is None or parser_setting(store, "legacy_tokens_imported", "") == "1":
-        return result
-    for engine, default_path in LEGACY_TOKEN_PATHS.items():
-        if parser_api_token(store, engine):
-            continue
-        env_name = "OMNILIT_MINERU_TOKEN_FILE" if engine == "mineru" else "OMNILIT_PADDLEOCR_TOKEN_FILE"
-        path = Path(os.environ.get(env_name, "").strip() or default_path)
-        try:
-            token = path.read_text(encoding="utf-8-sig").strip()
-        except OSError:
-            token = ""
-        if token:
-            set_parser_setting(store, f"{engine}/token", protect_secret(token))
-            result[engine] = True
-    set_parser_setting(store, "legacy_tokens_imported", "1")
-    return result
 
 
 def normalize_engine_id(value: str) -> str:
@@ -113,11 +100,7 @@ def normalize_engine_id(value: str) -> str:
     return aliases.get(s, s)
 
 
-def engine_status(runtime_manager: Any | None = None, store: Any | None = None) -> dict[str, dict[str, Any]]:
-    if runtime_manager is None:
-        from .parser_runtime_manager import ParserRuntimeManager
-
-        runtime_manager = ParserRuntimeManager()
+def engine_status(store: Any | None = None) -> dict[str, dict[str, Any]]:
     return {
         "pymupdf": _pymupdf_status(),
         "paddleocr_vl": _cloud_status(store, "paddleocr_vl", "PaddleOCR-VL"),
@@ -127,11 +110,11 @@ def engine_status(runtime_manager: Any | None = None, store: Any | None = None) 
 
 def _cloud_status(store: Any | None, engine: str, label: str) -> dict[str, Any]:
     if not parser_service_enabled(store, engine):
-        return {"available": False, "installable": False, "status": "off", "message": f"{label} cloud API is disabled."}
-    configured = bool(parser_api_token(store, engine) and parser_api_url(store, engine))
+        return {"available": False, "status": "off", "message": f"{label} cloud API is disabled."}
+    api_url = parser_api_url(store, engine)
+    configured = bool(parser_api_token(store, engine) and api_url)
     return {
         "available": configured,
-        "installable": False,
         "status": "ready" if configured else "not_configured",
         "message": f"{label} cloud API is configured." if configured else f"Configure the {label} API URL and token in system settings.",
     }
@@ -139,40 +122,8 @@ def _cloud_status(store: Any | None, engine: str, label: str) -> dict[str, Any]:
 
 def _pymupdf_status() -> dict[str, Any]:
     if importlib.util.find_spec("fitz") is not None:
-        return {"available": True, "installable": False, "status": "ready", "message": "可用"}
-    return {"available": False, "installable": False, "status": "missing", "message": "未安装 PyMuPDF"}
-
-
-def _paddleocr_vl_status(runtime_status: dict[str, Any]) -> dict[str, Any]:
-    mode = os.environ.get("OMNILIT_PADDLEOCR_VL_MODE", "auto").strip().lower() or "auto"
-    enabled = _env_bool("OMNILIT_PADDLEOCR_VL_ENABLED", True)
-    if not enabled or mode == "off":
-        return {"available": False, "installable": False, "status": "off", "message": "PaddleOCR-VL 高精度引擎已禁用。"}
-    if mode in {"auto", "service", "subprocess", "cli"}:
-        return {
-            "available": bool(runtime_status.get("available")),
-            "installable": bool(runtime_status.get("installable")),
-            "status": str(runtime_status.get("status") or "not_initialized"),
-            "message": str(runtime_status.get("message") or "PaddleOCR-VL 高精度引擎未初始化。"),
-        }
-    return {"available": False, "installable": False, "status": "invalid", "message": f"不支持的 PaddleOCR-VL 模式：{mode}"}
-
-
-def _mineru_status(runtime_status: dict[str, Any]) -> dict[str, Any]:
-    mode = os.environ.get("OMNILIT_MINERU_MODE", "auto").strip().lower() or "auto"
-    enabled = _env_bool("OMNILIT_MINERU_ENABLED", True)
-    if not enabled or mode == "off":
-        return {"available": False, "installable": False, "status": "off", "message": "MinerU 深度解析组件已禁用。"}
-    if mode in {"auto", "cli"}:
-        return {
-            "available": bool(runtime_status.get("available")),
-            "installable": bool(runtime_status.get("installable")),
-            "status": str(runtime_status.get("status") or "installable"),
-            "message": str(runtime_status.get("message") or "MinerU 深度解析组件未安装，可自动初始化。"),
-        }
-    if mode == "api":
-        return {"available": False, "installable": False, "status": "reserved", "message": "MinerU API 模式已预留，当前仅支持 CLI。"}
-    return {"available": False, "installable": False, "status": "invalid", "message": f"不支持的 MinerU 模式：{mode}"}
+        return {"available": True, "status": "ready", "message": "可用"}
+    return {"available": False, "status": "missing", "message": "未安装 PyMuPDF"}
 
 
 def _env_bool(name: str, default: bool) -> bool:

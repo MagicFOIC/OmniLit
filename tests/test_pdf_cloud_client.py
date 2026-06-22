@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import tempfile
+import threading
 import unittest
 import zipfile
 from pathlib import Path
+from unittest.mock import Mock
 
-from omnilit_qt.pdf_cloud_client import CloudAPIError, safe_extract_zip, sanitize_url
+import requests
+
+from omnilit_qt.pdf_cloud_client import CloudAPIClient, CloudAPICancelled, CloudAPIError, safe_extract_zip, sanitize_url
 
 
 class PdfCloudClientTests(unittest.TestCase):
@@ -35,6 +39,39 @@ class PdfCloudClientTests(unittest.TestCase):
 
     def test_sanitize_url_removes_signed_query(self) -> None:
         self.assertEqual(sanitize_url("https://files.example/a.zip?signature=secret"), "https://files.example/a.zip")
+
+    def test_authentication_and_quota_errors_have_stable_codes(self) -> None:
+        for status, code in ((401, "AUTH_FAILED"), (403, "AUTH_FAILED"), (429, "QUOTA_EXCEEDED")):
+            response = requests.Response()
+            response.status_code = status
+            response._content = b"{}"
+            session = Mock()
+            session.request.return_value = response
+
+            with self.assertRaises(CloudAPIError) as raised:
+                CloudAPIClient("test", retries=0, session=session).request("GET", "https://api.example/test")
+
+            self.assertEqual(raised.exception.code, code)
+
+    def test_timeout_and_network_errors_have_stable_codes(self) -> None:
+        for error, code in ((requests.Timeout(), "TIMEOUT"), (requests.ConnectionError("offline"), "NETWORK_ERROR")):
+            session = Mock()
+            session.request.side_effect = error
+
+            with self.assertRaises(CloudAPIError) as raised:
+                CloudAPIClient("test", retries=0, session=session).request("GET", "https://api.example/test")
+
+            self.assertEqual(raised.exception.code, code)
+
+    def test_cancelled_request_never_reaches_network(self) -> None:
+        cancel_event = threading.Event()
+        cancel_event.set()
+        session = Mock()
+
+        with self.assertRaises(CloudAPICancelled):
+            CloudAPIClient("test", cancel_event=cancel_event, session=session).request("GET", "https://api.example/test")
+
+        session.request.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -5,14 +5,12 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .parser_runtime_manager import ParserRuntimeManager
 from .pdf_cloud_client import CloudAPIClient, CloudAPIError, join_api_url, safe_extract_zip
 from .pdf_extraction_schema import make_base_index, make_element, normalize_bbox
 from .pdf_extraction_settings import (
@@ -20,7 +18,6 @@ from .pdf_extraction_settings import (
     parser_api_token,
     parser_api_url,
     parser_service_enabled,
-    redact_sensitive_text,
 )
 from .pdf_extraction_table_utils import html_table_to_rows, markdown_table_to_rows, table_to_rows
 
@@ -32,9 +29,6 @@ class EngineUnavailable(RuntimeError):
 @dataclass(frozen=True)
 class MinerUConfig:
     enabled: bool
-    mode: str
-    command: str
-    python: str
     api_url: str
     timeout: float
     backend: str
@@ -46,9 +40,6 @@ class MinerUConfig:
     def from_env(cls, store: Any | None = None) -> "MinerUConfig":
         return cls(
             enabled=parser_service_enabled(store, "mineru"),
-            mode=os.environ.get("OMNILIT_MINERU_MODE", "api").strip().lower() or "api",
-            command=os.environ.get("OMNILIT_MINERU_COMMAND", "mineru").strip() or "mineru",
-            python=os.environ.get("OMNILIT_MINERU_PYTHON", "").strip(),
             api_url=parser_api_url(store, "mineru"),
             timeout=_env_float("OMNILIT_MINERU_TIMEOUT", 900.0),
             backend=os.environ.get("OMNILIT_MINERU_BACKEND", "pipeline").strip() or "pipeline",
@@ -60,79 +51,28 @@ class MinerUConfig:
 class MinerUExtractionEngine:
     name = "mineru"
 
-    def __init__(self, config: MinerUConfig | None = None, runtime_manager: ParserRuntimeManager | None = None, store: Any | None = None) -> None:
+    def __init__(self, config: MinerUConfig | None = None, store: Any | None = None) -> None:
         self.config = config or MinerUConfig.from_env(store)
-        self.runtime_manager = runtime_manager or ParserRuntimeManager()
-        self._runtime_info: dict[str, Any] = {}
-        self._runtime_warnings: list[dict[str, str]] = []
 
     def is_available(self) -> bool:
         return bool(self.availability().get("available"))
 
     def availability(self) -> dict[str, Any]:
-        if not self.config.enabled or self.config.mode == "off":
-            return {"available": False, "installable": False, "status": "off", "message": "MinerU deep parser is disabled."}
-        if self.config.mode == "api":
-            configured = bool(self.config.api_token and self.config.api_url)
-            return {
-                "available": configured,
-                "installable": False,
-                "status": "ready" if configured else "not_configured",
-                "message": "MinerU cloud API is configured." if configured else "Configure the MinerU API token in system settings.",
-            }
-        if self.config.mode not in {"auto", "cli"}:
-            return {"available": False, "installable": False, "status": "invalid", "message": f"Unsupported MinerU mode: {self.config.mode}"}
-        if self.config.python:
-            exists = Path(self.config.python).exists()
-            info = {
-                "available": exists,
-                "installable": False,
-                "status": "ready" if exists else "missing",
-                "python": self.config.python if exists else "",
-                "command": "",
-                "message": "MinerU configured Python is available." if exists else "MinerU configured Python does not exist.",
-            }
-        elif self.config.mode == "cli":
-            available = _command_exists(self.config.command)
-            info = {
-                "available": available,
-                "installable": False,
-                "status": "ready" if available else "missing",
-                "python": "",
-                "command": self.config.command if available else "",
-                "message": "MinerU CLI is available." if available else "mineru command not found.",
-            }
-        else:
-            info = self.runtime_manager.check_mineru_available()
-        self._runtime_info = dict(info)
-        return dict(info)
+        if not self.config.enabled:
+            return {"available": False, "status": "off", "message": "MinerU deep parser is disabled."}
+        configured = bool(self.config.api_token and self.config.api_url)
+        return {
+            "available": configured,
+            "status": "ready" if configured else "not_configured",
+            "message": "MinerU cloud API is configured." if configured else "Configure the MinerU API token in system settings.",
+        }
 
     def analyze(self, pdf_path: Path, output_dir: Path, options: dict[str, Any] | None = None) -> dict[str, Any]:
         options = dict(options or {})
-        runtime_info = self.availability()
-        if self.config.mode == "api":
-            if not runtime_info.get("available"):
-                raise EngineUnavailable(str(runtime_info.get("message") or "MinerU API is not configured."))
-            return self._analyze_api(pdf_path, output_dir, options)
-        if not runtime_info.get("available") and runtime_info.get("installable") and self.config.mode == "auto":
-            callback = options.get("runtime_progress_callback")
-            runtime_info = self.runtime_manager.ensure_mineru_runtime(callback if callable(callback) else None)
-        if not runtime_info.get("available"):
-            raise EngineUnavailable(str(runtime_info.get("message") or "MinerU automatic initialization failed; fell back to PyMuPDF."))
-
-        source = Path(pdf_path).expanduser().resolve()
-        if not source.exists():
-            raise FileNotFoundError(f"PDF file does not exist: {source}")
-
-        engine_dir = Path(output_dir) / self.name
-        raw_dir = engine_dir / "mineru_raw"
-        engine_dir.mkdir(parents=True, exist_ok=True)
-        raw_dir.mkdir(parents=True, exist_ok=True)
-        self._runtime_warnings = []
-        self._run_cli(source, engine_dir, raw_dir, options, runtime_info)
-        index = self._to_index(source, Path(output_dir), engine_dir, raw_dir)
-        index.setdefault("engineErrors", []).extend(self._runtime_warnings)
-        return index
+        availability = self.availability()
+        if not availability.get("available"):
+            raise EngineUnavailable(str(availability.get("message") or "MinerU API is not configured."))
+        return self._analyze_api(pdf_path, output_dir, options)
 
     def _analyze_api(self, pdf_path: Path, output_dir: Path, options: dict[str, Any]) -> dict[str, Any]:
         source = Path(pdf_path).expanduser().resolve()
@@ -144,7 +84,7 @@ class MinerUExtractionEngine:
         if raw_dir.exists():
             shutil.rmtree(raw_dir)
         raw_dir.mkdir(parents=True, exist_ok=True)
-        callback = options.get("runtime_progress_callback")
+        callback = options.get("progress_callback")
         cancel_event = options.get("cancel_event")
         client = CloudAPIClient(
             self.name,
@@ -222,64 +162,6 @@ class MinerUExtractionEngine:
         index["providerMode"] = "cloud-api"
         client.notify(100, "MinerU 云解析完成。")
         return index
-
-    def _run_cli(self, pdf_path: Path, engine_dir: Path, raw_dir: Path, options: dict[str, Any], runtime_info: dict[str, Any]) -> None:
-        backend = str(options.get("mineru_backend") or self.config.backend or "pipeline")
-        log_path = Path(options.get("record_dir") or engine_dir.parent) / "logs" / "mineru_run.log"
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        python = self.config.python or str(runtime_info.get("python") or "")
-        command = str(runtime_info.get("command") or self.config.command or "mineru")
-        if python:
-            cmd = [
-                python,
-                "-m",
-                "omnilit_qt.tools.mineru_worker",
-                "--input",
-                str(pdf_path),
-                "--output",
-                str(engine_dir),
-                "--backend",
-                backend,
-                "--command",
-                command,
-            ]
-        else:
-            cmd = [command, "-p", str(pdf_path), "-o", str(raw_dir)]
-            if backend:
-                cmd.extend(["-b", backend])
-        try:
-            completed = subprocess.run(cmd, capture_output=True, text=True, timeout=self.config.timeout, check=False)
-        except subprocess.TimeoutExpired as exc:
-            _append_log(log_path, f"MinerU timed out after {self.config.timeout:g}s\n")
-            if _has_usable_mineru_outputs(raw_dir):
-                self._runtime_warnings.append(
-                    {
-                        "engine": self.name,
-                        "level": "warning",
-                        "code": "TIMEOUT_WITH_OUTPUT",
-                        "message": f"MinerU timed out after {self.config.timeout:g}s, but parseable output was recovered.",
-                        "type": "EngineWarning",
-                    }
-                )
-                return
-            raise EngineUnavailable(f"MinerU timed out after {self.config.timeout:g}s") from exc
-        except OSError as exc:
-            raise EngineUnavailable(f"Unable to start MinerU: {exc}") from exc
-        _append_log(log_path, f"$ {' '.join(cmd)}\nSTDOUT\n{redact_sensitive_text(completed.stdout)}\nSTDERR\n{redact_sensitive_text(completed.stderr)}\n")
-        if completed.returncode != 0:
-            detail = redact_sensitive_text((completed.stderr or completed.stdout or "").strip())
-            if _has_usable_mineru_outputs(raw_dir):
-                self._runtime_warnings.append(
-                    {
-                        "engine": self.name,
-                        "level": "warning",
-                        "code": "NONZERO_WITH_OUTPUT",
-                        "message": f"MinerU exited with code {completed.returncode}, but parseable output was recovered: {detail}",
-                        "type": "EngineWarning",
-                    }
-                )
-                return
-            raise EngineUnavailable(f"MinerU failed with exit code {completed.returncode}: {detail}")
 
     def _to_index(self, pdf_path: Path, output_dir: Path, engine_dir: Path, raw_dir: Path) -> dict[str, Any]:
         pages = _extract_pdf_pages(pdf_path)
@@ -753,31 +635,6 @@ def _write_json(engine_dir: Path, element_id: str, value: Any) -> Path:
     return path
 
 
-def _append_log(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(text)
-
-
-def _has_usable_mineru_outputs(raw_dir: Path) -> bool:
-    discovered = discover_mineru_outputs(raw_dir)
-    for path in select_mineru_json_files(discovered["json_files"]):
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        if payload:
-            return True
-    return any(path.stat().st_size > 0 for path in discovered["markdown_files"] if path.exists())
-
-
-def _env_bool(name: str, default: bool) -> bool:
-    value = os.environ.get(name)
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on", "auto"}
-
-
 def _env_float(name: str, default: float) -> float:
     try:
         return float(os.environ.get(name, default))
@@ -793,12 +650,3 @@ def _mineru_response_data(payload: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise CloudAPIError("MinerU returned an invalid response.", code="INVALID_RESPONSE")
     return data
-
-
-def _command_exists(command: str) -> bool:
-    if not command:
-        return False
-    path = Path(command)
-    if path.parent != Path("."):
-        return path.exists()
-    return shutil.which(command) is not None

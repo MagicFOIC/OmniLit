@@ -1,106 +1,93 @@
 from __future__ import annotations
 
 import os
-import sys
-import tempfile
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 
 from omnilit_qt.pdf_extraction_settings import (
-    import_legacy_parser_tokens,
-    parser_api_token,
+    MINERU_API_URL_DEFAULT,
+    PADDLEOCR_API_URL_DEFAULT,
     engine_status,
+    normalize_parser_api_url,
+    parser_api_token,
+    parser_api_url,
     redact_sensitive_text,
+    save_parser_service,
 )
 
 
-class FakeRuntimeStatus:
-    def __init__(self, paddle: dict | None = None, mineru: dict | None = None) -> None:
-        self.paddle = paddle or {"available": False, "installable": False, "status": "not_initialized", "message": "not initialized"}
-        self.mineru = mineru or {"available": False, "installable": True, "status": "installable", "message": "installable"}
+class Store:
+    def __init__(self) -> None:
+        self.values: dict[str, str] = {}
 
-    def check_paddleocr_vl_available(self) -> dict:
-        return dict(self.paddle)
+    def setting(self, key: str, default: str = "") -> str:
+        return self.values.get(key, default)
 
-    def check_mineru_available(self) -> dict:
-        return dict(self.mineru)
+    def set_setting(self, key: str, value: str) -> None:
+        self.values[key] = value
 
 
 class PdfExtractionSettingsTests(unittest.TestCase):
-    def test_legacy_tokens_are_imported_once_and_encrypted(self) -> None:
-        class Store:
-            def __init__(self) -> None:
-                self.values: dict[str, str] = {}
+    def test_official_api_urls_are_the_defaults(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(parser_api_url(None, "mineru"), MINERU_API_URL_DEFAULT)
+            self.assertEqual(parser_api_url(None, "paddleocr_vl"), PADDLEOCR_API_URL_DEFAULT)
+        self.assertEqual(PADDLEOCR_API_URL_DEFAULT, "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs")
 
-            def setting(self, key: str, default: str = "") -> str:
-                return self.values.get(key, default)
-
-            def set_setting(self, key: str, value: str) -> None:
-                self.values[key] = value
-
-        with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp)
-            mineru = root / "Mineru.txt"
-            paddle = root / "PaddleOCR.txt"
-            mineru.write_text("mineru-secret", encoding="utf-8")
-            paddle.write_text("paddle-secret", encoding="utf-8")
-            store = Store()
-            with patch("omnilit_qt.pdf_extraction_settings.LEGACY_TOKEN_PATHS", {"mineru": mineru, "paddleocr_vl": paddle}), patch.dict(os.environ, {}, clear=True):
-                imported = import_legacy_parser_tokens(store)
-                mineru.write_text("changed", encoding="utf-8")
-                second = import_legacy_parser_tokens(store)
-
-            self.assertEqual(imported, {"mineru": True, "paddleocr_vl": True})
-            self.assertEqual(second, {"mineru": False, "paddleocr_vl": False})
-            self.assertNotIn("mineru-secret", store.values["pdf_parser/mineru/token"])
-            self.assertEqual(parser_api_token(store, "mineru"), "mineru-secret")
-
-    def test_engine_status_defaults_keep_optional_engines_soft_available(self) -> None:
-        with patch.dict("os.environ", {}, clear=True):
-            status = engine_status(FakeRuntimeStatus())
-
-        self.assertIn("pymupdf", status)
-        self.assertFalse(status["paddleocr_vl"]["available"])
-        self.assertEqual(status["paddleocr_vl"]["status"], "not_configured")
-        self.assertFalse(status["mineru"]["available"])
-        self.assertFalse(status["mineru"]["installable"])
-
-    def test_paddleocr_status_uses_env_api_key_without_exposing_value(self) -> None:
-        runtime = FakeRuntimeStatus(
-            paddle={"available": True, "installable": False, "status": "service", "message": "service available with API Key from env"}
+    def test_mineru_endpoint_is_normalized_to_batch_api_root(self) -> None:
+        self.assertEqual(
+            normalize_parser_api_url("mineru", "https://mineru.net/api/v4/extract/task"),
+            "https://mineru.net/api/v4",
         )
+        self.assertEqual(
+            normalize_parser_api_url("mineru", "https://mineru.net/api/v4/file-urls/batch"),
+            "https://mineru.net/api/v4",
+        )
+
+    def test_environment_values_override_encrypted_saved_settings(self) -> None:
+        store = Store()
+        save_parser_service(store, "mineru", "https://saved.example/api/v4", "saved-token", True)
+
         with patch.dict(
-            "os.environ",
+            os.environ,
             {
-                "OMNILIT_PADDLEOCR_VL_ENABLED": "1",
-                "OMNILIT_PADDLEOCR_VL_MODE": "service",
-                "OMNILIT_PADDLEOCR_VL_PYTHON": sys.executable,
-                "OMNILIT_PADDLEOCR_VL_URL": "http://127.0.0.1:8118/v1",
-                "OMNILIT_PADDLEOCR_VL_API_KEY": "secret-value",
+                "OMNILIT_MINERU_API_URL": "https://env.example/api/v4",
+                "OMNILIT_MINERU_API_TOKEN": "env-token",
             },
             clear=True,
         ):
-            status = engine_status(runtime)
+            self.assertEqual(parser_api_url(store, "mineru"), "https://env.example/api/v4")
+            self.assertEqual(parser_api_token(store, "mineru"), "env-token")
 
+        self.assertNotIn("saved-token", store.values["pdf_parser/mineru/token"])
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(parser_api_token(store, "mineru"), "saved-token")
+
+    def test_engine_status_reports_cloud_configuration_without_exposing_tokens(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "OMNILIT_MINERU_API_TOKEN": "mineru-secret",
+                "OMNILIT_PADDLEOCR_VL_API_KEY": "paddle-secret",
+            },
+            clear=True,
+        ):
+            status = engine_status()
+
+        self.assertTrue(status["mineru"]["available"])
         self.assertTrue(status["paddleocr_vl"]["available"])
-        self.assertIn("configured", status["paddleocr_vl"]["message"])
-        self.assertNotIn("secret-value", status["paddleocr_vl"]["message"])
+        self.assertNotIn("installable", status["mineru"])
+        self.assertNotIn("mineru-secret", str(status))
+        self.assertNotIn("paddle-secret", str(status))
 
-    def test_mineru_cloud_api_requires_token(self) -> None:
-        runtime = FakeRuntimeStatus(mineru={"available": False, "installable": False, "status": "missing", "message": "找不到 mineru 命令"})
-        with patch.dict(
-            "os.environ",
-            {
-                "OMNILIT_MINERU_ENABLED": "1",
-                "OMNILIT_MINERU_MODE": "api",
-            },
-            clear=True,
-        ):
-            status = engine_status(runtime)
+    def test_engine_status_requires_tokens(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            status = engine_status()
 
         self.assertFalse(status["mineru"]["available"])
-        self.assertIn("MinerU", status["mineru"]["message"])
+        self.assertFalse(status["paddleocr_vl"]["available"])
+        self.assertEqual(status["mineru"]["status"], "not_configured")
+        self.assertEqual(status["paddleocr_vl"]["status"], "not_configured")
 
     def test_redact_sensitive_text_masks_common_secret_fields(self) -> None:
         text = "api_key=abc token:xyz password = hunter2 Authorization: Bearer eyJheader.payload.signature https://files.test/a.zip?signature=secret normal=value"

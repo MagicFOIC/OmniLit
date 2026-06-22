@@ -1,213 +1,143 @@
 from __future__ import annotations
 
 import json
-import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Any
 from unittest.mock import patch
 
-from omnilit_qt.pdf_cloud_client import CloudAPIClient
-from omnilit_qt.pdf_extraction_engines import HybridExtractionPipeline
+from omnilit_qt.pdf_cloud_client import CloudAPIClient, CloudAPIError
 from omnilit_qt.pdf_extraction_paddleocr_vl import (
-    EngineUnavailable,
     PaddleOCRVLConfig,
     PaddleOCRVLExtractionEngine,
+    _parse_paddle_jsonl,
     html_table_to_rows,
     markdown_table_to_rows,
 )
-from omnilit_qt.pdf_extraction_schema import make_base_index
 
 
-class FakeFallbackEngine:
-    name = "pymupdf"
-
-    def is_available(self) -> bool:
-        return True
-
-    def analyze(self, pdf_path: Path, output_dir: Path, options: dict[str, Any] | None = None) -> dict[str, Any]:
-        index = make_base_index(pdf_path, output_dir, self.name, page_count=1)
-        index["pages"] = [{"page": 0, "width": 100.0, "height": 120.0, "rect": [0.0, 0.0, 100.0, 120.0]}]
-        return index
+def _jsonl_payload(image_path: str = "assets/figure.png") -> str:
+    return json.dumps(
+        {
+            "result": {
+                "layoutParsingResults": [
+                    {
+                        "page": 0,
+                        "prunedResult": {
+                            "blocks": [
+                                {"label": "table", "coordinate": [1, 2, 30, 40], "markdown": "|A|B|\n|---|---|\n|1|2|"},
+                                {"label": "formula", "coordinate": [5, 50, 60, 70], "latex": "x+y"},
+                                {"label": "figure", "coordinate": [10, 75, 80, 100], "caption": "Figure 1"},
+                            ]
+                        },
+                        "markdown": {"text": "# Paper", "images": {image_path: "https://assets.example/figure.png"}},
+                        "outputImages": {"layout": "https://assets.example/layout.jpg"},
+                    }
+                ]
+            }
+        }
+    )
 
 
 class PaddleOCRVLExtractionEngineTests(unittest.TestCase):
-    def test_cloud_api_normalizes_layout_response_and_saves_images(self) -> None:
+    def _config(self, *, timeout: float = 30, poll_interval: float = 0) -> PaddleOCRVLConfig:
+        return PaddleOCRVLConfig(
+            enabled=True,
+            job_url="https://paddleocr.aistudio-app.com/api/v2/ocr/jobs",
+            model="PaddleOCR-VL-1.6",
+            timeout=timeout,
+            api_token="token-value",
+            poll_interval=poll_interval,
+        )
+
+    def test_cloud_api_submits_multipart_polls_jsonl_and_downloads_images(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             pdf_path = root / "sample.pdf"
             pdf_path.write_bytes(b"%PDF-1.4 mocked")
-            config = PaddleOCRVLConfig(True, "api", "https://paddle.example/layout-parsing", "model", "v1.6", "", 30, "token-value")
-            response = {
-                "errorCode": 0,
-                "result": {
-                    "layoutParsingResults": [
-                        {
-                            "page": 0,
-                            "prunedResult": {
-                                "blocks": [
-                                    {"label": "table", "coordinate": [1, 2, 30, 40], "markdown": "|A|B|\n|---|---|\n|1|2|"},
-                                    {"label": "formula", "coordinate": [5, 50, 60, 70], "latex": "x+y"},
-                                    {"label": "figure", "coordinate": [10, 75, 80, 100], "caption": "Figure 1"},
-                                ]
-                            },
-                            "markdown": {"text": "# Paper"},
-                            "outputImages": {"figure.png": "cG5n"},
-                        }
-                    ]
-                },
-            }
+            responses = [
+                {"data": {"jobId": "job-1"}},
+                {"data": {"state": "running", "extractProgress": {"totalPages": 1, "extractedPages": 0}}},
+                {"data": {"state": "done", "resultUrl": {"jsonUrl": "https://assets.example/result.jsonl"}}},
+            ]
 
-            with patch.object(CloudAPIClient, "request_json", return_value=response) as request_mock:
-                index = PaddleOCRVLExtractionEngine(config).analyze(pdf_path, root / "out")
+            def fake_download(client: CloudAPIClient, url: str, target: Path) -> Path:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(_jsonl_payload(), encoding="utf-8") if target.suffix == ".jsonl" else target.write_bytes(b"image")
+                return target
 
-            self.assertTrue(request_mock.called)
-            self.assertEqual(index["parserConfigVersion"], "cloud-api-v1")
+            with patch.object(CloudAPIClient, "request_json", side_effect=responses) as request_mock, patch.object(
+                CloudAPIClient, "download", autospec=True, side_effect=fake_download
+            ) as download_mock:
+                index = PaddleOCRVLExtractionEngine(self._config()).analyze(pdf_path, root / "out")
+
+            submit = request_mock.call_args_list[0]
+            self.assertEqual(submit.args[:2], ("POST", "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs"))
+            self.assertEqual(submit.kwargs["headers"]["Authorization"], "bearer token-value")
+            self.assertEqual(submit.kwargs["data"]["model"], "PaddleOCR-VL-1.6")
+            self.assertEqual(json.loads(submit.kwargs["data"]["optionalPayload"])["useChartRecognition"], False)
+            self.assertEqual(submit.kwargs["files"]["file"][0], "sample.pdf")
+            self.assertEqual(request_mock.call_args_list[1].args[1], "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs/job-1")
+            self.assertGreaterEqual(download_mock.call_count, 3)
+            self.assertEqual(index["parserConfigVersion"], "cloud-api-v2")
+            self.assertEqual(index["providerMode"], "cloud-api")
             self.assertEqual({item["type"] for item in index["elements"]}, {"table", "formula", "figure"})
-            figure = next(item for item in index["elements"] if item["type"] == "figure")
-            self.assertTrue(Path(figure["pngPath"]).exists())
+            self.assertEqual(Path(index["markdownPath"]).read_text(encoding="utf-8"), "# Paper")
+            self.assertTrue((root / "out" / "paddleocr_vl" / "assets" / "figure.png").exists())
 
-    def test_is_available_false_when_mode_off(self) -> None:
-        with patch.dict("os.environ", {"OMNILIT_PADDLEOCR_VL_MODE": "off"}, clear=True):
-            engine = PaddleOCRVLExtractionEngine()
-            self.assertFalse(engine.is_available())
+    def test_failed_job_raises_task_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            pdf_path = Path(temp) / "sample.pdf"
+            pdf_path.write_bytes(b"pdf")
+            responses = [{"data": {"jobId": "job-1"}}, {"data": {"state": "failed", "errorMsg": "bad document"}}]
+            with patch.object(CloudAPIClient, "request_json", side_effect=responses):
+                with self.assertRaisesRegex(CloudAPIError, "bad document") as raised:
+                    PaddleOCRVLExtractionEngine(self._config()).analyze(pdf_path, Path(temp) / "out")
+            self.assertEqual(raised.exception.code, "TASK_FAILED")
+
+    def test_unknown_job_state_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            pdf_path = Path(temp) / "sample.pdf"
+            pdf_path.write_bytes(b"pdf")
+            responses = [{"data": {"jobId": "job-1"}}, {"data": {"state": "mystery"}}]
+            with patch.object(CloudAPIClient, "request_json", side_effect=responses):
+                with self.assertRaises(CloudAPIError) as raised:
+                    PaddleOCRVLExtractionEngine(self._config()).analyze(pdf_path, Path(temp) / "out")
+            self.assertEqual(raised.exception.code, "INVALID_RESPONSE")
+
+    def test_invalid_jsonl_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "bad.jsonl"
+            path.write_text("not-json", encoding="utf-8")
+            with self.assertRaises(CloudAPIError) as raised:
+                _parse_paddle_jsonl(path)
+            self.assertEqual(raised.exception.code, "INVALID_RESPONSE")
+
+    def test_unsafe_remote_image_path_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            pdf_path = root / "sample.pdf"
+            pdf_path.write_bytes(b"pdf")
+
+            def fake_download(client: CloudAPIClient, url: str, target: Path) -> Path:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(_jsonl_payload("../escape.png"), encoding="utf-8")
+                return target
+
+            responses = [{"data": {"jobId": "job-1"}}, {"data": {"state": "done", "resultUrl": {"jsonUrl": "https://assets.example/result.jsonl"}}}]
+            with patch.object(CloudAPIClient, "request_json", side_effect=responses), patch.object(
+                CloudAPIClient, "download", autospec=True, side_effect=fake_download
+            ):
+                with self.assertRaises(CloudAPIError) as raised:
+                    PaddleOCRVLExtractionEngine(self._config()).analyze(pdf_path, root / "out")
+            self.assertEqual(raised.exception.code, "UNSAFE_ASSET_PATH")
 
     def test_markdown_and_html_tables_parse_without_bs4(self) -> None:
-        self.assertEqual(
-            markdown_table_to_rows("| A | B |\n|---|---|\n| 1 | 2 |"),
-            [["A", "B"], ["1", "2"]],
-        )
+        self.assertEqual(markdown_table_to_rows("| A | B |\n|---|---|\n| 1 | 2 |"), [["A", "B"], ["1", "2"]])
         self.assertEqual(
             html_table_to_rows("<table><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table>"),
             [["A", "B"], ["1", "2"]],
         )
-
-    def test_analyze_normalizes_table_formula_and_figure(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp)
-            pdf_path = root / "sample.pdf"
-            pdf_path.write_bytes(b"%PDF-1.4 mocked")
-            config = PaddleOCRVLConfig(
-                enabled=True,
-                mode="service",
-                server_url="http://127.0.0.1:8118/v1",
-                model="PaddlePaddle/PaddleOCR-VL-1.6",
-                pipeline_version="v1.6",
-                python=sys.executable,
-                timeout=900,
-            )
-
-            def fake_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
-                output_dir = Path(cmd[cmd.index("--output") + 1])
-                output_dir.mkdir(parents=True, exist_ok=True)
-                (output_dir / "paddleocr_vl_result.json").write_text(
-                    json.dumps(
-                        {
-                            "pages": [
-                                {
-                                    "page": 0,
-                                    "blocks": [
-                                        {
-                                            "block_label": "table",
-                                            "page": 0,
-                                            "bbox": [10, 20, 70, 80],
-                                            "markdown": "| A | B |\n|---|---|\n| 1 | 2 |",
-                                        },
-                                        {
-                                            "block_label": "formula",
-                                            "page": 0,
-                                            "bbox": [15, 90, 85, 104],
-                                            "markdown": "E = mc^2",
-                                        },
-                                        {
-                                            "block_label": "figure",
-                                            "page": 0,
-                                            "caption": "Figure 1. Architecture",
-                                        },
-                                    ],
-                                }
-                            ]
-                        }
-                    ),
-                    encoding="utf-8",
-                )
-                (output_dir / "paddleocr_vl.md").write_text("# Parsed paper", encoding="utf-8")
-                return subprocess.CompletedProcess(cmd, 0, "", "")
-
-            with patch("subprocess.run", side_effect=fake_run) as run_mock:
-                index = PaddleOCRVLExtractionEngine(config).analyze(pdf_path, root / "out")
-
-            self.assertTrue(run_mock.called)
-            self.assertEqual(index["version"], 3)
-            self.assertEqual(index["engine"], "paddleocr_vl")
-            self.assertEqual(index["engineChain"], ["paddleocr_vl"])
-            self.assertEqual(index["markdownPath"], str(root / "out" / "paddleocr_vl" / "paddleocr_vl.md"))
-            self.assertEqual({element["type"] for element in index["elements"]}, {"table", "formula", "figure"})
-
-            table = next(element for element in index["elements"] if element["type"] == "table")
-            self.assertEqual(table["engine"], "paddleocr_vl")
-            self.assertEqual(table["confidence"], 0.88)
-            self.assertEqual(table["table"], [["A", "B"], ["1", "2"]])
-            self.assertTrue(Path(table["csvPath"]).exists())
-            self.assertTrue(Path(table["jsonPath"]).exists())
-
-            formula = next(element for element in index["elements"] if element["type"] == "formula")
-            self.assertEqual(formula["latex"], "E = mc^2")
-            self.assertFalse(formula["needsReview"])
-
-            figure = next(element for element in index["elements"] if element["type"] == "figure")
-            self.assertEqual(figure["bbox"], [])
-            self.assertEqual(figure["confidence"], 0.65)
-            self.assertTrue(figure["needsReview"])
-
-    def test_subprocess_timeout_records_engine_error_in_pipeline(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp)
-            pdf_path = root / "sample.pdf"
-            pdf_path.write_bytes(b"%PDF-1.4 mocked")
-            config = PaddleOCRVLConfig(
-                enabled=True,
-                mode="service",
-                server_url="http://127.0.0.1:8118/v1",
-                model="PaddlePaddle/PaddleOCR-VL-1.6",
-                pipeline_version="v1.6",
-                python=sys.executable,
-                timeout=1,
-            )
-            pipeline = HybridExtractionPipeline(
-                engines=[PaddleOCRVLExtractionEngine(config)],
-                fallback_engine=FakeFallbackEngine(),
-            )
-
-            with patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd=["python"], timeout=1)):
-                index = pipeline.analyze(pdf_path, root / "out", {"engine": "paddleocr_vl"})
-
-            self.assertEqual(index["engine"], "pymupdf")
-            self.assertIn("engineErrors", index)
-            self.assertEqual(index["engineErrors"][0]["engine"], "paddleocr_vl")
-            self.assertEqual(index["engineErrors"][0]["type"], "EngineUnavailable")
-            self.assertIn("timed out", index["engineErrors"][0]["message"])
-
-    def test_subprocess_timeout_raises_from_engine(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp)
-            pdf_path = root / "sample.pdf"
-            pdf_path.write_bytes(b"%PDF-1.4 mocked")
-            config = PaddleOCRVLConfig(
-                enabled=True,
-                mode="subprocess",
-                server_url="",
-                model="PaddlePaddle/PaddleOCR-VL-1.6",
-                pipeline_version="v1.6",
-                python=sys.executable,
-                timeout=1,
-            )
-
-            with patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd=["python"], timeout=1)):
-                with self.assertRaises(EngineUnavailable):
-                    PaddleOCRVLExtractionEngine(config).analyze(pdf_path, root / "out")
 
 
 if __name__ == "__main__":

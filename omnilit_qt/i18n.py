@@ -659,6 +659,13 @@ RU_TEXTS.update({
     "pdf_export_raw_outputs": "Export raw parser outputs",
     "pdf_no_bbox_note": "This element has no locatable coordinates and is shown only in parsed results.",
     "pdf_engine_errors": "Parser engine errors",
+    "parser_cloud_services": "Сервисы облачного разбора PDF",
+    "parser_cloud_services_detail": "Токены хранятся с системным шифрованием; переменные окружения имеют приоритет. PDF отправляются выбранному сервису для распознавания.",
+    "service_enabled": "Включить сервис",
+    "api_token": "API-токен",
+    "token_saved_placeholder": "Надёжно сохранён; оставьте поле пустым, чтобы не менять",
+    "test_connection": "Проверить конфигурацию",
+    "clear_token": "Очистить токен",
 })
 
 

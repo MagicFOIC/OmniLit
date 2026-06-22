@@ -19,7 +19,6 @@ Rectangle {
     property var captionTranslationsByElement: ({})
     property bool captionTranslating: false
     property string captionTranslatingKey: ""
-    property var runtimeEngineStatus: pdfExtractionController.engineStatus()
 
     signal exportCompleted(string elementKey, string path)
     signal elementFeedbackChanged(string elementKey, string text)
@@ -428,10 +427,6 @@ Rectangle {
             messages.push(String(item.message || item.code || item.engine || "解析引擎状态"))
         }
         return "解析引擎状态：" + messages.join("；")
-    }
-
-    function bootstrapRuntimeEngine(engine) {
-        return pdfExtractionController.bootstrapEngine(engine)
     }
 
     function tableStatsText() {

@@ -1,0 +1,844 @@
+{
+  "schema_version": 1,
+  "record_id": "1d96a6721732b6ff43c0468b4466317e35ef5707",
+  "paper": {
+    "title": "Multi-Dimensional Composite Frame as Bifunctional Catalytic Medium for Ultra-Fast Charging Lithium–Sulfur Battery",
+    "authors": [
+      "Shuhao Tian",
+      "Qi Zeng",
+      "Guo Liu",
+      "Juanjuan Huang",
+      "Xiao Sun",
+      "Di Wang"
+    ],
+    "year": "2022",
+    "doi": "",
+    "source": "",
+    "pdf_path": "D:\\Tool\\Python\\project\\OmniLit\\Workspace\\Download\\pdfs\\eb9f6e74a8f4abdd9ca300ef3d4a343f.pdf"
+  },
+  "generated_at": "2026-06-21T11:49:52+00:00",
+  "nodes": [
+    {
+      "id": "paper:1d96a6721732b6ff43c0468b4466317e35ef5707",
+      "type": "paper",
+      "label": "Multi-Dimensional Composite Frame as Bifunctional Catalytic Medium for Ultra-Fast Charging Lithium–Sulfur Battery",
+      "summary": "",
+      "importance": 1.0,
+      "confidence": 1.0,
+      "tags": [
+        "paper"
+      ],
+      "evidence": [],
+      "details": {
+        "title": "Multi-Dimensional Composite Frame as Bifunctional Catalytic Medium for Ultra-Fast Charging Lithium–Sulfur Battery",
+        "authors": [
+          "Shuhao Tian",
+          "Qi Zeng",
+          "Guo Liu",
+          "Juanjuan Huang",
+          "Xiao Sun",
+          "Di Wang"
+        ],
+        "year": "2022",
+        "doi": "",
+        "source": "",
+        "pdf_path": "D:\\Tool\\Python\\project\\OmniLit\\Workspace\\Download\\pdfs\\eb9f6e74a8f4abdd9ca300ef3d4a343f.pdf"
+      },
+      "pinned": false,
+      "weight": 1.0
+    },
+    {
+      "id": "concept:mxenes",
+      "type": "concept",
+      "label": "MXenes",
+      "summary": "",
+      "importance": 0.65,
+      "confidence": 1.0,
+      "tags": [
+        "concept",
+        "keyword"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "MXenes",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "1d96a6721732b6ff43c0468b4466317e35ef5707"
+        }
+      ],
+      "details": {},
+      "pinned": false,
+      "weight": 0.65
+    },
+    {
+      "id": "concept:transition_metal_sulfides",
+      "type": "concept",
+      "label": "Transition metal sulfides",
+      "summary": "",
+      "importance": 0.65,
+      "confidence": 1.0,
+      "tags": [
+        "concept",
+        "keyword"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "Transition metal sulfides",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "1d96a6721732b6ff43c0468b4466317e35ef5707"
+        }
+      ],
+      "details": {},
+      "pinned": false,
+      "weight": 0.65
+    },
+    {
+      "id": "concept:lithium-ion_transference",
+      "type": "concept",
+      "label": "Lithium-ion transference",
+      "summary": "",
+      "importance": 0.65,
+      "confidence": 1.0,
+      "tags": [
+        "concept",
+        "keyword"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "Lithium-ion transference",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "1d96a6721732b6ff43c0468b4466317e35ef5707"
+        }
+      ],
+      "details": {},
+      "pinned": false,
+      "weight": 0.65
+    },
+    {
+      "id": "concept:bifunctional_catalysis",
+      "type": "concept",
+      "label": "Bifunctional catalysis",
+      "summary": "",
+      "importance": 0.65,
+      "confidence": 1.0,
+      "tags": [
+        "concept",
+        "keyword"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "Bifunctional catalysis",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "1d96a6721732b6ff43c0468b4466317e35ef5707"
+        }
+      ],
+      "details": {},
+      "pinned": false,
+      "weight": 0.65
+    },
+    {
+      "id": "concept:lithium-sulfur_batteries",
+      "type": "concept",
+      "label": "lithium-sulfur batteries",
+      "summary": "",
+      "importance": 0.65,
+      "confidence": 1.0,
+      "tags": [
+        "concept",
+        "keyword"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "lithium-sulfur batteries",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "1d96a6721732b6ff43c0468b4466317e35ef5707"
+        }
+      ],
+      "details": {},
+      "pinned": false,
+      "weight": 0.65
+    },
+    {
+      "id": "concept:polysulfides",
+      "type": "concept",
+      "label": "polysulfides",
+      "summary": "",
+      "importance": 0.65,
+      "confidence": 1.0,
+      "tags": [
+        "concept",
+        "keyword"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "polysulfides",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "1d96a6721732b6ff43c0468b4466317e35ef5707"
+        }
+      ],
+      "details": {},
+      "pinned": false,
+      "weight": 0.65
+    },
+    {
+      "id": "concept:lithium-sulfur_batterieslithium-sulfur_batteries",
+      "type": "concept",
+      "label": "lithium-sulfur batterieslithium-sulfur batteries",
+      "summary": "",
+      "importance": 0.65,
+      "confidence": 1.0,
+      "tags": [
+        "concept",
+        "keyword"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "lithium-sulfur batterieslithium-sulfur batteries",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "1d96a6721732b6ff43c0468b4466317e35ef5707"
+        }
+      ],
+      "details": {},
+      "pinned": false,
+      "weight": 0.65
+    },
+    {
+      "id": "concept:multi-dimensional_composite_frame_as",
+      "type": "concept",
+      "label": "multi-dimensional composite frame as",
+      "summary": "",
+      "importance": 0.65,
+      "confidence": 1.0,
+      "tags": [
+        "concept",
+        "keyword"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "multi-dimensional composite frame as",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "1d96a6721732b6ff43c0468b4466317e35ef5707"
+        }
+      ],
+      "details": {},
+      "pinned": false,
+      "weight": 0.65
+    },
+    {
+      "id": "concept:bifunctional_catalytic_medium_for_ultra",
+      "type": "concept",
+      "label": "bifunctional catalytic medium for ultra",
+      "summary": "",
+      "importance": 0.65,
+      "confidence": 1.0,
+      "tags": [
+        "concept",
+        "keyword"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "bifunctional catalytic medium for ultra",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "1d96a6721732b6ff43c0468b4466317e35ef5707"
+        }
+      ],
+      "details": {},
+      "pinned": false,
+      "weight": 0.65
+    },
+    {
+      "id": "concept:fast_charging_lithium",
+      "type": "concept",
+      "label": "fast charging lithium",
+      "summary": "",
+      "importance": 0.65,
+      "confidence": 1.0,
+      "tags": [
+        "concept",
+        "keyword"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "fast charging lithium",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "1d96a6721732b6ff43c0468b4466317e35ef5707"
+        }
+      ],
+      "details": {},
+      "pinned": false,
+      "weight": 0.65
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge:1d96a6721732b6ff43c0468b4466317e35ef5707:1",
+      "source": "paper:1d96a6721732b6ff43c0468b4466317e35ef5707",
+      "target": "concept:mxenes",
+      "type": "MENTIONS",
+      "label": "mentions",
+      "confidence": 1.0,
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "MXenes",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "1d96a6721732b6ff43c0468b4466317e35ef5707"
+        }
+      ],
+      "details": {},
+      "weight": 1.0
+    },
+    {
+      "id": "edge:1d96a6721732b6ff43c0468b4466317e35ef5707:2",
+      "source": "paper:1d96a6721732b6ff43c0468b4466317e35ef5707",
+      "target": "concept:transition_metal_sulfides",
+      "type": "MENTIONS",
+      "label": "mentions",
+      "confidence": 1.0,
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "Transition metal sulfides",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "1d96a6721732b6ff43c0468b4466317e35ef5707"
+        }
+      ],
+      "details": {},
+      "weight": 1.0
+    },
+    {
+      "id": "edge:1d96a6721732b6ff43c0468b4466317e35ef5707:3",
+      "source": "paper:1d96a6721732b6ff43c0468b4466317e35ef5707",
+      "target": "concept:lithium-ion_transference",
+      "type": "MENTIONS",
+      "label": "mentions",
+      "confidence": 1.0,
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "Lithium-ion transference",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "1d96a6721732b6ff43c0468b4466317e35ef5707"
+        }
+      ],
+      "details": {},
+      "weight": 1.0
+    },
+    {
+      "id": "edge:1d96a6721732b6ff43c0468b4466317e35ef5707:4",
+      "source": "paper:1d96a6721732b6ff43c0468b4466317e35ef5707",
+      "target": "concept:bifunctional_catalysis",
+      "type": "MENTIONS",
+      "label": "mentions",
+      "confidence": 1.0,
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "Bifunctional catalysis",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "1d96a6721732b6ff43c0468b4466317e35ef5707"
+        }
+      ],
+      "details": {},
+      "weight": 1.0
+    },
+    {
+      "id": "edge:1d96a6721732b6ff43c0468b4466317e35ef5707:5",
+      "source": "paper:1d96a6721732b6ff43c0468b4466317e35ef5707",
+      "target": "concept:lithium-sulfur_batteries",
+      "type": "MENTIONS",
+      "label": "mentions",
+      "confidence": 1.0,
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "lithium-sulfur batteries",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "1d96a6721732b6ff43c0468b4466317e35ef5707"
+        }
+      ],
+      "details": {},
+      "weight": 1.0
+    },
+    {
+      "id": "edge:1d96a6721732b6ff43c0468b4466317e35ef5707:6",
+      "source": "paper:1d96a6721732b6ff43c0468b4466317e35ef5707",
+      "target": "concept:polysulfides",
+      "type": "MENTIONS",
+      "label": "mentions",
+      "confidence": 1.0,
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "polysulfides",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "1d96a6721732b6ff43c0468b4466317e35ef5707"
+        }
+      ],
+      "details": {},
+      "weight": 1.0
+    },
+    {
+      "id": "edge:1d96a6721732b6ff43c0468b4466317e35ef5707:7",
+      "source": "paper:1d96a6721732b6ff43c0468b4466317e35ef5707",
+      "target": "concept:lithium-sulfur_batterieslithium-sulfur_batteries",
+      "type": "MENTIONS",
+      "label": "mentions",
+      "confidence": 1.0,
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "lithium-sulfur batterieslithium-sulfur batteries",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "1d96a6721732b6ff43c0468b4466317e35ef5707"
+        }
+      ],
+      "details": {},
+      "weight": 1.0
+    },
+    {
+      "id": "edge:1d96a6721732b6ff43c0468b4466317e35ef5707:8",
+      "source": "paper:1d96a6721732b6ff43c0468b4466317e35ef5707",
+      "target": "concept:multi-dimensional_composite_frame_as",
+      "type": "MENTIONS",
+      "label": "mentions",
+      "confidence": 1.0,
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "multi-dimensional composite frame as",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "1d96a6721732b6ff43c0468b4466317e35ef5707"
+        }
+      ],
+      "details": {},
+      "weight": 1.0
+    },
+    {
+      "id": "edge:1d96a6721732b6ff43c0468b4466317e35ef5707:9",
+      "source": "paper:1d96a6721732b6ff43c0468b4466317e35ef5707",
+      "target": "concept:bifunctional_catalytic_medium_for_ultra",
+      "type": "MENTIONS",
+      "label": "mentions",
+      "confidence": 1.0,
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "bifunctional catalytic medium for ultra",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "1d96a6721732b6ff43c0468b4466317e35ef5707"
+        }
+      ],
+      "details": {},
+      "weight": 1.0
+    },
+    {
+      "id": "edge:1d96a6721732b6ff43c0468b4466317e35ef5707:10",
+      "source": "paper:1d96a6721732b6ff43c0468b4466317e35ef5707",
+      "target": "concept:fast_charging_lithium",
+      "type": "MENTIONS",
+      "label": "mentions",
+      "confidence": 1.0,
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "fast charging lithium",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "1d96a6721732b6ff43c0468b4466317e35ef5707"
+        }
+      ],
+      "details": {},
+      "weight": 1.0
+    }
+  ],
+  "metadata": {
+    "source": {
+      "pdfPath": "D:\\Tool\\Python\\project\\OmniLit\\Workspace\\Download\\pdfs\\eb9f6e74a8f4abdd9ca300ef3d4a343f.pdf",
+      "extractionEngine": "",
+      "sourceSha256": ""
+    },
+    "summary": {
+      "keywords": [
+        "MXenes",
+        "Transition metal sulfides",
+        "Lithium-ion transference",
+        "Bifunctional catalysis",
+        "lithium-sulfur batteries",
+        "polysulfides",
+        "lithium-sulfur batterieslithium-sulfur batteries",
+        "multi-dimensional composite frame as",
+        "bifunctional catalytic medium for ultra",
+        "fast charging lithium"
+      ],
+      "contentSummary": "Abstract The shuttle effect of soluble lithium polysulfides (LiPSs) between electrodes and slow reaction kinetics lead to extreme inefficiency and poor high current cycling stability, which limits the commercial application of Li–S batteries.",
+      "abstract": ""
+    },
+    "stats": {
+      "nodes": 11,
+      "edges": 10,
+      "evidence": 20
+    },
+    "builder_version": 2,
+    "source_fingerprint": "e410172cd22bb679dc17b1f29afbf8bc4f7fd387299cc1064695ceadd7d00606",
+    "quality_summary": {
+      "node_count": 11,
+      "edge_count": 10,
+      "evidence_count": 10,
+      "evidence_coverage": 1.0,
+      "edge_evidence_coverage": 1.0,
+      "average_confidence": 1.0,
+      "needs_review_count": 0
+    },
+    "layout": {
+      "paper:1d96a6721732b6ff43c0468b4466317e35ef5707": {
+        "x": 0.5,
+        "y": 0.08,
+        "layer": 0,
+        "order": 0,
+        "lane": ""
+      },
+      "concept:bifunctional_catalysis": {
+        "x": 0.125,
+        "y": 0.894,
+        "layer": 1,
+        "order": 0,
+        "lane": ""
+      },
+      "concept:bifunctional_catalytic_medium_for_ultra": {
+        "x": 0.25,
+        "y": 0.894,
+        "layer": 1,
+        "order": 1,
+        "lane": ""
+      },
+      "concept:fast_charging_lithium": {
+        "x": 0.375,
+        "y": 0.894,
+        "layer": 1,
+        "order": 2,
+        "lane": ""
+      },
+      "concept:lithium-ion_transference": {
+        "x": 0.5,
+        "y": 0.894,
+        "layer": 1,
+        "order": 3,
+        "lane": ""
+      },
+      "concept:lithium-sulfur_batteries": {
+        "x": 0.625,
+        "y": 0.894,
+        "layer": 1,
+        "order": 4,
+        "lane": ""
+      },
+      "concept:lithium-sulfur_batterieslithium-sulfur_batteries": {
+        "x": 0.75,
+        "y": 0.894,
+        "layer": 1,
+        "order": 5,
+        "lane": ""
+      },
+      "concept:multi-dimensional_composite_frame_as": {
+        "x": 0.875,
+        "y": 0.894,
+        "layer": 1,
+        "order": 6,
+        "lane": ""
+      },
+      "concept:mxenes": {
+        "x": 0.25,
+        "y": 0.946,
+        "layer": 1,
+        "order": 7,
+        "lane": ""
+      },
+      "concept:polysulfides": {
+        "x": 0.5,
+        "y": 0.946,
+        "layer": 1,
+        "order": 8,
+        "lane": ""
+      },
+      "concept:transition_metal_sulfides": {
+        "x": 0.75,
+        "y": 0.946,
+        "layer": 1,
+        "order": 9,
+        "lane": ""
+      }
+    },
+    "adjacency": {
+      "paper:1d96a6721732b6ff43c0468b4466317e35ef5707": [
+        "concept:bifunctional_catalysis",
+        "concept:bifunctional_catalytic_medium_for_ultra",
+        "concept:fast_charging_lithium",
+        "concept:lithium-ion_transference",
+        "concept:lithium-sulfur_batteries",
+        "concept:lithium-sulfur_batterieslithium-sulfur_batteries",
+        "concept:multi-dimensional_composite_frame_as",
+        "concept:mxenes",
+        "concept:polysulfides",
+        "concept:transition_metal_sulfides"
+      ],
+      "concept:mxenes": [
+        "paper:1d96a6721732b6ff43c0468b4466317e35ef5707"
+      ],
+      "concept:transition_metal_sulfides": [
+        "paper:1d96a6721732b6ff43c0468b4466317e35ef5707"
+      ],
+      "concept:lithium-ion_transference": [
+        "paper:1d96a6721732b6ff43c0468b4466317e35ef5707"
+      ],
+      "concept:bifunctional_catalysis": [
+        "paper:1d96a6721732b6ff43c0468b4466317e35ef5707"
+      ],
+      "concept:lithium-sulfur_batteries": [
+        "paper:1d96a6721732b6ff43c0468b4466317e35ef5707"
+      ],
+      "concept:polysulfides": [
+        "paper:1d96a6721732b6ff43c0468b4466317e35ef5707"
+      ],
+      "concept:lithium-sulfur_batterieslithium-sulfur_batteries": [
+        "paper:1d96a6721732b6ff43c0468b4466317e35ef5707"
+      ],
+      "concept:multi-dimensional_composite_frame_as": [
+        "paper:1d96a6721732b6ff43c0468b4466317e35ef5707"
+      ],
+      "concept:bifunctional_catalytic_medium_for_ultra": [
+        "paper:1d96a6721732b6ff43c0468b4466317e35ef5707"
+      ],
+      "concept:fast_charging_lithium": [
+        "paper:1d96a6721732b6ff43c0468b4466317e35ef5707"
+      ]
+    }
+  },
+  "version": 1,
+  "recordId": "1d96a6721732b6ff43c0468b4466317e35ef5707",
+  "title": "Multi-Dimensional Composite Frame as Bifunctional Catalytic Medium for Ultra-Fast Charging Lithium–Sulfur Battery",
+  "generatedAt": "2026-06-21T11:49:52+00:00",
+  "source": {
+    "pdfPath": "D:\\Tool\\Python\\project\\OmniLit\\Workspace\\Download\\pdfs\\eb9f6e74a8f4abdd9ca300ef3d4a343f.pdf",
+    "extractionEngine": "",
+    "sourceSha256": ""
+  },
+  "summary": {
+    "keywords": [
+      "MXenes",
+      "Transition metal sulfides",
+      "Lithium-ion transference",
+      "Bifunctional catalysis",
+      "lithium-sulfur batteries",
+      "polysulfides",
+      "lithium-sulfur batterieslithium-sulfur batteries",
+      "multi-dimensional composite frame as",
+      "bifunctional catalytic medium for ultra",
+      "fast charging lithium"
+    ],
+    "contentSummary": "Abstract The shuttle effect of soluble lithium polysulfides (LiPSs) between electrodes and slow reaction kinetics lead to extreme inefficiency and poor high current cycling stability, which limits the commercial application of Li–S batteries.",
+    "abstract": ""
+  },
+  "builder_version": 2,
+  "source_fingerprint": "e410172cd22bb679dc17b1f29afbf8bc4f7fd387299cc1064695ceadd7d00606",
+  "quality_summary": {
+    "node_count": 11,
+    "edge_count": 10,
+    "evidence_count": 10,
+    "evidence_coverage": 1.0,
+    "edge_evidence_coverage": 1.0,
+    "average_confidence": 1.0,
+    "needs_review_count": 0
+  },
+  "layout": {
+    "paper:1d96a6721732b6ff43c0468b4466317e35ef5707": {
+      "x": 0.5,
+      "y": 0.08,
+      "layer": 0,
+      "order": 0,
+      "lane": ""
+    },
+    "concept:bifunctional_catalysis": {
+      "x": 0.125,
+      "y": 0.894,
+      "layer": 1,
+      "order": 0,
+      "lane": ""
+    },
+    "concept:bifunctional_catalytic_medium_for_ultra": {
+      "x": 0.25,
+      "y": 0.894,
+      "layer": 1,
+      "order": 1,
+      "lane": ""
+    },
+    "concept:fast_charging_lithium": {
+      "x": 0.375,
+      "y": 0.894,
+      "layer": 1,
+      "order": 2,
+      "lane": ""
+    },
+    "concept:lithium-ion_transference": {
+      "x": 0.5,
+      "y": 0.894,
+      "layer": 1,
+      "order": 3,
+      "lane": ""
+    },
+    "concept:lithium-sulfur_batteries": {
+      "x": 0.625,
+      "y": 0.894,
+      "layer": 1,
+      "order": 4,
+      "lane": ""
+    },
+    "concept:lithium-sulfur_batterieslithium-sulfur_batteries": {
+      "x": 0.75,
+      "y": 0.894,
+      "layer": 1,
+      "order": 5,
+      "lane": ""
+    },
+    "concept:multi-dimensional_composite_frame_as": {
+      "x": 0.875,
+      "y": 0.894,
+      "layer": 1,
+      "order": 6,
+      "lane": ""
+    },
+    "concept:mxenes": {
+      "x": 0.25,
+      "y": 0.946,
+      "layer": 1,
+      "order": 7,
+      "lane": ""
+    },
+    "concept:polysulfides": {
+      "x": 0.5,
+      "y": 0.946,
+      "layer": 1,
+      "order": 8,
+      "lane": ""
+    },
+    "concept:transition_metal_sulfides": {
+      "x": 0.75,
+      "y": 0.946,
+      "layer": 1,
+      "order": 9,
+      "lane": ""
+    }
+  },
+  "adjacency": {
+    "paper:1d96a6721732b6ff43c0468b4466317e35ef5707": [
+      "concept:bifunctional_catalysis",
+      "concept:bifunctional_catalytic_medium_for_ultra",
+      "concept:fast_charging_lithium",
+      "concept:lithium-ion_transference",
+      "concept:lithium-sulfur_batteries",
+      "concept:lithium-sulfur_batterieslithium-sulfur_batteries",
+      "concept:multi-dimensional_composite_frame_as",
+      "concept:mxenes",
+      "concept:polysulfides",
+      "concept:transition_metal_sulfides"
+    ],
+    "concept:mxenes": [
+      "paper:1d96a6721732b6ff43c0468b4466317e35ef5707"
+    ],
+    "concept:transition_metal_sulfides": [
+      "paper:1d96a6721732b6ff43c0468b4466317e35ef5707"
+    ],
+    "concept:lithium-ion_transference": [
+      "paper:1d96a6721732b6ff43c0468b4466317e35ef5707"
+    ],
+    "concept:bifunctional_catalysis": [
+      "paper:1d96a6721732b6ff43c0468b4466317e35ef5707"
+    ],
+    "concept:lithium-sulfur_batteries": [
+      "paper:1d96a6721732b6ff43c0468b4466317e35ef5707"
+    ],
+    "concept:polysulfides": [
+      "paper:1d96a6721732b6ff43c0468b4466317e35ef5707"
+    ],
+    "concept:lithium-sulfur_batterieslithium-sulfur_batteries": [
+      "paper:1d96a6721732b6ff43c0468b4466317e35ef5707"
+    ],
+    "concept:multi-dimensional_composite_frame_as": [
+      "paper:1d96a6721732b6ff43c0468b4466317e35ef5707"
+    ],
+    "concept:bifunctional_catalytic_medium_for_ultra": [
+      "paper:1d96a6721732b6ff43c0468b4466317e35ef5707"
+    ],
+    "concept:fast_charging_lithium": [
+      "paper:1d96a6721732b6ff43c0468b4466317e35ef5707"
+    ]
+  }
+}

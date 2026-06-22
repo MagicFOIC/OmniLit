@@ -17,6 +17,6 @@ Tokens are encrypted with the operating system credential protection on
 Windows, can be cleared independently, and are always redacted from logs and
 status messages. Environment variables take precedence over saved settings.
 
-Cloud results carry the cache marker `cloud-api-v1`. Older local CLI/runtime
-results are ignored when a cloud engine is selected, while existing PyMuPDF
-caches remain valid.
+Cloud results carry the cache marker `cloud-api-v2`. Older local runtime and
+pre-job-API results are ignored when a cloud engine is selected, while existing
+PyMuPDF caches remain valid.

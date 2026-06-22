@@ -1,0 +1,613 @@
+{
+  "version": 1,
+  "scope": "record",
+  "title": "Defect-induced-reduced Au quantum Dots@MXene decorated separator enables lithium-sulfur batteries with high sulfur utilization",
+  "generatedAt": "2026-06-21T11:34:51+00:00",
+  "cacheKey": "54544951a2f9cddff8b6e59e44a04801d1fe8ffd88e712d69f5c9665c2fff8c5",
+  "terms": [
+    {
+      "text": "concept",
+      "normalized": "concept",
+      "weight": 11.55,
+      "count": 3,
+      "fontSize": 48.0,
+      "type": "concept",
+      "types": [
+        "concept"
+      ],
+      "paperIds": [
+        "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "high sulfur utilization Page 2 of Du et al. Energy Mater 2024",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        },
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "4:400014 https://dx.doi.org/10.20517/energymater.2023.76 11",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        },
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "lithium-sulfur batterieslithium-sulfur batteries",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        }
+      ],
+      "colorGroup": "concept",
+      "x": 0.5,
+      "y": 0.5,
+      "width": 0.20688,
+      "height": 0.099692
+    },
+    {
+      "text": "separator",
+      "normalized": "separator",
+      "weight": 4.366,
+      "count": 3,
+      "fontSize": 26.37,
+      "type": "concept",
+      "types": [
+        "concept"
+      ],
+      "paperIds": [
+        "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "separator",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        },
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "mxene decorated separator enables lithium",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        }
+      ],
+      "colorGroup": "concept",
+      "x": 0.49357,
+      "y": 0.579316,
+      "width": 0.149651,
+      "height": 0.054768
+    },
+    {
+      "text": "catalyst",
+      "normalized": "catalyst",
+      "weight": 4.108,
+      "count": 2,
+      "fontSize": 25.59,
+      "type": "concept",
+      "types": [
+        "concept"
+      ],
+      "paperIds": [
+        "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "catalyst",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        }
+      ],
+      "colorGroup": "concept",
+      "x": 0.502382,
+      "y": 0.422101,
+      "width": 0.130738,
+      "height": 0.053148
+    },
+    {
+      "text": "polysulfide",
+      "normalized": "polysulfide",
+      "weight": 4.108,
+      "count": 2,
+      "fontSize": 25.59,
+      "type": "concept",
+      "types": [
+        "concept"
+      ],
+      "paperIds": [
+        "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "polysulfide",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        }
+      ],
+      "colorGroup": "concept",
+      "x": 0.502586,
+      "y": 0.633293,
+      "width": 0.175264,
+      "height": 0.053148
+    },
+    {
+      "text": "defect-induced-reduced au quantum",
+      "normalized": "defect-induced-reduced au quantum",
+      "weight": 3.85,
+      "count": 1,
+      "fontSize": 24.82,
+      "type": "concept",
+      "types": [
+        "concept"
+      ],
+      "paperIds": [
+        "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "defect-induced-reduced au quantum",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        }
+      ],
+      "colorGroup": "concept",
+      "x": 0.490776,
+      "y": 0.367944,
+      "width": 0.487055,
+      "height": 0.051549
+    },
+    {
+      "text": "sulfur",
+      "normalized": "sulfur",
+      "weight": 0.774,
+      "count": 3,
+      "fontSize": 15.55,
+      "type": "concept",
+      "types": [
+        "concept"
+      ],
+      "paperIds": [
+        "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "high sulfur utilization Page 2 of Du et al. Energy Mater 2024",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        },
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "sulfur batteries with high sulfur",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        }
+      ],
+      "colorGroup": "concept",
+      "x": 0.602291,
+      "y": 0.567932,
+      "width": 0.066114,
+      "height": 0.032296
+    },
+    {
+      "text": "batteries",
+      "normalized": "batteries",
+      "weight": 0.516,
+      "count": 2,
+      "fontSize": 14.78,
+      "type": "concept",
+      "types": [
+        "concept"
+      ],
+      "paperIds": [
+        "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "lithium-sulfur batterieslithium-sulfur batteries",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        },
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "sulfur batteries with high sulfur",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        }
+      ],
+      "colorGroup": "concept",
+      "x": 0.372081,
+      "y": 0.567545,
+      "width": 0.089152,
+      "height": 0.030697
+    },
+    {
+      "text": "high",
+      "normalized": "high",
+      "weight": 0.516,
+      "count": 2,
+      "fontSize": 14.78,
+      "type": "concept",
+      "types": [
+        "concept"
+      ],
+      "paperIds": [
+        "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "high sulfur utilization Page 2 of Du et al. Energy Mater 2024",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        },
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "sulfur batteries with high sulfur",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        }
+      ],
+      "colorGroup": "concept",
+      "x": 0.409483,
+      "y": 0.432622,
+      "width": 0.04629,
+      "height": 0.030697
+    },
+    {
+      "text": "Lithium-sulfur",
+      "normalized": "lithium-sulfur",
+      "weight": 0.516,
+      "count": 2,
+      "fontSize": 14.78,
+      "type": "concept",
+      "types": [
+        "concept"
+      ],
+      "paperIds": [
+        "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "Lithium-sulfur battery",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        },
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "lithium-sulfur batterieslithium-sulfur batteries",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        }
+      ],
+      "colorGroup": "concept",
+      "x": 0.636253,
+      "y": 0.410596,
+      "width": 0.132014,
+      "height": 0.030697
+    },
+    {
+      "text": "al.",
+      "normalized": "al",
+      "weight": 0.258,
+      "count": 1,
+      "fontSize": 14.0,
+      "type": "concept",
+      "types": [
+        "concept"
+      ],
+      "paperIds": [
+        "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "high sulfur utilization Page 2 of Du et al. Energy Mater 2024",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        }
+      ],
+      "colorGroup": "concept",
+      "x": 0.621785,
+      "y": 0.500893,
+      "width": 0.03636,
+      "height": 0.029077
+    },
+    {
+      "text": "battery",
+      "normalized": "battery",
+      "weight": 0.258,
+      "count": 1,
+      "fontSize": 14.0,
+      "type": "concept",
+      "types": [
+        "concept"
+      ],
+      "paperIds": [
+        "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "Lithium-sulfur battery",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        }
+      ],
+      "colorGroup": "concept",
+      "x": 0.360671,
+      "y": 0.516512,
+      "width": 0.06884,
+      "height": 0.029077
+    },
+    {
+      "text": "decorated",
+      "normalized": "decorated",
+      "weight": 0.258,
+      "count": 1,
+      "fontSize": 14.0,
+      "type": "concept",
+      "types": [
+        "concept"
+      ],
+      "paperIds": [
+        "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "mxene decorated separator enables lithium",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        }
+      ],
+      "colorGroup": "concept",
+      "x": 0.353382,
+      "y": 0.483769,
+      "width": 0.08508,
+      "height": 0.029077
+    },
+    {
+      "text": "dx.doi.org",
+      "normalized": "dx.doi.org",
+      "weight": 0.258,
+      "count": 1,
+      "fontSize": 14.0,
+      "type": "concept",
+      "types": [
+        "concept"
+      ],
+      "paperIds": [
+        "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "4:400014 https://dx.doi.org/10.20517/energymater.2023.76 11",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        }
+      ],
+      "colorGroup": "concept",
+      "x": 0.658037,
+      "y": 0.441345,
+      "width": 0.0932,
+      "height": 0.029077
+    },
+    {
+      "text": "enables",
+      "normalized": "enables",
+      "weight": 0.258,
+      "count": 1,
+      "fontSize": 14.0,
+      "type": "concept",
+      "types": [
+        "concept"
+      ],
+      "paperIds": [
+        "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "mxene decorated separator enables lithium",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        }
+      ],
+      "colorGroup": "concept",
+      "x": 0.349634,
+      "y": 0.4544,
+      "width": 0.06884,
+      "height": 0.029077
+    },
+    {
+      "text": "Energy",
+      "normalized": "energy",
+      "weight": 0.258,
+      "count": 1,
+      "fontSize": 14.0,
+      "type": "concept",
+      "types": [
+        "concept"
+      ],
+      "paperIds": [
+        "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "high sulfur utilization Page 2 of Du et al. Energy Mater 2024",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        }
+      ],
+      "colorGroup": "concept",
+      "x": 0.65038,
+      "y": 0.471212,
+      "width": 0.06072,
+      "height": 0.029077
+    },
+    {
+      "text": "https",
+      "normalized": "https",
+      "weight": 0.258,
+      "count": 1,
+      "fontSize": 14.0,
+      "type": "concept",
+      "types": [
+        "concept"
+      ],
+      "paperIds": [
+        "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "4:400014 https://dx.doi.org/10.20517/energymater.2023.76 11",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        }
+      ],
+      "colorGroup": "concept",
+      "x": 0.656415,
+      "y": 0.532172,
+      "width": 0.0526,
+      "height": 0.029077
+    },
+    {
+      "text": "Mater",
+      "normalized": "mater",
+      "weight": 0.258,
+      "count": 1,
+      "fontSize": 14.0,
+      "type": "concept",
+      "types": [
+        "concept"
+      ],
+      "paperIds": [
+        "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "high sulfur utilization Page 2 of Du et al. Energy Mater 2024",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        }
+      ],
+      "colorGroup": "concept",
+      "x": 0.386037,
+      "y": 0.619048,
+      "width": 0.0526,
+      "height": 0.029077
+    },
+    {
+      "text": "mxene",
+      "normalized": "mxene",
+      "weight": 0.258,
+      "count": 1,
+      "fontSize": 14.0,
+      "type": "concept",
+      "types": [
+        "concept"
+      ],
+      "paperIds": [
+        "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "mxene decorated separator enables lithium",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        }
+      ],
+      "colorGroup": "concept",
+      "x": 0.620176,
+      "y": 0.601499,
+      "width": 0.0526,
+      "height": 0.029077
+    }
+  ],
+  "sourceCount": 1
+}

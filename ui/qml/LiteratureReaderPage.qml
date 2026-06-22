@@ -23,7 +23,12 @@ Item {
     property var elementFeedbackTexts: ({})
     property string selectedEngine: "fast"
     property bool deferPageRendering: false
+    property string sidePanelMode: "extraction"
     property var engineStatusInfo: ({})
+    property int pendingEvidencePage: -1
+    property var pendingEvidenceBbox: []
+    property string pendingEvidenceElementId: ""
+    property int evidenceFocusAttempts: 0
     readonly property var analysisModes: [
         { engine: "fast", label: "快速解析（PyMuPDF）" },
         { engine: "mineru", label: "深度解析（MinerU）" },
@@ -32,6 +37,8 @@ Item {
 
     signal backRequested()
     signal zoomPersistRequested(real zoom)
+    signal knowledgeGraphRequested(string recordId, string pdfPath, string title)
+    signal wordCloudRequested(string recordId, string pdfPath, string title)
 
     Motion { id: motion }
     Theme { id: theme }
@@ -54,6 +61,13 @@ Item {
         }
     }
 
+    Timer {
+        id: evidenceFocusTimer
+        interval: 90
+        repeat: true
+        onTriggered: root.applyPendingEvidenceFocus()
+    }
+
     Component.onCompleted: {
         root.applyInitialZoom()
         root.scheduleOpenRecord()
@@ -62,8 +76,11 @@ Item {
     onVisibleChanged: {
         if (visible)
             root.scheduleOpenRecord()
-        else if (pdfExtractionController.loading)
-            pdfExtractionController.cancelAnalysis()
+        else {
+            evidenceFocusTimer.stop()
+            if (pdfExtractionController.loading)
+                pdfExtractionController.cancelAnalysis()
+        }
     }
 
     Connections {
@@ -74,6 +91,7 @@ Item {
                 root.recalculateFitWidthZoom()
                 root.renderRevision += 1
                 root.operationStatus = pdfExtractionController.currentEngine === "pymupdf" ? "快速解析已完成。可按需选择 MinerU 或 PaddleOCR-VL 深度解析。" : "解析完成。"
+                root.resolvePendingEvidenceElement()
             }
         }
 
@@ -83,7 +101,11 @@ Item {
 
         function onElementFocused(elementId, page, bbox) {
             root.currentPage = page
-            root.scrollToElement(page, bbox)
+            root.pendingEvidencePage = page
+            root.pendingEvidenceBbox = bbox || []
+            root.pendingEvidenceElementId = ""
+            root.evidenceFocusAttempts = 0
+            evidenceFocusTimer.restart()
         }
     }
 
@@ -158,11 +180,25 @@ Item {
                         engineStatusPopup.open()
                     }
                 }
+                PillButton {
+                    text: "词云"
+                    enabled: !!root.pdfPath && !wordCloudController.loading
+                    onClicked: root.wordCloudRequested(root.recordId, root.pdfPath, root.title)
+                }
 
                 PillButton {
                     text: "导出全部"
                     enabled: !pdfExtractionController.loading && pdfExtractionController.pageCount > 0
                     onClicked: root.exportAll()
+                }
+                PillButton {
+                    text: root.sidePanelMode === "graph" ? "解析面板" : "知识图谱"
+                    enabled: !!root.pdfPath && !pdfExtractionController.loading
+                    onClicked: {
+                        root.sidePanelMode = root.sidePanelMode === "graph" ? "extraction" : "graph"
+                        if (root.sidePanelMode === "graph")
+                            knowledgeGraphController.generateGraph(root.recordId, { "recordId": root.recordId, "title": root.title, "localPdfPath": root.pdfPath }, root.pdfPath)
+                    }
                 }
             }
 
@@ -214,9 +250,7 @@ Item {
                             Text {
                                 Layout.fillWidth: true
                                 text: modelData.state + " · " + modelData.message
-                                color: modelData.available
-                                    ? theme.success
-                                    : (modelData.installable ? theme.warning : theme.textMuted)
+                                color: modelData.available ? theme.success : theme.textMuted
                                 wrapMode: Text.WrapAnywhere
                                 maximumLineCount: 3
                                 elide: Text.ElideRight
@@ -226,7 +260,6 @@ Item {
                                 visible: modelData.key !== "pymupdf" && !modelData.available
                                 text: "配置服务"
                                 onClicked: {
-                                    pdfExtractionController.bootstrapEngine(modelData.key)
                                     root.operationStatus = "请在系统设置中配置 " + modelData.label + " API。"
                                 }
                             }
@@ -381,6 +414,7 @@ Item {
                 Layout.minimumWidth: 260
                 Layout.maximumWidth: 360
                 Layout.fillHeight: true
+                visible: root.sidePanelMode === "extraction"
                 element: pdfExtractionController.selectedElement
                 index: pdfExtractionController.currentIndex
                 recordId: root.recordId
@@ -397,6 +431,19 @@ Item {
                 onElementFeedbackChanged: function(elementKey, text) {
                     root.rememberElementFeedback(elementKey, text)
                 }
+            }
+            KnowledgeGraphPanel {
+                Layout.preferredWidth: 360
+                Layout.minimumWidth: 320
+                Layout.maximumWidth: 420
+                Layout.fillHeight: true
+                visible: root.sidePanelMode === "graph"
+                showGraph: true
+                nodes: knowledgeGraphController.nodes
+                edges: knowledgeGraphController.edges
+                selectedNode: knowledgeGraphController.selectedNode
+                selectedEdge: knowledgeGraphController.selectedEdge
+                onEvidenceRequested: function(itemId, index) { knowledgeGraphController.focusEvidence(itemId, index) }
             }
         }
     }
@@ -617,6 +664,47 @@ Item {
         })
     }
 
+    function focusEvidence(page, bbox, elementId) {
+        root.pendingEvidencePage = Math.max(0, Number(page || 0))
+        root.pendingEvidenceBbox = bbox || []
+        root.pendingEvidenceElementId = String(elementId || "")
+        root.evidenceFocusAttempts = 0
+        root.currentPage = root.pendingEvidencePage
+        root.resolvePendingEvidenceElement()
+        evidenceFocusTimer.restart()
+    }
+
+    function clearEvidenceFocus() {
+        evidenceFocusTimer.stop()
+        root.pendingEvidencePage = -1
+        root.pendingEvidenceBbox = []
+        root.pendingEvidenceElementId = ""
+        root.evidenceFocusAttempts = 0
+    }
+
+    function resolvePendingEvidenceElement() {
+        if (root.pendingEvidenceElementId && pdfExtractionController.focusElement(root.pendingEvidenceElementId))
+            return
+        if (root.pendingEvidencePage >= 0)
+            evidenceFocusTimer.restart()
+    }
+
+    function applyPendingEvidenceFocus() {
+        if (root.pendingEvidencePage < 0) {
+            evidenceFocusTimer.stop()
+            return
+        }
+        root.currentPage = root.pendingEvidencePage
+        root.scrollToElement(root.pendingEvidencePage, root.pendingEvidenceBbox)
+        root.evidenceFocusAttempts += 1
+        if (root.evidenceFocusAttempts >= 8) {
+            evidenceFocusTimer.stop()
+            root.pendingEvidencePage = -1
+            root.pendingEvidenceBbox = []
+            root.pendingEvidenceElementId = ""
+        }
+    }
+
     function engineLabel(engine) {
         var value = String(engine || "")
         if (value === "pymupdf" || value === "fast")
@@ -629,14 +717,10 @@ Item {
     }
 
     function engineStatusName(value) {
-        if (value === "not_initialized")
-            return "未初始化"
-        if (value === "failed")
-            return "初始化失败"
+        if (value === "not_configured")
+            return "未配置"
         if (value === "off")
             return "已禁用"
-        if (value === "docker_installable")
-            return "可通过 Docker 启用"
         return "不可用"
     }
 
@@ -649,7 +733,6 @@ Item {
             var key = order[i]
             var item = status[key] || ({
                 available: false,
-                installable: false,
                 status: "unknown",
                 message: "未知"
             })
@@ -658,10 +741,7 @@ Item {
                 key: key,
                 label: root.engineLabel(key),
                 available: !!item.available,
-                installable: !!item.installable,
-                state: item.available
-                    ? "可用"
-                    : (item.installable ? "可初始化" : root.engineStatusName(item.status)),
+                state: item.available ? "可用" : root.engineStatusName(item.status),
                 message: String(item.message || "")
             })
         }

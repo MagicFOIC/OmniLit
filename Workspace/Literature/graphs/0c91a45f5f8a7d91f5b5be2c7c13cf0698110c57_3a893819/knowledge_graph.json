@@ -1,0 +1,836 @@
+{
+  "schema_version": 1,
+  "record_id": "0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57",
+  "paper": {
+    "title": "Synergistic polysulfide regulation and redox catalysis via CeSe2@TiSe2-C separator for practical high-loading lithium-sulfur batteries",
+    "authors": [
+      "Amirhossein Mirtaleb",
+      "Ruigang Wang"
+    ],
+    "year": "2025",
+    "doi": "",
+    "source": "",
+    "pdf_path": "D:\\Tool\\Python\\project\\OmniLit\\Workspace\\Download\\pdfs\\e025aab3c5f9e8627c01bc9ebed5f6a9.pdf"
+  },
+  "generated_at": "2026-06-21T11:51:39+00:00",
+  "nodes": [
+    {
+      "id": "paper:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57",
+      "type": "paper",
+      "label": "Synergistic polysulfide regulation and redox catalysis via CeSe2@TiSe2-C separator for practical high-loading lithium-sulfur batteries",
+      "summary": "",
+      "importance": 1.0,
+      "confidence": 1.0,
+      "tags": [
+        "paper"
+      ],
+      "evidence": [],
+      "details": {
+        "title": "Synergistic polysulfide regulation and redox catalysis via CeSe2@TiSe2-C separator for practical high-loading lithium-sulfur batteries",
+        "authors": [
+          "Amirhossein Mirtaleb",
+          "Ruigang Wang"
+        ],
+        "year": "2025",
+        "doi": "",
+        "source": "",
+        "pdf_path": "D:\\Tool\\Python\\project\\OmniLit\\Workspace\\Download\\pdfs\\e025aab3c5f9e8627c01bc9ebed5f6a9.pdf"
+      },
+      "pinned": false,
+      "weight": 1.0
+    },
+    {
+      "id": "concept:lithium_sulfur_batteries",
+      "type": "concept",
+      "label": "Lithium–sulfur batteries",
+      "summary": "",
+      "importance": 0.65,
+      "confidence": 1.0,
+      "tags": [
+        "concept",
+        "keyword"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "Lithium–sulfur batteries",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57"
+        }
+      ],
+      "details": {},
+      "pinned": false,
+      "weight": 0.65
+    },
+    {
+      "id": "concept:polysulfide_shuttle_effect",
+      "type": "concept",
+      "label": "Polysulfide shuttle effect",
+      "summary": "",
+      "importance": 0.65,
+      "confidence": 1.0,
+      "tags": [
+        "concept",
+        "keyword"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "Polysulfide shuttle effect",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57"
+        }
+      ],
+      "details": {},
+      "pinned": false,
+      "weight": 0.65
+    },
+    {
+      "id": "concept:mxene",
+      "type": "concept",
+      "label": "MXene",
+      "summary": "",
+      "importance": 0.65,
+      "confidence": 1.0,
+      "tags": [
+        "concept",
+        "keyword"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "MXene",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57"
+        }
+      ],
+      "details": {},
+      "pinned": false,
+      "weight": 0.65
+    },
+    {
+      "id": "concept:cese2_tise2_c_composite",
+      "type": "concept",
+      "label": "CeSe2@TiSe2–C composite",
+      "summary": "",
+      "importance": 0.65,
+      "confidence": 1.0,
+      "tags": [
+        "concept",
+        "keyword"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "CeSe2@TiSe2–C composite",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57"
+        }
+      ],
+      "details": {},
+      "pinned": false,
+      "weight": 0.65
+    },
+    {
+      "id": "concept:separator_coating",
+      "type": "concept",
+      "label": "Separator coating",
+      "summary": "",
+      "importance": 0.65,
+      "confidence": 1.0,
+      "tags": [
+        "concept",
+        "keyword"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "Separator coating",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57"
+        }
+      ],
+      "details": {},
+      "pinned": false,
+      "weight": 0.65
+    },
+    {
+      "id": "concept:electrochemical_reaction_kinetics",
+      "type": "concept",
+      "label": "Electrochemical reaction kinetics",
+      "summary": "",
+      "importance": 0.65,
+      "confidence": 1.0,
+      "tags": [
+        "concept",
+        "keyword"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "Electrochemical reaction kinetics",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57"
+        }
+      ],
+      "details": {},
+      "pinned": false,
+      "weight": 0.65
+    },
+    {
+      "id": "concept:polysulfides",
+      "type": "concept",
+      "label": "polysulfides",
+      "summary": "",
+      "importance": 0.65,
+      "confidence": 1.0,
+      "tags": [
+        "concept",
+        "keyword"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "polysulfides",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57"
+        }
+      ],
+      "details": {},
+      "pinned": false,
+      "weight": 0.65
+    },
+    {
+      "id": "concept:lithium-sulfur_batterieslithium-sulfur_batteries",
+      "type": "concept",
+      "label": "lithium-sulfur batterieslithium-sulfur batteries",
+      "summary": "",
+      "importance": 0.65,
+      "confidence": 1.0,
+      "tags": [
+        "concept",
+        "keyword"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "lithium-sulfur batterieslithium-sulfur batteries",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57"
+        }
+      ],
+      "details": {},
+      "pinned": false,
+      "weight": 0.65
+    },
+    {
+      "id": "concept:synergistic_polysulfide_regulation_and_redox",
+      "type": "concept",
+      "label": "synergistic polysulfide regulation and redox",
+      "summary": "",
+      "importance": 0.65,
+      "confidence": 1.0,
+      "tags": [
+        "concept",
+        "keyword"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "synergistic polysulfide regulation and redox",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57"
+        }
+      ],
+      "details": {},
+      "pinned": false,
+      "weight": 0.65
+    },
+    {
+      "id": "concept:catalysis_via_cese2",
+      "type": "concept",
+      "label": "catalysis via cese2",
+      "summary": "",
+      "importance": 0.65,
+      "confidence": 1.0,
+      "tags": [
+        "concept",
+        "keyword"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "catalysis via cese2",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57"
+        }
+      ],
+      "details": {},
+      "pinned": false,
+      "weight": 0.65
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57:1",
+      "source": "paper:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57",
+      "target": "concept:lithium_sulfur_batteries",
+      "type": "MENTIONS",
+      "label": "mentions",
+      "confidence": 1.0,
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "Lithium–sulfur batteries",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57"
+        }
+      ],
+      "details": {},
+      "weight": 1.0
+    },
+    {
+      "id": "edge:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57:2",
+      "source": "paper:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57",
+      "target": "concept:polysulfide_shuttle_effect",
+      "type": "MENTIONS",
+      "label": "mentions",
+      "confidence": 1.0,
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "Polysulfide shuttle effect",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57"
+        }
+      ],
+      "details": {},
+      "weight": 1.0
+    },
+    {
+      "id": "edge:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57:3",
+      "source": "paper:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57",
+      "target": "concept:mxene",
+      "type": "MENTIONS",
+      "label": "mentions",
+      "confidence": 1.0,
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "MXene",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57"
+        }
+      ],
+      "details": {},
+      "weight": 1.0
+    },
+    {
+      "id": "edge:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57:4",
+      "source": "paper:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57",
+      "target": "concept:cese2_tise2_c_composite",
+      "type": "MENTIONS",
+      "label": "mentions",
+      "confidence": 1.0,
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "CeSe2@TiSe2–C composite",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57"
+        }
+      ],
+      "details": {},
+      "weight": 1.0
+    },
+    {
+      "id": "edge:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57:5",
+      "source": "paper:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57",
+      "target": "concept:separator_coating",
+      "type": "MENTIONS",
+      "label": "mentions",
+      "confidence": 1.0,
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "Separator coating",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57"
+        }
+      ],
+      "details": {},
+      "weight": 1.0
+    },
+    {
+      "id": "edge:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57:6",
+      "source": "paper:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57",
+      "target": "concept:electrochemical_reaction_kinetics",
+      "type": "MENTIONS",
+      "label": "mentions",
+      "confidence": 1.0,
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "Electrochemical reaction kinetics",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57"
+        }
+      ],
+      "details": {},
+      "weight": 1.0
+    },
+    {
+      "id": "edge:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57:7",
+      "source": "paper:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57",
+      "target": "concept:polysulfides",
+      "type": "MENTIONS",
+      "label": "mentions",
+      "confidence": 1.0,
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "polysulfides",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57"
+        }
+      ],
+      "details": {},
+      "weight": 1.0
+    },
+    {
+      "id": "edge:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57:8",
+      "source": "paper:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57",
+      "target": "concept:lithium-sulfur_batterieslithium-sulfur_batteries",
+      "type": "MENTIONS",
+      "label": "mentions",
+      "confidence": 1.0,
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "lithium-sulfur batterieslithium-sulfur batteries",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57"
+        }
+      ],
+      "details": {},
+      "weight": 1.0
+    },
+    {
+      "id": "edge:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57:9",
+      "source": "paper:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57",
+      "target": "concept:synergistic_polysulfide_regulation_and_redox",
+      "type": "MENTIONS",
+      "label": "mentions",
+      "confidence": 1.0,
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "synergistic polysulfide regulation and redox",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57"
+        }
+      ],
+      "details": {},
+      "weight": 1.0
+    },
+    {
+      "id": "edge:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57:10",
+      "source": "paper:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57",
+      "target": "concept:catalysis_via_cese2",
+      "type": "MENTIONS",
+      "label": "mentions",
+      "confidence": 1.0,
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "catalysis via cese2",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57"
+        }
+      ],
+      "details": {},
+      "weight": 1.0
+    }
+  ],
+  "metadata": {
+    "source": {
+      "pdfPath": "D:\\Tool\\Python\\project\\OmniLit\\Workspace\\Download\\pdfs\\e025aab3c5f9e8627c01bc9ebed5f6a9.pdf",
+      "extractionEngine": "",
+      "sourceSha256": ""
+    },
+    "summary": {
+      "keywords": [
+        "Lithium–sulfur batteries",
+        "Polysulfide shuttle effect",
+        "MXene",
+        "CeSe2@TiSe2–C composite",
+        "Separator coating",
+        "Electrochemical reaction kinetics",
+        "polysulfides",
+        "lithium-sulfur batterieslithium-sulfur batteries",
+        "synergistic polysulfide regulation and redox",
+        "catalysis via cese2"
+      ],
+      "contentSummary": "Abstract The widespread commercialization of lithium–sulfur (Li–S) batteries is severely impeded by rapid capacity fading, polysulfide shuttling, and sluggish redox kinetics, particularly under the high sulfur loading and lean electrolyte conditions required for practical applications.",
+      "abstract": ""
+    },
+    "stats": {
+      "nodes": 11,
+      "edges": 10,
+      "evidence": 20
+    },
+    "builder_version": 2,
+    "source_fingerprint": "f36967aae9bfc95356f907da5295409cdea149604c2b53e41aca428ffce37b63",
+    "quality_summary": {
+      "node_count": 11,
+      "edge_count": 10,
+      "evidence_count": 10,
+      "evidence_coverage": 1.0,
+      "edge_evidence_coverage": 1.0,
+      "average_confidence": 1.0,
+      "needs_review_count": 0
+    },
+    "layout": {
+      "paper:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57": {
+        "x": 0.5,
+        "y": 0.08,
+        "layer": 0,
+        "order": 0,
+        "lane": ""
+      },
+      "concept:catalysis_via_cese2": {
+        "x": 0.125,
+        "y": 0.894,
+        "layer": 1,
+        "order": 0,
+        "lane": ""
+      },
+      "concept:cese2_tise2_c_composite": {
+        "x": 0.25,
+        "y": 0.894,
+        "layer": 1,
+        "order": 1,
+        "lane": ""
+      },
+      "concept:electrochemical_reaction_kinetics": {
+        "x": 0.375,
+        "y": 0.894,
+        "layer": 1,
+        "order": 2,
+        "lane": ""
+      },
+      "concept:lithium-sulfur_batterieslithium-sulfur_batteries": {
+        "x": 0.5,
+        "y": 0.894,
+        "layer": 1,
+        "order": 3,
+        "lane": ""
+      },
+      "concept:lithium_sulfur_batteries": {
+        "x": 0.625,
+        "y": 0.894,
+        "layer": 1,
+        "order": 4,
+        "lane": ""
+      },
+      "concept:mxene": {
+        "x": 0.75,
+        "y": 0.894,
+        "layer": 1,
+        "order": 5,
+        "lane": ""
+      },
+      "concept:polysulfide_shuttle_effect": {
+        "x": 0.875,
+        "y": 0.894,
+        "layer": 1,
+        "order": 6,
+        "lane": ""
+      },
+      "concept:polysulfides": {
+        "x": 0.25,
+        "y": 0.946,
+        "layer": 1,
+        "order": 7,
+        "lane": ""
+      },
+      "concept:separator_coating": {
+        "x": 0.5,
+        "y": 0.946,
+        "layer": 1,
+        "order": 8,
+        "lane": ""
+      },
+      "concept:synergistic_polysulfide_regulation_and_redox": {
+        "x": 0.75,
+        "y": 0.946,
+        "layer": 1,
+        "order": 9,
+        "lane": ""
+      }
+    },
+    "adjacency": {
+      "paper:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57": [
+        "concept:catalysis_via_cese2",
+        "concept:cese2_tise2_c_composite",
+        "concept:electrochemical_reaction_kinetics",
+        "concept:lithium-sulfur_batterieslithium-sulfur_batteries",
+        "concept:lithium_sulfur_batteries",
+        "concept:mxene",
+        "concept:polysulfide_shuttle_effect",
+        "concept:polysulfides",
+        "concept:separator_coating",
+        "concept:synergistic_polysulfide_regulation_and_redox"
+      ],
+      "concept:lithium_sulfur_batteries": [
+        "paper:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57"
+      ],
+      "concept:polysulfide_shuttle_effect": [
+        "paper:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57"
+      ],
+      "concept:mxene": [
+        "paper:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57"
+      ],
+      "concept:cese2_tise2_c_composite": [
+        "paper:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57"
+      ],
+      "concept:separator_coating": [
+        "paper:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57"
+      ],
+      "concept:electrochemical_reaction_kinetics": [
+        "paper:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57"
+      ],
+      "concept:polysulfides": [
+        "paper:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57"
+      ],
+      "concept:lithium-sulfur_batterieslithium-sulfur_batteries": [
+        "paper:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57"
+      ],
+      "concept:synergistic_polysulfide_regulation_and_redox": [
+        "paper:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57"
+      ],
+      "concept:catalysis_via_cese2": [
+        "paper:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57"
+      ]
+    }
+  },
+  "version": 1,
+  "recordId": "0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57",
+  "title": "Synergistic polysulfide regulation and redox catalysis via CeSe2@TiSe2-C separator for practical high-loading lithium-sulfur batteries",
+  "generatedAt": "2026-06-21T11:51:39+00:00",
+  "source": {
+    "pdfPath": "D:\\Tool\\Python\\project\\OmniLit\\Workspace\\Download\\pdfs\\e025aab3c5f9e8627c01bc9ebed5f6a9.pdf",
+    "extractionEngine": "",
+    "sourceSha256": ""
+  },
+  "summary": {
+    "keywords": [
+      "Lithium–sulfur batteries",
+      "Polysulfide shuttle effect",
+      "MXene",
+      "CeSe2@TiSe2–C composite",
+      "Separator coating",
+      "Electrochemical reaction kinetics",
+      "polysulfides",
+      "lithium-sulfur batterieslithium-sulfur batteries",
+      "synergistic polysulfide regulation and redox",
+      "catalysis via cese2"
+    ],
+    "contentSummary": "Abstract The widespread commercialization of lithium–sulfur (Li–S) batteries is severely impeded by rapid capacity fading, polysulfide shuttling, and sluggish redox kinetics, particularly under the high sulfur loading and lean electrolyte conditions required for practical applications.",
+    "abstract": ""
+  },
+  "builder_version": 2,
+  "source_fingerprint": "f36967aae9bfc95356f907da5295409cdea149604c2b53e41aca428ffce37b63",
+  "quality_summary": {
+    "node_count": 11,
+    "edge_count": 10,
+    "evidence_count": 10,
+    "evidence_coverage": 1.0,
+    "edge_evidence_coverage": 1.0,
+    "average_confidence": 1.0,
+    "needs_review_count": 0
+  },
+  "layout": {
+    "paper:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57": {
+      "x": 0.5,
+      "y": 0.08,
+      "layer": 0,
+      "order": 0,
+      "lane": ""
+    },
+    "concept:catalysis_via_cese2": {
+      "x": 0.125,
+      "y": 0.894,
+      "layer": 1,
+      "order": 0,
+      "lane": ""
+    },
+    "concept:cese2_tise2_c_composite": {
+      "x": 0.25,
+      "y": 0.894,
+      "layer": 1,
+      "order": 1,
+      "lane": ""
+    },
+    "concept:electrochemical_reaction_kinetics": {
+      "x": 0.375,
+      "y": 0.894,
+      "layer": 1,
+      "order": 2,
+      "lane": ""
+    },
+    "concept:lithium-sulfur_batterieslithium-sulfur_batteries": {
+      "x": 0.5,
+      "y": 0.894,
+      "layer": 1,
+      "order": 3,
+      "lane": ""
+    },
+    "concept:lithium_sulfur_batteries": {
+      "x": 0.625,
+      "y": 0.894,
+      "layer": 1,
+      "order": 4,
+      "lane": ""
+    },
+    "concept:mxene": {
+      "x": 0.75,
+      "y": 0.894,
+      "layer": 1,
+      "order": 5,
+      "lane": ""
+    },
+    "concept:polysulfide_shuttle_effect": {
+      "x": 0.875,
+      "y": 0.894,
+      "layer": 1,
+      "order": 6,
+      "lane": ""
+    },
+    "concept:polysulfides": {
+      "x": 0.25,
+      "y": 0.946,
+      "layer": 1,
+      "order": 7,
+      "lane": ""
+    },
+    "concept:separator_coating": {
+      "x": 0.5,
+      "y": 0.946,
+      "layer": 1,
+      "order": 8,
+      "lane": ""
+    },
+    "concept:synergistic_polysulfide_regulation_and_redox": {
+      "x": 0.75,
+      "y": 0.946,
+      "layer": 1,
+      "order": 9,
+      "lane": ""
+    }
+  },
+  "adjacency": {
+    "paper:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57": [
+      "concept:catalysis_via_cese2",
+      "concept:cese2_tise2_c_composite",
+      "concept:electrochemical_reaction_kinetics",
+      "concept:lithium-sulfur_batterieslithium-sulfur_batteries",
+      "concept:lithium_sulfur_batteries",
+      "concept:mxene",
+      "concept:polysulfide_shuttle_effect",
+      "concept:polysulfides",
+      "concept:separator_coating",
+      "concept:synergistic_polysulfide_regulation_and_redox"
+    ],
+    "concept:lithium_sulfur_batteries": [
+      "paper:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57"
+    ],
+    "concept:polysulfide_shuttle_effect": [
+      "paper:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57"
+    ],
+    "concept:mxene": [
+      "paper:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57"
+    ],
+    "concept:cese2_tise2_c_composite": [
+      "paper:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57"
+    ],
+    "concept:separator_coating": [
+      "paper:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57"
+    ],
+    "concept:electrochemical_reaction_kinetics": [
+      "paper:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57"
+    ],
+    "concept:polysulfides": [
+      "paper:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57"
+    ],
+    "concept:lithium-sulfur_batterieslithium-sulfur_batteries": [
+      "paper:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57"
+    ],
+    "concept:synergistic_polysulfide_regulation_and_redox": [
+      "paper:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57"
+    ],
+    "concept:catalysis_via_cese2": [
+      "paper:0c91a45f5f8a7d91f5b5be2c7c13cf0698110c57"
+    ]
+  }
+}

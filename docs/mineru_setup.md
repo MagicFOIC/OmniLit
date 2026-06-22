@@ -18,9 +18,10 @@ $env:OMNILIT_MINERU_API_TOKEN = "..."
 $env:OMNILIT_MINERU_API_URL = "https://mineru.net/api/v4"
 ```
 
-For compatibility with existing development machines, OmniLit performs a
-one-time import from `D:\Tool\Java\API\Mineru.txt` when no MinerU token is
-configured. The plaintext file is not copied into the repository or deleted.
+For managed deployments, set the environment variables in the launcher or
+service configuration before starting OmniLit. Do not place the token in the
+source tree or application package. If no environment token is present, users
+can still save their own encrypted token in system settings.
 
 The reader requests an upload URL, uploads the PDF, polls the batch task,
 downloads the result archive, and normalizes figures, tables, and formulas into

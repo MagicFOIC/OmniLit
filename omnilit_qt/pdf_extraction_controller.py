@@ -26,22 +26,18 @@ from .pdf_extraction_settings import (
     PARSER_CONFIG_VERSION,
     clear_parser_token,
     engine_status,
-    import_legacy_parser_tokens,
     normalize_engine_id,
     parser_api_token,
     parser_api_url,
     parser_service_enabled,
     save_parser_service,
 )
-from .parser_runtime_manager import ParserRuntimeManager
 
 
 class PdfExtractionController(QObject):
     changed = Signal()
     analysisReady = Signal(str)
     elementFocused = Signal(str, int, "QVariantList")
-    runtimeStatusChanged = Signal("QVariantMap")
-    runtimeInstallProgress = Signal(str, int, str)
     _taskFinished = Signal(str, object, str, bool)
 
     def __init__(self, shell, paths, store, locale) -> None:
@@ -62,11 +58,9 @@ class PdfExtractionController(QObject):
         self._indexes: dict[str, dict[str, Any]] = {}
         self._pdf_paths: dict[str, str] = {}
         self._pending_engines: dict[str, str] = {}
-        self.runtime_manager = ParserRuntimeManager()
         self._worker: ManagedWorker | None = None
         self._stop = threading.Event()
         self._parser_settings_status = ""
-        import_legacy_parser_tokens(self.store)
         self._taskFinished.connect(self._on_task_finished)
 
     @staticmethod
@@ -228,7 +222,7 @@ class PdfExtractionController(QObject):
 
     @Slot(result="QVariantMap")
     def engineStatus(self) -> dict[str, Any]:
-        return engine_status(self.runtime_manager, self.store)
+        return engine_status(self.store)
 
     @Property(str, notify=changed)
     def mineruApiUrl(self) -> str:
@@ -270,7 +264,6 @@ class PdfExtractionController(QObject):
             return False
         save_parser_service(self.store, selected, url, str(token or ""), bool(enabled))
         self._parser_settings_status = "解析服务设置已安全保存。"
-        self.runtimeStatusChanged.emit(self.engineStatus())
         self.changed.emit()
         return True
 
@@ -281,7 +274,6 @@ class PdfExtractionController(QObject):
             return False
         clear_parser_token(self.store, selected)
         self._parser_settings_status = "API 令牌已清除。"
-        self.runtimeStatusChanged.emit(self.engineStatus())
         self.changed.emit()
         return True
 
@@ -293,15 +285,6 @@ class PdfExtractionController(QObject):
         self._parser_settings_status = "服务配置有效，可开始云解析。" if ok else str(status.get("message") or "解析服务尚未配置。")
         self.changed.emit()
         return ok
-
-    @Slot(str, result=bool)
-    def bootstrapEngine(self, engine: str) -> bool:
-        selected = normalize_engine_id(engine)
-        status = self.engineStatus().get(selected, {})
-        self._status = str(status.get("message") or "请在系统设置中配置云解析服务。")
-        self.runtimeStatusChanged.emit(self.engineStatus())
-        self.changed.emit()
-        return bool(status.get("available"))
 
     @Property("QVariantMap", notify=changed)
     def currentIndex(self) -> dict[str, Any]:
@@ -394,13 +377,12 @@ class PdfExtractionController(QObject):
             try:
                 def progress(name: str, percent: int, message: str) -> None:
                     self._progress = str(message or "")
-                    self.runtimeInstallProgress.emit(name, int(percent), str(message or ""))
                     self.changed.emit()
 
                 pipeline = HybridExtractionPipeline(
                     engines=[
-                        PaddleOCRVLExtractionEngine(runtime_manager=self.runtime_manager, store=self.store),
-                        MinerUExtractionEngine(runtime_manager=self.runtime_manager, store=self.store),
+                        PaddleOCRVLExtractionEngine(store=self.store),
+                        MinerUExtractionEngine(store=self.store),
                     ],
                     fallback_engine=PyMuPDFExtractionEngine(),
                 )
@@ -412,11 +394,10 @@ class PdfExtractionController(QObject):
                     {
                         "engine": selected_engine,
                         "record_dir": str(record_dir),
-                        "runtime_progress_callback": progress,
+                        "progress_callback": progress,
                         "cancel_event": self._stop,
                     },
                 )
-                self.runtimeStatusChanged.emit(self.engineStatus())
                 task.update_state("completed", detail="PDF 解析完成。")
                 self._taskFinished.emit(key, index, "PDF 解析完成。", True)
             except Exception as exc:
@@ -746,11 +727,6 @@ class PdfExtractionController(QObject):
     def _on_task_finished(self, record_id: str, payload: object, message: str, ok: bool) -> None:
         self._loading = False
         self._progress = ""
-        if str(record_id) == "__runtime__":
-            self._status = message
-            self.runtimeStatusChanged.emit(self.engineStatus())
-            self.changed.emit()
-            return
         if ok and isinstance(payload, dict):
             selected_engine = self._pending_engines.pop(str(record_id), str(payload.get("engine") or "active"))
             self._write_active_index(str(record_id), payload, selected_engine)

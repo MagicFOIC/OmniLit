@@ -74,8 +74,8 @@ class LiteratureLibraryQmlTests(unittest.TestCase):
         self.assertIn("root.index.engineErrors", panel)
         self.assertNotIn("pdfExtractionController.exportMarkdown", panel)
         self.assertNotIn("pdfExtractionController.exportRawOutputDirectory", panel)
-        self.assertIn("pdfExtractionController.engineStatus", panel)
-        self.assertIn("pdfExtractionController.bootstrapEngine", panel)
+        self.assertIn("pdfExtractionController.engineStatus", reader)
+        self.assertNotIn("pdfExtractionController.bootstrapEngine", panel)
         self.assertIn("解析引擎状态", panel)
         self.assertIn("导出目录已在文件管理器中打开。", panel)
         self.assertNotIn("复制公式图片", panel)
@@ -129,8 +129,45 @@ class LiteratureLibraryQmlTests(unittest.TestCase):
         self.assertIn("root.elementFeedbackChanged(key, value)", panel)
         self.assertNotIn("text: root.feedbackText || root.statusText", panel)
 
+    def test_qml_exposes_per_paper_knowledge_graph(self) -> None:
+        qml_dir = ROOT / "ui" / "qml"
+        library = (qml_dir / "LiteratureLibraryPage.qml").read_text(encoding="utf-8")
+        graph = (qml_dir / "KnowledgeGraphPage.qml").read_text(encoding="utf-8")
+        reader = (qml_dir / "LiteratureReaderPage.qml").read_text(encoding="utf-8")
+
+        self.assertIn('generated ? "知识图谱 ✓" : "知识图谱"', library)
+        self.assertIn("KnowledgeGraphPage", library)
+        self.assertIn("knowledgeGraphController.generateGraph", library)
+        self.assertIn("function openComparisonKnowledgeGraph()", library)
+        self.assertIn("knowledgeGraphController.generateComparisonGraph(records)", library)
+        self.assertIn("onClicked: root.openComparisonKnowledgeGraph()", library)
+        self.assertIn("property bool graphReturnToCompare", library)
+        self.assertIn("property bool graphIsComparison", library)
+        self.assertIn("knowledgeGraphController.regenerateComparisonGraph", graph)
+        for component in ("KnowledgeGraphView.qml", "KnowledgeGraphPanel.qml", "GraphNodeCard.qml", "GraphFilterBar.qml"):
+            self.assertTrue((qml_dir / component).is_file(), component)
+        for component in ("LiteratureCompareGraphPage.qml", "ComparisonEvidencePanel.qml", "ComparisonMatrix.qml"):
+            self.assertTrue((qml_dir / component).is_file(), component)
+        self.assertIn("LiteratureCompareGraphPage", library)
+        self.assertIn("knowledgeGraphController.generateGraphs", library)
+        self.assertIn("knowledgeGraphController.focusEvidence", graph)
+        self.assertIn("knowledgeGraphController.setFilterMode", graph)
+        self.assertIn("knowledgeGraphController.hasGraph", library)
+        self.assertIn("wordCloudController.hasCloud", library)
+        self.assertIn("knowledgeGraphController.search", graph)
+        self.assertIn("KnowledgeGraphView", graph)
+        self.assertIn("knowledgeGraphController.regenerateGraph", graph)
+        self.assertIn("knowledgeGraphController.exportGraphMarkdown", graph)
+        self.assertIn("signal knowledgeGraphRequested", reader)
+        self.assertIn("signal wordCloudRequested", reader)
+        self.assertIn("wordCloudController.generateForRecord", library)
+        self.assertIn("wordCloudController.generateForRecords", library)
+        for component in ("WordCloudPage.qml", "WordCloudView.qml"):
+            self.assertTrue((qml_dir / component).is_file(), component)
+
     def test_reader_pdf_zoom_uses_effective_zoom_and_mouse_anchor(self) -> None:
         reader = (ROOT / "ui" / "qml" / "LiteratureReaderPage.qml").read_text(encoding="utf-8")
+        library = (ROOT / "ui" / "qml" / "LiteratureLibraryPage.qml").read_text(encoding="utf-8")
 
         self.assertIn("width: root.pageWidth(index) * root.effectiveZoom", reader)
         self.assertIn("height: root.pageHeight(index) * root.effectiveZoom", reader)
@@ -139,6 +176,10 @@ class LiteratureLibraryQmlTests(unittest.TestCase):
         self.assertIn("function adjustZoomAt(delta, viewportX, viewportY)", reader)
         self.assertIn("pageFlick.contentX = root.clampContentX(targetX)", reader)
         self.assertIn("pageFlick.contentY = root.clampContentY(targetY)", reader)
+        self.assertIn("function focusEvidence(page, bbox, elementId)", reader)
+        self.assertIn("function applyPendingEvidenceFocus()", reader)
+        self.assertIn("evidenceFocusTimer.restart()", reader)
+        self.assertIn("readerPage.focusEvidence(page, bbox || [], elementId)", library)
         self.assertIn("function clampContentX(value)", reader)
         self.assertIn("function clampContentY(value)", reader)
 

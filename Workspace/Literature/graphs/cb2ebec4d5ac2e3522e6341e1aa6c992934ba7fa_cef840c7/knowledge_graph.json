@@ -1,0 +1,840 @@
+{
+  "schema_version": 1,
+  "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa",
+  "paper": {
+    "title": "Defect-induced-reduced Au quantum Dots@MXene decorated separator enables lithium-sulfur batteries with high sulfur utilization",
+    "authors": [
+      "Yahao Du",
+      "Yuhong Liu",
+      "Feifei Cao",
+      "Huan Ye"
+    ],
+    "year": "2024",
+    "doi": "",
+    "source": "",
+    "pdf_path": "D:\\Tool\\Python\\project\\OmniLit\\Workspace\\Download\\pdfs\\d6e3f9a521c9fed575ad62b78d79e5b2.pdf"
+  },
+  "generated_at": "2026-06-21T11:49:40+00:00",
+  "nodes": [
+    {
+      "id": "paper:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa",
+      "type": "paper",
+      "label": "Defect-induced-reduced Au quantum Dots@MXene decorated separator enables lithium-sulfur batteries with high sulfur utilization",
+      "summary": "",
+      "importance": 1.0,
+      "confidence": 1.0,
+      "tags": [
+        "paper"
+      ],
+      "evidence": [],
+      "details": {
+        "title": "Defect-induced-reduced Au quantum Dots@MXene decorated separator enables lithium-sulfur batteries with high sulfur utilization",
+        "authors": [
+          "Yahao Du",
+          "Yuhong Liu",
+          "Feifei Cao",
+          "Huan Ye"
+        ],
+        "year": "2024",
+        "doi": "",
+        "source": "",
+        "pdf_path": "D:\\Tool\\Python\\project\\OmniLit\\Workspace\\Download\\pdfs\\d6e3f9a521c9fed575ad62b78d79e5b2.pdf"
+      },
+      "pinned": false,
+      "weight": 1.0
+    },
+    {
+      "id": "concept:lithium-sulfur_battery",
+      "type": "concept",
+      "label": "Lithium-sulfur battery",
+      "summary": "",
+      "importance": 0.65,
+      "confidence": 1.0,
+      "tags": [
+        "concept",
+        "keyword"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "Lithium-sulfur battery",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        }
+      ],
+      "details": {},
+      "pinned": false,
+      "weight": 0.65
+    },
+    {
+      "id": "concept:separator",
+      "type": "concept",
+      "label": "separator",
+      "summary": "",
+      "importance": 0.65,
+      "confidence": 1.0,
+      "tags": [
+        "concept",
+        "keyword"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "separator",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        }
+      ],
+      "details": {},
+      "pinned": false,
+      "weight": 0.65
+    },
+    {
+      "id": "concept:polysulfide",
+      "type": "concept",
+      "label": "polysulfide",
+      "summary": "",
+      "importance": 0.65,
+      "confidence": 1.0,
+      "tags": [
+        "concept",
+        "keyword"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "polysulfide",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        }
+      ],
+      "details": {},
+      "pinned": false,
+      "weight": 0.65
+    },
+    {
+      "id": "concept:catalyst",
+      "type": "concept",
+      "label": "catalyst",
+      "summary": "",
+      "importance": 0.65,
+      "confidence": 1.0,
+      "tags": [
+        "concept",
+        "keyword"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "catalyst",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        }
+      ],
+      "details": {},
+      "pinned": false,
+      "weight": 0.65
+    },
+    {
+      "id": "concept:high_sulfur_utilization_page_2_of_du_et_al._energy_mater_2024",
+      "type": "concept",
+      "label": "high sulfur utilization Page 2 of Du et al. Energy Mater 2024",
+      "summary": "",
+      "importance": 0.65,
+      "confidence": 1.0,
+      "tags": [
+        "concept",
+        "keyword"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "high sulfur utilization Page 2 of Du et al. Energy Mater 2024",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        }
+      ],
+      "details": {},
+      "pinned": false,
+      "weight": 0.65
+    },
+    {
+      "id": "concept:4_400014_https_dx.doi.org_10.20517_energymater.2023.76_11",
+      "type": "concept",
+      "label": "4:400014 https://dx.doi.org/10.20517/energymater.2023.76 11",
+      "summary": "",
+      "importance": 0.65,
+      "confidence": 1.0,
+      "tags": [
+        "concept",
+        "keyword"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "4:400014 https://dx.doi.org/10.20517/energymater.2023.76 11",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        }
+      ],
+      "details": {},
+      "pinned": false,
+      "weight": 0.65
+    },
+    {
+      "id": "concept:lithium-sulfur_batterieslithium-sulfur_batteries",
+      "type": "concept",
+      "label": "lithium-sulfur batterieslithium-sulfur batteries",
+      "summary": "",
+      "importance": 0.65,
+      "confidence": 1.0,
+      "tags": [
+        "concept",
+        "keyword"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "lithium-sulfur batterieslithium-sulfur batteries",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        }
+      ],
+      "details": {},
+      "pinned": false,
+      "weight": 0.65
+    },
+    {
+      "id": "concept:defect-induced-reduced_au_quantum",
+      "type": "concept",
+      "label": "defect-induced-reduced au quantum",
+      "summary": "",
+      "importance": 0.65,
+      "confidence": 1.0,
+      "tags": [
+        "concept",
+        "keyword"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "defect-induced-reduced au quantum",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        }
+      ],
+      "details": {},
+      "pinned": false,
+      "weight": 0.65
+    },
+    {
+      "id": "concept:mxene_decorated_separator_enables_lithium",
+      "type": "concept",
+      "label": "mxene decorated separator enables lithium",
+      "summary": "",
+      "importance": 0.65,
+      "confidence": 1.0,
+      "tags": [
+        "concept",
+        "keyword"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "mxene decorated separator enables lithium",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        }
+      ],
+      "details": {},
+      "pinned": false,
+      "weight": 0.65
+    },
+    {
+      "id": "concept:sulfur_batteries_with_high_sulfur",
+      "type": "concept",
+      "label": "sulfur batteries with high sulfur",
+      "summary": "",
+      "importance": 0.65,
+      "confidence": 1.0,
+      "tags": [
+        "concept",
+        "keyword"
+      ],
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "sulfur batteries with high sulfur",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        }
+      ],
+      "details": {},
+      "pinned": false,
+      "weight": 0.65
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa:1",
+      "source": "paper:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa",
+      "target": "concept:lithium-sulfur_battery",
+      "type": "MENTIONS",
+      "label": "mentions",
+      "confidence": 1.0,
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "Lithium-sulfur battery",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        }
+      ],
+      "details": {},
+      "weight": 1.0
+    },
+    {
+      "id": "edge:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa:2",
+      "source": "paper:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa",
+      "target": "concept:separator",
+      "type": "MENTIONS",
+      "label": "mentions",
+      "confidence": 1.0,
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "separator",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        }
+      ],
+      "details": {},
+      "weight": 1.0
+    },
+    {
+      "id": "edge:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa:3",
+      "source": "paper:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa",
+      "target": "concept:polysulfide",
+      "type": "MENTIONS",
+      "label": "mentions",
+      "confidence": 1.0,
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "polysulfide",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        }
+      ],
+      "details": {},
+      "weight": 1.0
+    },
+    {
+      "id": "edge:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa:4",
+      "source": "paper:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa",
+      "target": "concept:catalyst",
+      "type": "MENTIONS",
+      "label": "mentions",
+      "confidence": 1.0,
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "catalyst",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        }
+      ],
+      "details": {},
+      "weight": 1.0
+    },
+    {
+      "id": "edge:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa:5",
+      "source": "paper:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa",
+      "target": "concept:high_sulfur_utilization_page_2_of_du_et_al._energy_mater_2024",
+      "type": "MENTIONS",
+      "label": "mentions",
+      "confidence": 1.0,
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "high sulfur utilization Page 2 of Du et al. Energy Mater 2024",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        }
+      ],
+      "details": {},
+      "weight": 1.0
+    },
+    {
+      "id": "edge:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa:6",
+      "source": "paper:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa",
+      "target": "concept:4_400014_https_dx.doi.org_10.20517_energymater.2023.76_11",
+      "type": "MENTIONS",
+      "label": "mentions",
+      "confidence": 1.0,
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "4:400014 https://dx.doi.org/10.20517/energymater.2023.76 11",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        }
+      ],
+      "details": {},
+      "weight": 1.0
+    },
+    {
+      "id": "edge:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa:7",
+      "source": "paper:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa",
+      "target": "concept:lithium-sulfur_batterieslithium-sulfur_batteries",
+      "type": "MENTIONS",
+      "label": "mentions",
+      "confidence": 1.0,
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "lithium-sulfur batterieslithium-sulfur batteries",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        }
+      ],
+      "details": {},
+      "weight": 1.0
+    },
+    {
+      "id": "edge:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa:8",
+      "source": "paper:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa",
+      "target": "concept:defect-induced-reduced_au_quantum",
+      "type": "MENTIONS",
+      "label": "mentions",
+      "confidence": 1.0,
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "defect-induced-reduced au quantum",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        }
+      ],
+      "details": {},
+      "weight": 1.0
+    },
+    {
+      "id": "edge:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa:9",
+      "source": "paper:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa",
+      "target": "concept:mxene_decorated_separator_enables_lithium",
+      "type": "MENTIONS",
+      "label": "mentions",
+      "confidence": 1.0,
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "mxene decorated separator enables lithium",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        }
+      ],
+      "details": {},
+      "weight": 1.0
+    },
+    {
+      "id": "edge:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa:10",
+      "source": "paper:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa",
+      "target": "concept:sulfur_batteries_with_high_sulfur",
+      "type": "MENTIONS",
+      "label": "mentions",
+      "confidence": 1.0,
+      "evidence": [
+        {
+          "page": -1,
+          "bbox": [],
+          "element_id": "",
+          "excerpt": "sulfur batteries with high sulfur",
+          "translated_text": "",
+          "source": "metadata.keywordsText",
+          "record_id": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+        }
+      ],
+      "details": {},
+      "weight": 1.0
+    }
+  ],
+  "metadata": {
+    "source": {
+      "pdfPath": "D:\\Tool\\Python\\project\\OmniLit\\Workspace\\Download\\pdfs\\d6e3f9a521c9fed575ad62b78d79e5b2.pdf",
+      "extractionEngine": "",
+      "sourceSha256": ""
+    },
+    "summary": {
+      "keywords": [
+        "Lithium-sulfur battery",
+        "separator",
+        "polysulfide",
+        "catalyst",
+        "high sulfur utilization Page 2 of Du et al. Energy Mater 2024",
+        "4:400014 https://dx.doi.org/10.20517/energymater.2023.76 11",
+        "lithium-sulfur batterieslithium-sulfur batteries",
+        "defect-induced-reduced au quantum",
+        "mxene decorated separator enables lithium",
+        "sulfur batteries with high sulfur"
+      ],
+      "contentSummary": "Although lithium-sulfur (Li-S) batteries have a high theoretical energy density, their practical applications are limited by rapid capacity fading and poor cycling stability due to the dissolution of high-order polysulfides in electrolytes and the sluggish kinetics of the solid-state Li2S2/Li2S redox reaction.",
+      "abstract": ""
+    },
+    "stats": {
+      "nodes": 11,
+      "edges": 10,
+      "evidence": 20
+    },
+    "builder_version": 2,
+    "source_fingerprint": "883c846bc491b039d34e29fbf066c4e01324ccf09d2364767d5744dfe83b739c",
+    "quality_summary": {
+      "node_count": 11,
+      "edge_count": 10,
+      "evidence_count": 10,
+      "evidence_coverage": 1.0,
+      "edge_evidence_coverage": 1.0,
+      "average_confidence": 1.0,
+      "needs_review_count": 0
+    },
+    "layout": {
+      "paper:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa": {
+        "x": 0.5,
+        "y": 0.08,
+        "layer": 0,
+        "order": 0,
+        "lane": ""
+      },
+      "concept:4_400014_https_dx.doi.org_10.20517_energymater.2023.76_11": {
+        "x": 0.125,
+        "y": 0.894,
+        "layer": 1,
+        "order": 0,
+        "lane": ""
+      },
+      "concept:catalyst": {
+        "x": 0.25,
+        "y": 0.894,
+        "layer": 1,
+        "order": 1,
+        "lane": ""
+      },
+      "concept:defect-induced-reduced_au_quantum": {
+        "x": 0.375,
+        "y": 0.894,
+        "layer": 1,
+        "order": 2,
+        "lane": ""
+      },
+      "concept:high_sulfur_utilization_page_2_of_du_et_al._energy_mater_2024": {
+        "x": 0.5,
+        "y": 0.894,
+        "layer": 1,
+        "order": 3,
+        "lane": ""
+      },
+      "concept:lithium-sulfur_batterieslithium-sulfur_batteries": {
+        "x": 0.625,
+        "y": 0.894,
+        "layer": 1,
+        "order": 4,
+        "lane": ""
+      },
+      "concept:lithium-sulfur_battery": {
+        "x": 0.75,
+        "y": 0.894,
+        "layer": 1,
+        "order": 5,
+        "lane": ""
+      },
+      "concept:mxene_decorated_separator_enables_lithium": {
+        "x": 0.875,
+        "y": 0.894,
+        "layer": 1,
+        "order": 6,
+        "lane": ""
+      },
+      "concept:polysulfide": {
+        "x": 0.25,
+        "y": 0.946,
+        "layer": 1,
+        "order": 7,
+        "lane": ""
+      },
+      "concept:separator": {
+        "x": 0.5,
+        "y": 0.946,
+        "layer": 1,
+        "order": 8,
+        "lane": ""
+      },
+      "concept:sulfur_batteries_with_high_sulfur": {
+        "x": 0.75,
+        "y": 0.946,
+        "layer": 1,
+        "order": 9,
+        "lane": ""
+      }
+    },
+    "adjacency": {
+      "paper:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa": [
+        "concept:4_400014_https_dx.doi.org_10.20517_energymater.2023.76_11",
+        "concept:catalyst",
+        "concept:defect-induced-reduced_au_quantum",
+        "concept:high_sulfur_utilization_page_2_of_du_et_al._energy_mater_2024",
+        "concept:lithium-sulfur_batterieslithium-sulfur_batteries",
+        "concept:lithium-sulfur_battery",
+        "concept:mxene_decorated_separator_enables_lithium",
+        "concept:polysulfide",
+        "concept:separator",
+        "concept:sulfur_batteries_with_high_sulfur"
+      ],
+      "concept:lithium-sulfur_battery": [
+        "paper:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+      ],
+      "concept:separator": [
+        "paper:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+      ],
+      "concept:polysulfide": [
+        "paper:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+      ],
+      "concept:catalyst": [
+        "paper:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+      ],
+      "concept:high_sulfur_utilization_page_2_of_du_et_al._energy_mater_2024": [
+        "paper:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+      ],
+      "concept:4_400014_https_dx.doi.org_10.20517_energymater.2023.76_11": [
+        "paper:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+      ],
+      "concept:lithium-sulfur_batterieslithium-sulfur_batteries": [
+        "paper:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+      ],
+      "concept:defect-induced-reduced_au_quantum": [
+        "paper:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+      ],
+      "concept:mxene_decorated_separator_enables_lithium": [
+        "paper:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+      ],
+      "concept:sulfur_batteries_with_high_sulfur": [
+        "paper:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+      ]
+    }
+  },
+  "version": 1,
+  "recordId": "cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa",
+  "title": "Defect-induced-reduced Au quantum Dots@MXene decorated separator enables lithium-sulfur batteries with high sulfur utilization",
+  "generatedAt": "2026-06-21T11:49:40+00:00",
+  "source": {
+    "pdfPath": "D:\\Tool\\Python\\project\\OmniLit\\Workspace\\Download\\pdfs\\d6e3f9a521c9fed575ad62b78d79e5b2.pdf",
+    "extractionEngine": "",
+    "sourceSha256": ""
+  },
+  "summary": {
+    "keywords": [
+      "Lithium-sulfur battery",
+      "separator",
+      "polysulfide",
+      "catalyst",
+      "high sulfur utilization Page 2 of Du et al. Energy Mater 2024",
+      "4:400014 https://dx.doi.org/10.20517/energymater.2023.76 11",
+      "lithium-sulfur batterieslithium-sulfur batteries",
+      "defect-induced-reduced au quantum",
+      "mxene decorated separator enables lithium",
+      "sulfur batteries with high sulfur"
+    ],
+    "contentSummary": "Although lithium-sulfur (Li-S) batteries have a high theoretical energy density, their practical applications are limited by rapid capacity fading and poor cycling stability due to the dissolution of high-order polysulfides in electrolytes and the sluggish kinetics of the solid-state Li2S2/Li2S redox reaction.",
+    "abstract": ""
+  },
+  "builder_version": 2,
+  "source_fingerprint": "883c846bc491b039d34e29fbf066c4e01324ccf09d2364767d5744dfe83b739c",
+  "quality_summary": {
+    "node_count": 11,
+    "edge_count": 10,
+    "evidence_count": 10,
+    "evidence_coverage": 1.0,
+    "edge_evidence_coverage": 1.0,
+    "average_confidence": 1.0,
+    "needs_review_count": 0
+  },
+  "layout": {
+    "paper:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa": {
+      "x": 0.5,
+      "y": 0.08,
+      "layer": 0,
+      "order": 0,
+      "lane": ""
+    },
+    "concept:4_400014_https_dx.doi.org_10.20517_energymater.2023.76_11": {
+      "x": 0.125,
+      "y": 0.894,
+      "layer": 1,
+      "order": 0,
+      "lane": ""
+    },
+    "concept:catalyst": {
+      "x": 0.25,
+      "y": 0.894,
+      "layer": 1,
+      "order": 1,
+      "lane": ""
+    },
+    "concept:defect-induced-reduced_au_quantum": {
+      "x": 0.375,
+      "y": 0.894,
+      "layer": 1,
+      "order": 2,
+      "lane": ""
+    },
+    "concept:high_sulfur_utilization_page_2_of_du_et_al._energy_mater_2024": {
+      "x": 0.5,
+      "y": 0.894,
+      "layer": 1,
+      "order": 3,
+      "lane": ""
+    },
+    "concept:lithium-sulfur_batterieslithium-sulfur_batteries": {
+      "x": 0.625,
+      "y": 0.894,
+      "layer": 1,
+      "order": 4,
+      "lane": ""
+    },
+    "concept:lithium-sulfur_battery": {
+      "x": 0.75,
+      "y": 0.894,
+      "layer": 1,
+      "order": 5,
+      "lane": ""
+    },
+    "concept:mxene_decorated_separator_enables_lithium": {
+      "x": 0.875,
+      "y": 0.894,
+      "layer": 1,
+      "order": 6,
+      "lane": ""
+    },
+    "concept:polysulfide": {
+      "x": 0.25,
+      "y": 0.946,
+      "layer": 1,
+      "order": 7,
+      "lane": ""
+    },
+    "concept:separator": {
+      "x": 0.5,
+      "y": 0.946,
+      "layer": 1,
+      "order": 8,
+      "lane": ""
+    },
+    "concept:sulfur_batteries_with_high_sulfur": {
+      "x": 0.75,
+      "y": 0.946,
+      "layer": 1,
+      "order": 9,
+      "lane": ""
+    }
+  },
+  "adjacency": {
+    "paper:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa": [
+      "concept:4_400014_https_dx.doi.org_10.20517_energymater.2023.76_11",
+      "concept:catalyst",
+      "concept:defect-induced-reduced_au_quantum",
+      "concept:high_sulfur_utilization_page_2_of_du_et_al._energy_mater_2024",
+      "concept:lithium-sulfur_batterieslithium-sulfur_batteries",
+      "concept:lithium-sulfur_battery",
+      "concept:mxene_decorated_separator_enables_lithium",
+      "concept:polysulfide",
+      "concept:separator",
+      "concept:sulfur_batteries_with_high_sulfur"
+    ],
+    "concept:lithium-sulfur_battery": [
+      "paper:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+    ],
+    "concept:separator": [
+      "paper:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+    ],
+    "concept:polysulfide": [
+      "paper:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+    ],
+    "concept:catalyst": [
+      "paper:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+    ],
+    "concept:high_sulfur_utilization_page_2_of_du_et_al._energy_mater_2024": [
+      "paper:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+    ],
+    "concept:4_400014_https_dx.doi.org_10.20517_energymater.2023.76_11": [
+      "paper:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+    ],
+    "concept:lithium-sulfur_batterieslithium-sulfur_batteries": [
+      "paper:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+    ],
+    "concept:defect-induced-reduced_au_quantum": [
+      "paper:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+    ],
+    "concept:mxene_decorated_separator_enables_lithium": [
+      "paper:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+    ],
+    "concept:sulfur_batteries_with_high_sulfur": [
+      "paper:cb2ebec4d5ac2e3522e6341e1aa6c992934ba7fa"
+    ]
+  }
+}

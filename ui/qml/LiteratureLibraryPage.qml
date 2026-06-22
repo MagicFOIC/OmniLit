@@ -21,6 +21,23 @@ Item {
     property string readerPdfPath: ""
     property string readerTitle: ""
     property real readerLastZoom: 1.0
+    property string readerReturnTarget: ""
+    property bool graphOpen: false
+    property string graphRecordId: ""
+    property string graphPdfPath: ""
+    property string graphTitle: ""
+    property var graphRecord: ({})
+    property bool graphReturnToCompare: false
+    property bool graphIsComparison: false
+    property var graphComparisonRecords: []
+    property bool wordCloudOpen: false
+    property bool wordCloudReturnToReader: false
+    property string wordCloudRecordId: ""
+    property string wordCloudTitle: ""
+    property string wordCloudScope: "record"
+    property var wordCloudRecord: ({})
+    property var wordCloudRecords: []
+    property string pendingGraphKeyword: ""
 
     readonly property var relevanceValues: ["all", "keyword_only", "loose", "balanced", "strict", "very_strict"]
     readonly property var statusValues: ["all", "downloaded", "no_candidate", "failed", "not_open_access", "not_pdf", "request_error"]
@@ -68,11 +85,21 @@ Item {
         }
     }
 
+    Connections {
+        target: knowledgeGraphController
+        function onGraphReady(recordId) {
+            if (recordId === root.graphRecordId && root.pendingGraphKeyword) {
+                knowledgeGraphController.search(root.pendingGraphKeyword)
+                root.pendingGraphKeyword = ""
+            }
+        }
+    }
+
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: metrics.pageMargin
         spacing: metrics.sectionSpacing
-        visible: !root.readerOpen
+        visible: !root.readerOpen && !root.graphOpen && !root.wordCloudOpen
 
         PageHeading {
             Layout.fillWidth: true
@@ -174,6 +201,16 @@ Item {
                     enabled: !literatureLibraryController.loading
                     primary: true
                     onClicked: literatureLibraryController.organizeByRelevance()
+                }
+                PillButton {
+                    text: knowledgeGraphController.loading && knowledgeGraphController.currentRecordId === "__batch__" ? "批量生成中..." : "批量生成图谱"
+                    enabled: !knowledgeGraphController.loading && literatureLibraryController.records.length > 0
+                    onClicked: knowledgeGraphController.generateGraphs(literatureLibraryController.records)
+                }
+                PillButton {
+                    text: wordCloudController.loading && wordCloudController.currentScope === "library" ? "词云生成中..." : "筛选词云"
+                    enabled: !wordCloudController.loading && literatureLibraryController.records.length > 0
+                    onClicked: root.openLibraryWordCloud()
                 }
                 PillButton {
                     text: literatureLibraryController.loading && literatureLibraryController.busyAction === "preview_cleanup" ? "扫描中..." :
@@ -362,6 +399,30 @@ Item {
                                         enabled: !!modelData.localPdfPath
                                         onClicked: root.openReader(index,modelData)
                                     }
+                                    PillButton {
+                                        property bool generated: {
+                                            knowledgeGraphController.statusText
+                                            return knowledgeGraphController.hasGraph(String(modelData.recordId || ""))
+                                        }
+                                        text: knowledgeGraphController.loading
+                                              && knowledgeGraphController.currentRecordId === String(modelData.recordId || "")
+                                              ? "生成中..." : generated ? "知识图谱 ✓" : "知识图谱"
+                                        visible: !!modelData.localPdfPath
+                                        enabled: !!modelData.localPdfPath && !knowledgeGraphController.loading
+                                        success: generated
+                                        onClicked: root.openKnowledgeGraph(index, modelData)
+                                    }
+                                    PillButton {
+                                        property bool generated: {
+                                            wordCloudController.statusText
+                                            return wordCloudController.hasCloud(String(modelData.recordId || ""))
+                                        }
+                                        text: wordCloudController.loading && wordCloudController.currentScope === "record" && wordCloudController.currentKey === String(modelData.recordId || "") ? "生成中..." : generated ? "词云 ✓" : "词云"
+                                        visible: !!modelData.localPdfPath
+                                        enabled: !!modelData.localPdfPath && !wordCloudController.loading
+                                        success: generated
+                                        onClicked: root.openWordCloud(index, modelData, false)
+                                    }
                                     Text {
                                         Layout.fillWidth: true
                                         text: (modelData.favoriteProjectNamesText ? modelData.favoriteProjectNamesText + "  路  " : "") + (modelData.journalName || modelData.source || "")
@@ -545,6 +606,7 @@ Item {
     }
 
     LiteratureReaderPage {
+        id: readerPage
         anchors.fill: parent
         anchors.margins: metrics.pageMargin
         visible: root.readerOpen
@@ -553,11 +615,76 @@ Item {
         title: root.readerTitle
         initialZoom: root.readerLastZoom
 
-        onBackRequested: root.readerOpen = false
+        onBackRequested: root.closeReader()
 
         onZoomPersistRequested: function(value) {
             root.readerLastZoom = value
         }
+        onKnowledgeGraphRequested: function(recordId, pdfPath, title) {
+            root.readerOpen = false
+            root.openKnowledgeGraph(root.selectedIndex, root.selectedRecord)
+        }
+        onWordCloudRequested: function(recordId, pdfPath, title) {
+            root.openWordCloud(root.selectedIndex, root.selectedRecord, true)
+        }
+    }
+
+    KnowledgeGraphPage {
+        anchors.fill: parent
+        anchors.margins: metrics.pageMargin
+        visible: root.graphOpen && !root.graphIsComparison
+        recordId: root.graphRecordId
+        pdfPath: root.graphPdfPath
+        title: root.graphTitle
+        record: root.graphRecord
+        comparisonMode: root.graphIsComparison
+        comparisonRecords: root.graphComparisonRecords
+        onBackRequested: {
+            root.graphOpen = false
+            if (root.graphReturnToCompare) {
+                root.graphReturnToCompare = false
+                comparePopup.open()
+            }
+        }
+        onEvidenceRequested: function(recordId, page, bbox, elementId) {
+            root.openEvidenceInReader(recordId, page, bbox, elementId)
+        }
+    }
+
+    LiteratureCompareGraphPage {
+        anchors.fill: parent
+        anchors.margins: metrics.pageMargin
+        visible: root.graphOpen && root.graphIsComparison
+        recordId: root.graphRecordId
+        records: root.graphComparisonRecords
+        onBackRequested: {
+            root.graphOpen = false
+            root.graphReturnToCompare = false
+            comparePopup.open()
+        }
+        onEvidenceRequested: function(recordId, page, bbox, elementId) {
+            root.openEvidenceInReader(recordId, page, bbox, elementId)
+        }
+    }
+
+    WordCloudPage {
+        anchors.fill: parent
+        anchors.margins: metrics.pageMargin
+        visible: root.wordCloudOpen
+        recordId: root.wordCloudRecordId
+        record: root.wordCloudRecord
+        records: root.wordCloudRecords
+        title: root.wordCloudTitle
+        scope: root.wordCloudScope
+        onBackRequested: {
+            root.wordCloudOpen = false
+            if (root.wordCloudReturnToReader) {
+                root.wordCloudReturnToReader = false
+                root.readerOpen = true
+            }
+        }
+        onEvidenceRequested: function(recordId, page, bbox, elementId) { root.openEvidenceInReader(recordId, page, bbox, elementId) }
+        onGraphRequested: function(recordId, keyword) { root.openGraphFromWordCloud(recordId, keyword) }
     }
 
     function applyFilters() {
@@ -633,6 +760,8 @@ Item {
         root.previewUrl = ""
         root.thumbnailState = "missing_pdf"
         root.previewState = "missing_pdf"
+        if (root.selectedRecordId)
+            knowledgeGraphController.prefetchGraph(String(root.selectedRecordId))
         if(literatureList.currentIndex !== index)
             literatureList.currentIndex = index
         else
@@ -719,7 +848,140 @@ Item {
         root.readerRecordId = recordId
         root.readerPdfPath = pdfPath
         root.readerTitle = String(record.title || "解析阅读")
+        root.readerReturnTarget = ""
+        readerPage.clearEvidenceFocus()
         root.readerOpen = true
+    }
+
+    function closeReader() {
+        root.readerOpen = false
+        var target = root.readerReturnTarget
+        root.readerReturnTarget = ""
+        if (target === "wordcloud")
+            root.wordCloudOpen = true
+        else if (target === "graph" || target === "comparison")
+            root.graphOpen = true
+    }
+    function openKnowledgeGraph(index, record) {
+        if (!record || !record.localPdfPath)
+            return
+        root.selectRecord(index, record)
+        root.graphRecordId = String(record.recordId || "")
+        root.graphPdfPath = String(record.localPdfPath || "")
+        root.graphTitle = String(record.title || "知识图谱")
+        root.graphRecord = record
+        root.graphReturnToCompare = false
+        root.graphIsComparison = false
+        root.graphComparisonRecords = []
+        root.graphOpen = true
+        knowledgeGraphController.generateGraph(root.graphRecordId, record, root.graphPdfPath)
+    }
+    function openWordCloud(index, record, returnToReader) {
+        if (!record || !record.localPdfPath)
+            return
+        root.selectRecord(index, record)
+        root.readerOpen = false
+        root.graphOpen = false
+        root.wordCloudRecordId = String(record.recordId || "")
+        root.wordCloudTitle = String(record.title || "文献词云")
+        root.wordCloudScope = "record"
+        root.wordCloudRecord = record
+        root.wordCloudRecords = [record]
+        root.wordCloudReturnToReader = !!returnToReader
+        root.wordCloudOpen = true
+        wordCloudController.generateForRecord(root.wordCloudRecordId, record, String(record.localPdfPath || ""))
+    }
+    function openLibraryWordCloud() {
+        var records = literatureLibraryController.records || []
+        if (records.length === 0)
+            return
+        root.wordCloudRecordId = ""
+        root.wordCloudTitle = "当前筛选结果"
+        root.wordCloudScope = "library"
+        root.wordCloudRecord = ({})
+        root.wordCloudRecords = records
+        root.wordCloudReturnToReader = false
+        root.wordCloudOpen = true
+        wordCloudController.generateForRecords(records)
+    }
+    function openGraphFromWordCloud(recordId, keyword) {
+        var records = literatureLibraryController.records || []
+        var target = null
+        for (var i = 0; i < records.length; ++i) {
+            if (String(records[i].recordId || "") === String(recordId || "")) {
+                target = records[i]
+                break
+            }
+        }
+        if (!target && String(root.wordCloudRecord.recordId || "") === String(recordId || ""))
+            target = root.wordCloudRecord
+        if (!target)
+            return
+        root.wordCloudOpen = false
+        root.pendingGraphKeyword = String(keyword || "")
+        root.graphRecordId = String(target.recordId || "")
+        root.graphPdfPath = String(target.localPdfPath || "")
+        root.graphTitle = String(target.title || "知识图谱")
+        root.graphRecord = target
+        root.graphIsComparison = false
+        root.graphOpen = true
+        knowledgeGraphController.generateGraph(root.graphRecordId, target, root.graphPdfPath)
+        if (!knowledgeGraphController.loading) {
+            knowledgeGraphController.search(root.pendingGraphKeyword)
+            root.pendingGraphKeyword = ""
+        }
+    }
+    function openComparisonKnowledgeGraph() {
+        var records = literatureLibraryController.compareRecords || []
+        if (records.length === 0)
+            return
+        comparePopup.close()
+        if (!knowledgeGraphController.generateComparisonGraph(records))
+            return
+        root.graphRecordId = knowledgeGraphController.currentRecordId
+        root.graphPdfPath = ""
+        root.graphTitle = "对比知识图谱"
+        root.graphRecord = ({})
+        root.graphReturnToCompare = true
+        root.graphIsComparison = true
+        root.graphComparisonRecords = records
+        root.readerOpen = false
+        root.graphOpen = true
+    }
+    function openEvidenceInReader(recordId, page, bbox, elementId) {
+        var target = null
+        var records = literatureLibraryController.records || []
+        for (var i = 0; i < records.length; ++i) {
+            if (String(records[i].recordId || "") === String(recordId || "")) {
+                target = records[i]
+                break
+            }
+        }
+        var candidates = root.graphComparisonRecords || []
+        for (var j = 0; !target && j < candidates.length; ++j) {
+            if (String(candidates[j].recordId || "") === String(recordId || ""))
+                target = candidates[j]
+        }
+        candidates = root.wordCloudRecords || []
+        for (var k = 0; !target && k < candidates.length; ++k) {
+            if (String(candidates[k].recordId || "") === String(recordId || ""))
+                target = candidates[k]
+        }
+        if (!target && String(root.graphRecord.recordId || "") === String(recordId || ""))
+            target = root.graphRecord
+        if (!target || !target.localPdfPath)
+            return
+        root.readerReturnTarget = root.wordCloudOpen ? "wordcloud" : (root.graphIsComparison ? "comparison" : "graph")
+        root.graphOpen = false
+        root.wordCloudOpen = false
+        root.readerRecordId = String(target.recordId || "")
+        root.readerPdfPath = String(target.localPdfPath || "")
+        root.readerTitle = String(target.title || "解析阅读")
+        root.readerOpen = true
+        Qt.callLater(function() {
+            pdfExtractionController.loadIndexForPdf(root.readerRecordId, root.readerPdfPath)
+            readerPage.focusEvidence(page, bbox || [], elementId)
+        })
     }
     function registerTourTargets() {
         if(root.tourHost) {
@@ -913,6 +1175,11 @@ Item {
                     text: "清空对比"
                     enabled: literatureLibraryController.compareCount > 0
                     onClicked: literatureLibraryController.clearCompare()
+                }
+                PillButton {
+                    text: knowledgeGraphController.loading ? "生成中..." : "知识图谱"
+                    enabled: literatureLibraryController.compareCount > 0 && !knowledgeGraphController.loading
+                    onClicked: root.openComparisonKnowledgeGraph()
                 }
                 PillButton {
                     text: "关闭"

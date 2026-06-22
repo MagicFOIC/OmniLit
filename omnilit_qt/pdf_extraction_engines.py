@@ -97,7 +97,7 @@ class HybridExtractionPipeline:
         if index is None:
             merged = ensure_version_3(base_index)
             merged.setdefault("engineErrors", [])
-            merged["engineErrors"].append(error or _not_initialized_error(engine_name, requested))
+            merged["engineErrors"].append(error or _not_configured_error(engine_name, requested))
             return merged
         if engine_name == "mineru":
             merged = fuse_pymupdf_mineru_indexes(base_index, index, output_dir)
@@ -118,15 +118,11 @@ class HybridExtractionPipeline:
     ) -> tuple[dict[str, Any] | None, dict[str, str] | None]:
         engine = self._engine_by_name(engine_name)
         if engine is None:
-            return None, _not_initialized_error(engine_name, requested, code="NOT_CONFIGURED")
+            return None, _not_configured_error(engine_name, requested)
         try:
             if not engine.is_available():
-                if engine_name == "mineru" and requested == "mineru":
-                    index = engine.analyze(pdf_path, output_dir, options)
-                else:
-                    return None, _not_initialized_error(engine_name, requested)
-            else:
-                index = engine.analyze(pdf_path, output_dir, options)
+                return None, _not_configured_error(engine_name, requested)
+            index = engine.analyze(pdf_path, output_dir, options)
             normalized = ensure_version_3(index, engine_name)
             normalized["engine"] = engine_name
             chain = normalized.get("engineChain") or [engine_name]
@@ -157,29 +153,29 @@ def _engine_error(engine: str, exc: Exception, *, level: str = "warning", code: 
     }
 
 
-def _not_initialized_error(engine: str, requested: str, code: str = "NOT_INITIALIZED") -> dict[str, str]:
+def _not_configured_error(engine: str, requested: str) -> dict[str, str]:
     if engine == "paddleocr_vl":
         level = "warning" if requested == "paddleocr_vl" else "info"
         return {
             "engine": engine,
             "level": level,
-            "code": code,
-            "message": "PaddleOCR-VL 高精度引擎未初始化，已保留 PyMuPDF 快速解析结果。",
+            "code": "NOT_CONFIGURED",
+            "message": "PaddleOCR-VL 云 API 未配置，已保留 PyMuPDF 快速解析结果。",
             "type": "EngineUnavailable",
         }
     if engine == "mineru":
         return {
             "engine": engine,
             "level": "warning",
-            "code": code,
-            "message": "MinerU 深度解析组件未安装或初始化失败，已使用快速解析。",
+            "code": "NOT_CONFIGURED",
+            "message": "MinerU 云 API 未配置，已保留 PyMuPDF 快速解析结果。",
             "type": "EngineUnavailable",
         }
     return {
         "engine": engine,
         "level": "warning",
-        "code": code,
-        "message": f"{engine} 解析引擎未初始化，已保留 PyMuPDF 快速解析结果。",
+        "code": "NOT_CONFIGURED",
+        "message": f"{engine} 云 API 未配置，已保留 PyMuPDF 快速解析结果。",
         "type": "EngineUnavailable",
     }
 
@@ -187,16 +183,13 @@ def _not_initialized_error(engine: str, requested: str, code: str = "NOT_INITIAL
 def _friendly_message(engine: str, exc: Exception) -> str:
     text = str(exc or "").strip()
     if engine == "paddleocr_vl" and ("not available" in text.lower() or not text):
-        return "PaddleOCR-VL 高精度引擎未初始化，已保留 PyMuPDF 快速解析结果。"
+        return "PaddleOCR-VL 云 API 不可用，已保留 PyMuPDF 快速解析结果。"
     if engine == "mineru" and ("not available" in text.lower() or not text):
-        return "MinerU 深度解析组件未安装或初始化失败，已使用快速解析。"
+        return "MinerU 云 API 不可用，已保留 PyMuPDF 快速解析结果。"
     return text or f"{engine} 解析失败，已保留 PyMuPDF 快速解析结果。"
 
 
 def _error_level(engine: str, requested: str, exc: Exception) -> str:
-    text = str(exc).lower()
-    if engine == "paddleocr_vl" and ("未初始化" in str(exc) or "not initialized" in text or "not available" in text):
-        return "warning" if requested == "paddleocr_vl" else "info"
     return "warning"
 
 
@@ -205,10 +198,8 @@ def _error_code(exc: Exception) -> str:
     if explicit:
         return explicit
     text = str(exc).lower()
-    if "未初始化" in str(exc) or "not initialized" in text or "not available" in text:
-        return "NOT_INITIALIZED"
-    if "初始化失败" in str(exc) or "install" in text or "pip" in text:
-        return "INITIALIZATION_FAILED"
+    if "not configured" in text or "configure the" in text:
+        return "NOT_CONFIGURED"
     return "ENGINE_FAILED"
 
 
