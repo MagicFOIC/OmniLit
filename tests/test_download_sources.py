@@ -12,6 +12,18 @@ class DownloadSourceTests(unittest.TestCase):
         self.assertEqual(sources[core.SOURCE_CROSSREF], "Crossref")
         self.assertEqual(sources[core.SOURCE_DOAJ], "DOAJ")
 
+    def test_default_sources_enable_all_supported_legal_sources(self) -> None:
+        self.assertEqual(
+            core.DEFAULT_SOURCES,
+            [
+                core.SOURCE_OPENALEX,
+                core.SOURCE_EUROPE_PMC,
+                core.SOURCE_ARXIV,
+                core.SOURCE_CROSSREF,
+                core.SOURCE_DOAJ,
+            ],
+        )
+
     def test_crossref_search_normalizes_metadata(self) -> None:
         class Response:
             @staticmethod
@@ -135,6 +147,54 @@ class DownloadSourceTests(unittest.TestCase):
         self.assertEqual(item["primary_location"]["source"]["issn"], ["2313-0105"])
         self.assertTrue(item["open_access"]["is_oa"])
         self.assertEqual(item["doaj_fulltext_links"], ["https://example.test/doaj.pdf"])
+
+    def test_europe_pmc_search_preserves_fulltext_links_for_backfill(self) -> None:
+        class Response:
+            @staticmethod
+            def raise_for_status() -> None:
+                return None
+
+            @staticmethod
+            def json() -> dict:
+                return {
+                    "nextCursorMark": "next",
+                    "resultList": {
+                        "result": [{
+                            "source": "PMC",
+                            "id": "123",
+                            "doi": "10.9999/epmc",
+                            "title": "Lithium sulfur full text",
+                            "pubYear": "2024",
+                            "isOpenAccess": "Y",
+                            "fullTextUrlList": {
+                                "fullTextUrl": [
+                                    {
+                                        "availabilityCode": "OA",
+                                        "documentStyle": "pdf",
+                                        "url": "europepmc.test/article.pdf",
+                                    }
+                                ]
+                            },
+                        }]
+                    },
+                }
+
+        class Session:
+            def get(self, *_args, **_kwargs):
+                return Response()
+
+        data = core.search_europe_pmc(Session(), "lithium sulfur", core.CrawlConfig(), "*")
+        item = data["results"][0]
+
+        self.assertEqual(item["primary_location"]["pdf_url"], "europepmc.test/article.pdf")
+        self.assertEqual(
+            core.iter_pdf_candidates(item, None),
+            ["https://europepmc.test/article.pdf"],
+        )
+        self.assertEqual(
+            item["fullTextUrlList"]["fullTextUrl"][0]["url"],
+            "europepmc.test/article.pdf",
+        )
 
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@ from .word_cloud_core import build_word_cloud
 class WordCloudController(QObject):
     changed = Signal()
     cloudReady = Signal(str)
+    graphNodeRequested = Signal(str, str)
     _taskFinished = Signal(str, object, str, bool)
 
     def __init__(self, shell, paths, store, locale) -> None:
@@ -29,6 +30,7 @@ class WordCloudController(QObject):
         self._scope = ""
         self._current_key = ""
         self._worker: ManagedWorker | None = None
+        self._knowledge_graph = None
         self._stop = threading.Event()
         self._taskFinished.connect(self._on_task_finished)
 
@@ -77,6 +79,9 @@ class WordCloudController(QObject):
         temporary = path.with_suffix(path.suffix + ".tmp")
         temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
         temporary.replace(path)
+
+    def setKnowledgeGraphController(self, controller) -> None:
+        self._knowledge_graph = controller
 
     @Slot(str, "QVariantMap", str, result=bool)
     def generateForRecord(self, record_id: str, record: dict, pdf_path: str) -> bool:
@@ -149,7 +154,41 @@ class WordCloudController(QObject):
     @Slot(str, result=bool)
     def selectTerm(self, normalized: str) -> bool:
         term = next((item for item in self._cloud.get("terms") or [] if str(item.get("normalized") or "") == str(normalized)), None)
-        self._selected = dict(term or {}); self.changed.emit(); return term is not None
+        self._selected = dict(term or {})
+        if term:
+            self._sync_graph_node(term, "")
+        self.changed.emit()
+        return term is not None
+
+    @Slot(str, str, result=bool)
+    def selectGraphNodeForTerm(self, normalized: str, record_id: str = "") -> bool:
+        term = next((item for item in self._cloud.get("terms") or [] if str(item.get("normalized") or "") == str(normalized)), None)
+        if not term:
+            return False
+        node_ref = self._node_ref(term, record_id)
+        if not node_ref:
+            return False
+        target_record = str(node_ref.get("recordId") or "")
+        node_id = str(node_ref.get("nodeId") or "")
+        selected = self._sync_graph_node(term, target_record)
+        self.graphNodeRequested.emit(target_record, node_id)
+        return selected
+
+    @staticmethod
+    def _node_ref(term: dict[str, Any], record_id: str) -> dict[str, Any]:
+        refs = [item for item in term.get("nodeRefs") or [] if isinstance(item, dict)]
+        preferred = str(record_id or "")
+        return next((item for item in refs if str(item.get("recordId") or "") == preferred), refs[0] if refs else {})
+
+    def _sync_graph_node(self, term: dict[str, Any], record_id: str) -> bool:
+        node_ref = self._node_ref(term, record_id)
+        if not node_ref or self._knowledge_graph is None:
+            return False
+        target_record = str(node_ref.get("recordId") or "")
+        node_id = str(node_ref.get("nodeId") or "")
+        if str(getattr(self._knowledge_graph, "currentRecordId", "")) != target_record:
+            return False
+        return bool(self._knowledge_graph.selectNode(node_id))
 
     @Slot(str, result="QVariantList")
     def evidenceForTerm(self, normalized: str) -> list[dict[str, Any]]:

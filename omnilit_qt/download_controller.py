@@ -13,7 +13,15 @@ from .app_controller import AppController
 from .background_tasks import ManagedWorker, shutdown_workers
 from .i18n import LocaleController, tr
 from .paths import AppPaths
-from .services import AccountStore, build_download_config, default_download_dir, import_resource_module, normalize_download_form_config
+from .services import (
+    AccountStore,
+    EMAIL_PATTERN,
+    build_download_config,
+    default_download_dir,
+    import_resource_module,
+    normalize_download_form_config,
+    parse_download_keywords,
+)
 
 DOWNLOAD_FORM_SETTING = "download_form_config"
 DOWNLOAD_FORM_FIELDS = (
@@ -50,7 +58,7 @@ DOWNLOAD_FORM_FIELDS = (
     "includeUnknownImpactFactor",
     "journalMetricSource",
     "journalMetricCsv",
-    "discoveryMode",
+    "qualityPreset",
     "advancedVisible",
 )
 
@@ -125,6 +133,7 @@ class DownloadController(QObject):
                 "本轮抓取完成",
                 "Crawl round finished",
                 "Crawl round completed",
+                "元数据 PDF 补全完成",
                 "Metadata PDF backfill finished",
                 "Раунд сканирования завершён",
                 "Раунд обхода завершён",
@@ -242,15 +251,21 @@ class DownloadController(QObject):
     @Property("QVariantMap", constant=True)
     def savedConfig(self) -> dict[str, Any]:
         """Return the saved non-sensitive download form fields."""
-        return normalize_download_form_config(self.paths, self.store, self._saved_config)
+        config = normalize_download_form_config(self.paths, self.store, self._saved_config)
+        config["email"] = str(config.get("email") or self.contactEmail).strip()
+        return config
 
     @Slot("QVariantMap")
     def saveConfig(self, config_map: dict[str, Any]) -> None:
         """Persist the non-sensitive download form fields."""
+        config_map = dict(config_map or {})
+        config_map["email"] = str(config_map.get("email") or self.contactEmail).strip()
+        if "keywords" in config_map:
+            config_map["keywords"] = "\n".join(parse_download_keywords(config_map.get("keywords")))
         self._saved_config = _save_form_setting(
             self.store,
             DOWNLOAD_FORM_SETTING,
-            dict(config_map or {}),
+            config_map,
             DOWNLOAD_FORM_FIELDS,
         )
 
@@ -258,6 +273,36 @@ class DownloadController(QObject):
     def defaultKeywords(self) -> str:
         """返回默认关键词。参数：无。返回值：多行文本。"""
         return "\n".join(import_resource_module(self.paths, "Download", "literature_download_core").DEFAULT_KEYWORDS)
+
+    @Property("QVariantList", constant=True)
+    def keywordSuggestions(self) -> list[str]:
+        """Return default keyword suggestions for the editable dropdown."""
+        return list(import_resource_module(self.paths, "Download", "literature_download_core").DEFAULT_KEYWORDS)
+
+    @Property(str, notify=changed)
+    def contactEmail(self) -> str:
+        """Return the contact email used for literature API requests."""
+        return self.store.contact_email()
+
+    @Slot(str, result=bool)
+    def saveContactEmail(self, email: str) -> bool:
+        """Persist the contact email from system settings."""
+        value = str(email or "").strip()
+        if not value or not EMAIL_PATTERN.fullmatch(value):
+            self._status = self.locale.textf("contact_email_invalid")
+            self.changed.emit()
+            return False
+        self.store.save_contact_email(value)
+        self._saved_config["email"] = value
+        self._saved_config = _save_form_setting(
+            self.store,
+            DOWNLOAD_FORM_SETTING,
+            self._saved_config,
+            DOWNLOAD_FORM_FIELDS,
+        )
+        self._status = self.locale.textf("contact_email_saved")
+        self.changed.emit()
+        return True
 
     @Property("QVariantList", constant=True)
     def availableSources(self) -> list[dict[str, str]]:
@@ -293,6 +338,7 @@ class DownloadController(QObject):
         language = self.locale.language
         try:
             raw = dict(config_map or {})
+            raw["email"] = str(raw.get("email") or self.contactEmail).strip()
             core, config = build_download_config(self.paths, raw, lambda: self._stop.is_set(), lambda stats, message: self.progress.emit(stats, str(message)), language)
             core.validate_config(config)
             self.saveConfig(raw)
@@ -320,9 +366,7 @@ class DownloadController(QObject):
         self._active_source_key = ""
         self._active_source_label = ""
         self._active_source_text = ""
-        keywords = raw.get("keywords") or []
-        if isinstance(keywords, str):
-            keywords = [item.strip() for item in keywords.replace("\n", ",").split(",") if item.strip()]
+        keywords = parse_download_keywords(raw.get("keywords"))
         keyword_text = (", " if language in {"en", "ru"} else "、").join(str(item) for item in keywords[:3])
         if len(keywords) > 3:
             keyword_text += tr(language, "keyword_count_suffix", count=len(keywords))
@@ -350,6 +394,7 @@ class DownloadController(QObject):
         language = self.locale.language
         try:
             raw = dict(config_map or {})
+            raw["email"] = str(raw.get("email") or self.contactEmail).strip()
             core, config = build_download_config(
                 self.paths,
                 raw,
@@ -367,12 +412,12 @@ class DownloadController(QObject):
             try:
                 core.backfill_missing_pdfs_from_metadata(config, stop_event=self._stop)
             except Exception as exc:
-                message = tr(language, "download_failed", error=exc)
+                message = tr(language, "pdf_backfill_failed", error=exc)
                 task.update_state("failed", detail=message)
                 self.finished.emit(False, message)
             else:
                 cancelled = self._stop.is_set()
-                message = tr(language, "download_stopped" if cancelled else "download_done")
+                message = tr(language, "pdf_backfill_stopped" if cancelled else "pdf_backfill_done")
                 task.update_state("cancelled" if cancelled else "completed", detail=message)
                 self.finished.emit(not cancelled, message)
 
@@ -382,8 +427,8 @@ class DownloadController(QObject):
         self._active_source_key = ""
         self._active_source_label = ""
         self._active_source_text = ""
-        self._active_task_text = "补全已有文献 PDF" if language == "zh" else "Backfill existing PDFs"
-        self._status = "已启动已有 metadata PDF 补全。" if language == "zh" else "Existing metadata PDF backfill started."
+        self._active_task_text = tr(language, "pdf_backfill_task")
+        self._status = tr(language, "pdf_backfill_started")
         self._append(self._status)
         self.changed.emit()
         task = ManagedWorker(

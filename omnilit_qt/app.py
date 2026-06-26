@@ -93,6 +93,7 @@ def run() -> int:
     knowledge_graph.setPdfExtractionController(pdf_extraction)
     pdf_extraction.analysisReady.connect(knowledge_graph.invalidateRecord)
     word_cloud = WordCloudController(shell, paths, store, locale)
+    word_cloud.setKnowledgeGraphController(knowledge_graph)
     translation = TranslationController(shell, paths, store, locale)
     updater = UpdateController(shell, paths, store, locale)
     onboarding = OnboardingController(shell, paths, store)

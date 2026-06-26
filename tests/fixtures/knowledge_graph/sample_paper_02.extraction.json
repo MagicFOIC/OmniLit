@@ -1,0 +1,46 @@
+{
+  "record": {
+    "recordId": "sample-paper-02",
+    "title": "Clinical Risk Prediction with Temporal Models"
+  },
+  "extraction_index": {
+    "engine": "golden-fixture",
+    "sourceSha256": "sample-paper-02-sha",
+    "pageCount": 4,
+    "pages": [
+      {
+        "page": 0,
+        "height": 800,
+        "textBlocks": [
+          {"blockNo": 1, "text": "Method", "bbox": [20, 70, 180, 100]},
+          {"blockNo": 2, "text": "We employ a temporal transformer model for clinical risk prediction.", "bbox": [20, 120, 520, 155]},
+          {"blockNo": 3, "text": "The experiment uses the MIMIC benchmark dataset for evaluation.", "bbox": [20, 170, 520, 205]}
+        ]
+      },
+      {
+        "page": 1,
+        "height": 800,
+        "textBlocks": [
+          {"blockNo": 1, "text": "Results", "bbox": [20, 70, 180, 100]},
+          {"blockNo": 2, "text": "Results show the model improves precision and recall over the baseline.", "bbox": [20, 120, 520, 155]}
+        ]
+      },
+      {
+        "page": 2,
+        "height": 800,
+        "textBlocks": [
+          {"blockNo": 1, "text": "Discussion", "bbox": [20, 70, 180, 100]},
+          {"blockNo": 2, "text": "The main limitation is the single-center cohort and limited demographic coverage.", "bbox": [20, 120, 520, 155]}
+        ]
+      },
+      {
+        "page": 3,
+        "height": 800,
+        "textBlocks": [
+          {"blockNo": 1, "text": "Conclusion", "bbox": [20, 70, 180, 100]},
+          {"blockNo": 2, "text": "Future research will validate the model on a multi-center cohort.", "bbox": [20, 120, 520, 155]}
+        ]
+      }
+    ]
+  }
+}

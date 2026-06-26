@@ -5,37 +5,40 @@ import QtQuick.Layouts
 Item {
     id: root
     property var tourHost: null
-    property var sortValues: ["", "relevance_score:desc", "cited_by_count:desc", "publication_date:desc"]
-    property var topicScoreValues: [0, 4, 6, 9, 12]
-    property var topicScoreLabels: ["关键词提及即可 / 0", "宽松 / 4", "均衡 / 6", "严格 / 9", "极严格 / 12"]
-    property var journalMetricSourceValues: ["local_then_openalex", "local_only", "openalex_only"]
-    property var journalMetricSourceLabels: [i18n.text("local_then_openalex"), i18n.text("local_only"), i18n.text("openalex_only")]
-    property var selectedSources: ["openalex"]
-    property var selectedJournals: []
-    property var discoverySnapshot: ({})
-    property bool advancedVisible: false
+    property var selectedSources: ["openalex", "europe_pmc", "arxiv", "crossref", "doaj"]
+    property var keywordOptions: []
+    property var keywordTerms: []
+    property int editingKeywordIndex: -1
+    property bool addingKeyword: false
+    property var qualityValues: ["keyword", "relaxed", "balanced", "strict", "very_strict"]
+    property var qualityLabelKeys: ["quality_keyword", "quality_relaxed", "quality_balanced", "quality_strict", "quality_very_strict"]
+    property var qualityTipKeys: ["quality_keyword_tip", "quality_relaxed_tip", "quality_balanced_tip", "quality_strict_tip", "quality_very_strict_tip"]
+    property int selectedQualityIndex: 2
     property bool restoringSettings: true
     property bool toDateAuto: true
-    property bool discoverySnapshotAvailable: false
-    readonly property bool discoveryModeActive: filterStrategy.currentIndex === 1
-    readonly property int logPaneMinimumHeight: metrics.compact ? (advancedVisible ? 78 : 105) : (advancedVisible ? 96 : 130)
     readonly property int statsPaneHeight: metrics.compact ? 64 : 72
-    readonly property real downloadFormPaneHeight: Math.max(metrics.compact ? 320 : 380, form.implicitHeight + metrics.cardPadding * 2)
+    readonly property real downloadFormPaneHeight: Math.max(metrics.compact ? 300 : 360, form.implicitHeight + metrics.cardPadding * 2)
+    readonly property int logPaneMinimumHeight: metrics.compact ? 112 : 140
     readonly property real logPanePreferredHeight: Math.max(
         logPaneMinimumHeight,
         root.height - metrics.pageMargin * 2 - heading.implicitHeight - downloadFormPaneHeight - statsPaneHeight - metrics.sectionSpacing * 3
     )
+
     Motion { id: motion }
     PageMotion { target: root }
     I18n { id: i18n }
     Theme { id: theme }
     LayoutMetrics { id: metrics; viewportWidth: root.width; viewportHeight: root.height }
     Timer { id: saveSettingsTimer; interval: 350; onTriggered: downloadController.saveConfig(config()) }
-    Component.onCompleted: { restoreSavedConfig(); restoringSettings = false; root.registerTourTargets() }
+
+    Component.onCompleted: {
+        restoreSavedConfig()
+        restoringSettings = false
+        root.registerTourTargets()
+    }
     Component.onDestruction: root.unregisterTourTargets()
     onSelectedSourcesChanged: scheduleSave()
-    onSelectedJournalsChanged: scheduleSave()
-    onAdvancedVisibleChanged: scheduleSave()
+    onSelectedQualityIndexChanged: scheduleSave()
 
     ScrollView {
         id: pageScroll
@@ -45,464 +48,394 @@ Item {
         clip: true
         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
-    ColumnLayout {
-        width: pageScroll.availableWidth; spacing: metrics.sectionSpacing
-        PageHeading { id: heading; Layout.fillWidth: true; title: i18n.text("download_title"); subtitle: i18n.text("download_desc"); titleSize: metrics.headingSize }
-        Card {
-            id: functionCard
-            Layout.fillWidth: true
-            Layout.preferredHeight: root.downloadFormPaneHeight
-            Layout.minimumHeight: metrics.compact ? (root.advancedVisible ? 360 : 320) : (root.advancedVisible ? 440 : 380)
-            ScrollView {
-                id: formScroll
-                anchors.fill: parent
-                anchors.margins: metrics.cardPadding
-                contentWidth: availableWidth
-                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-                clip: true
-                ColumnLayout {
-                    id: form
-                    width: formScroll.availableWidth
-                    spacing: metrics.compact ? 5 : 7
-                GridLayout {
-                    Layout.fillWidth: true; columns: metrics.narrow ? 2 : 4; columnSpacing: 12; rowSpacing: metrics.compact ? 6 : 8
-                    Text { text: i18n.text("email"); color: theme.textMuted }
-                    TextField { id: email; Layout.fillWidth: true; onTextChanged: root.scheduleSave() }
-                    Text { text: i18n.text("output_dir"); color: theme.textMuted }
-                    RowLayout {
-                        Layout.fillWidth: true
-                        TextField { id: outputDir; Layout.fillWidth: true; text: downloadController.defaultOutputDir; onTextChanged: root.scheduleSave() }
-                        PillButton { text: i18n.text("choose"); onClicked: { let p=downloadController.chooseDirectory(outputDir.text); if(p) outputDir.text=p } }
-                        PillButton { text: i18n.text("open"); onClicked: downloadController.openDirectory(outputDir.text) }
-                    }
-                    Text { text: i18n.text("from_date"); color: theme.textMuted }
-                    DatePickerField { id: fromDate; text: downloadController.defaultFromDate; maxDateText: toDate.text; onTextChanged: root.scheduleSave() }
-                    Text { text: i18n.text("to_date"); color: theme.textMuted }
-                    DatePickerField {
-                        id: toDate
-                        text: downloadController.defaultToDate
-                        minDateText: fromDate.text
-                        maxDateText: downloadController.defaultToDate
+        ColumnLayout {
+            width: pageScroll.availableWidth
+            spacing: metrics.sectionSpacing
 
-                        onTextChanged: {
-                            if(!root.restoringSettings)
-                                root.toDateAuto = false
-                            root.scheduleSave()
-                        }
-                    }
-                    Text { text: i18n.text("sort"); color: theme.textMuted }
-                    ComboBox {
-                        id: sortMode; Layout.fillWidth: true
-                        model: [i18n.text("sort_default"), i18n.text("sort_relevance") + " desc",
-                                i18n.text("sort_citations") + " desc", i18n.text("sort_date") + " desc"]
-                        currentIndex: 1
-                        onCurrentIndexChanged: root.scheduleSave()
-                    }
-                    Text { text: i18n.text("max_records"); color: theme.textMuted }
-                    TextField { id: maxRecords; Layout.fillWidth: true; placeholderText: i18n.text("optional"); onTextChanged: root.scheduleSave() }
-                }
-                Text { text: i18n.text("keywords"); color: theme.textMuted }
-                SoftTextArea { id: keywords; Layout.fillWidth: true; Layout.preferredHeight: 54; text: downloadController.defaultKeywords; wrapMode: TextArea.Wrap; onTextChanged: root.scheduleSave() }
-                RowLayout {
-                    Text { text: i18n.text("literature_sources"); color: theme.textMuted }
-                    Repeater {
-                        model: downloadController.availableSources
-                        ModernCheckBox {
-                            text: modelData.label
-                            checked: root.selectedSources.indexOf(modelData.key) >= 0
-                            activePulse: downloadController.running && downloadController.activeSourceKey === modelData.key
-                            onToggled: root.toggleSource(modelData.key, checked)
-                            ModernToolTip {
-                                placement: "bottom"
-                                delay: 250
-                                timeout: 5000
-                                shown: parent.activePulse || parent.hovered
-                                text: parent.activePulse ? downloadController.activeSourceText : modelData.label
+            PageHeading {
+                id: heading
+                Layout.fillWidth: true
+                title: i18n.text("download_title")
+                subtitle: i18n.text("download_desc")
+                titleSize: metrics.headingSize
+            }
+
+            Card {
+                id: functionCard
+                Layout.fillWidth: true
+                Layout.preferredHeight: root.downloadFormPaneHeight
+                Layout.minimumHeight: metrics.compact ? 300 : 360
+
+                ScrollView {
+                    id: formScroll
+                    anchors.fill: parent
+                    anchors.margins: metrics.cardPadding
+                    contentWidth: availableWidth
+                    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                    clip: true
+
+                    ColumnLayout {
+                        id: form
+                        width: formScroll.availableWidth
+                        spacing: metrics.compact ? 7 : 10
+
+                        GridLayout {
+                            Layout.fillWidth: true
+                            columns: metrics.narrow ? 2 : 4
+                            columnSpacing: 12
+                            rowSpacing: metrics.compact ? 6 : 8
+
+                            Text { text: i18n.text("from_date"); color: theme.textMuted }
+                            DatePickerField {
+                                id: fromDate
+                                text: downloadController.defaultFromDate
+                                maxDateText: toDate.text
+                                onTextChanged: root.scheduleSave()
+                            }
+
+                            Text { text: i18n.text("to_date"); color: theme.textMuted }
+                            DatePickerField {
+                                id: toDate
+                                text: downloadController.defaultToDate
+                                minDateText: fromDate.text
+                                maxDateText: downloadController.defaultToDate
+                                onTextChanged: {
+                                    if(!root.restoringSettings)
+                                        root.toDateAuto = false
+                                    root.scheduleSave()
+                                }
+                            }
+
+                            Text { text: i18n.text("output_dir"); color: theme.textMuted }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Layout.columnSpan: metrics.narrow ? 1 : 3
+                                TextField {
+                                    id: outputDir
+                                    Layout.fillWidth: true
+                                    text: downloadController.defaultOutputDir
+                                    onTextChanged: root.scheduleSave()
+                                }
+                                PillButton {
+                                    text: i18n.text("open")
+                                    onClicked: downloadController.openDirectory(outputDir.text)
+                                }
                             }
                         }
-                    }
-                    Item { Layout.fillWidth: true }
-                }
-                Rectangle {
-                    Layout.fillWidth: true
-                    implicitHeight: downloadController.activeSourceText.length > 0 ? activeSourceText.implicitHeight + 14 : 0
-                    opacity: downloadController.activeSourceText.length > 0 ? 1 : 0
-                    radius: 11
-                    color: theme.accentSofter
-                    border.color: theme.border
-                    clip: true
-                    Behavior on opacity { NumberAnimation { duration: motion.fast } }
-                    Behavior on implicitHeight { NumberAnimation { duration: motion.fast; easing.type: Easing.OutCubic } }
-                    Text {
-                        id: activeSourceText
-                        anchors.fill: parent
-                        anchors.margins: 7
-                        text: downloadController.activeSourceText
-                        color: theme.text
-                        font.weight: Font.DemiBold
-                        verticalAlignment: Text.AlignVCenter
-                        elide: Text.ElideRight
-                    }
-                }
-                Text {
-                    Layout.fillWidth: true
-                    text: i18n.text("settings_group_search_scope")
-                    color: theme.text
-                    font.weight: Font.Bold
-                }
-                RowLayout {
-                    ModernCheckBox { id: downloadPdfs; text: i18n.text("download_pdf"); checked: true; onToggled: root.scheduleSave() }
-                    ModernCheckBox {
-                        id: resume
-                        text: i18n.text("resume")
-                        checked: true
-                        enabled: !root.discoveryModeActive
-                        opacity: enabled ? 1 : 0.55
-                        onToggled: root.scheduleSave()
-                        ModernToolTip {
-                            placement: "bottom"
-                            delay: 250
-                            timeout: 5000
-                            shown: parent.hovered && root.discoveryModeActive
-                            text: i18n.text("discovery_managed_setting_tip")
-                        }
-                    }
-                    ModernCheckBox {
-                        id: oaOnly
-                        text: i18n.text("oa_only")
-                        onToggled: root.scheduleSave()
-                        ModernToolTip {
-                            placement: "bottom"
-                            delay: 250
-                            timeout: 7000
-                            shown: parent.hovered
-                            text: i18n.text("oa_only_tip")
-                        }
-                    }
-                    Text { text: i18n.text("pages"); color: theme.textMuted }
-                    SpinBox { id: pages; from: 1; to: 1000; value: 1; editable: true; onValueChanged: root.scheduleSave() }
-                    Text { text: i18n.text("per_page"); color: theme.textMuted }
-                    SpinBox { id: perPage; from: 1; to: 200; value: 20; editable: true; onValueChanged: root.scheduleSave() }
-                    Item { Layout.fillWidth: true }
-                    PillButton { text: root.advancedVisible ? i18n.text("collapse_advanced") : i18n.text("advanced"); onClicked: root.advancedVisible = !root.advancedVisible }
-                }
-                Item {
-                    id: advancedPanel
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: panelHeight
-                    property real panelHeight: root.advancedVisible ? advancedContent.implicitHeight : 0
-                    opacity: root.advancedVisible ? 1 : 0
-                    clip: true
-                    Behavior on panelHeight { NumberAnimation { duration: motion.expand; easing.type: Easing.OutCubic } }
-                    Behavior on opacity { NumberAnimation { duration: motion.normal } }
-                    ColumnLayout {
-                        id: advancedContent
-                        width: parent.width
-                        Rectangle {
-                            id: discoveryNotice
+
+                        Text { text: i18n.text("keywords"); color: theme.textMuted }
+                        ColumnLayout {
                             Layout.fillWidth: true
-                            Layout.preferredHeight: noticeHeight
-                            property real noticeHeight: root.discoveryModeActive ? discoveryNoticeText.implicitHeight + 16 : 0
-                            opacity: root.discoveryModeActive ? 1 : 0
-                            radius: 10
+                            spacing: 7
+
+                            Flow {
+                                id: keywordChipFlow
+                                Layout.fillWidth: true
+                                spacing: 7
+                                Repeater {
+                                    model: root.keywordTerms
+                                    Rectangle {
+                                        id: keywordChip
+                                        property bool editing: root.editingKeywordIndex === index
+                                        radius: 8
+                                        color: theme.accentSofter
+                                        border.color: theme.border
+                                        implicitWidth: keywordChipRow.implicitWidth + 18
+                                        implicitHeight: editing ? 36 : 32
+                                        Row {
+                                            id: keywordChipRow
+                                            anchors.centerIn: parent
+                                            spacing: 7
+                                            Text {
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                visible: !keywordChip.editing
+                                                text: modelData
+                                                color: theme.text
+                                                font.pixelSize: Math.max(11, theme.baseFontSize - 1)
+                                                elide: Text.ElideRight
+                                                width: Math.min(260, implicitWidth)
+                                                MouseArea {
+                                                    anchors.fill: parent
+                                                    cursorShape: Qt.IBeamCursor
+                                                    onClicked: root.startEditKeyword(index)
+                                                }
+                                            }
+                                            TextField {
+                                                id: keywordEdit
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                visible: keywordChip.editing
+                                                text: modelData
+                                                selectByMouse: true
+                                                width: visible ? Math.min(300, Math.max(160, implicitWidth + 24)) : 0
+                                                onVisibleChanged: if(visible) {
+                                                    text = modelData
+                                                    forceActiveFocus()
+                                                    selectAll()
+                                                }
+                                                onAccepted: root.commitKeywordEdit(index, text)
+                                                onActiveFocusChanged: if(keywordChip.editing && !activeFocus)
+                                                    root.commitKeywordEdit(index, text)
+                                            }
+                                            Button {
+                                                width: 20
+                                                height: 20
+                                                text: "x"
+                                                hoverEnabled: true
+                                                onClicked: root.removeKeyword(index)
+                                                background: Rectangle {
+                                                    radius: 8
+                                                    color: parent.hovered ? theme.accentSoft : "transparent"
+                                                }
+                                                contentItem: Text {
+                                                    text: parent.text
+                                                    color: theme.textMuted
+                                                    font.pixelSize: 12
+                                                    font.weight: Font.Bold
+                                                    horizontalAlignment: Text.AlignHCenter
+                                                    verticalAlignment: Text.AlignVCenter
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Rectangle {
+                                    id: addKeywordChip
+                                    property bool editing: root.addingKeyword
+                                    radius: 8
+                                    color: editing ? theme.surface : theme.accentSofter
+                                    border.color: editing ? theme.accent : theme.border
+                                    implicitWidth: editing ? addKeywordEdit.width + 18 : 36
+                                    implicitHeight: editing ? 36 : 32
+
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        enabled: !addKeywordChip.editing
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: root.startAddKeyword()
+                                    }
+
+                                    Text {
+                                        anchors.centerIn: parent
+                                        visible: !addKeywordChip.editing
+                                        text: "+"
+                                        color: theme.accentStrong
+                                        font.pixelSize: 18
+                                        font.weight: Font.Bold
+                                    }
+
+                                    TextField {
+                                        id: addKeywordEdit
+                                        anchors.centerIn: parent
+                                        visible: addKeywordChip.editing
+                                        selectByMouse: true
+                                        width: visible ? 240 : 0
+                                        placeholderText: i18n.text("keyword_input_placeholder")
+                                        onVisibleChanged: if(visible) {
+                                            text = ""
+                                            forceActiveFocus()
+                                        }
+                                        onAccepted: root.commitNewKeyword(text)
+                                        onActiveFocusChanged: if(root.addingKeyword && !activeFocus)
+                                            root.commitNewKeyword(text)
+                                    }
+                                }
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Text { text: i18n.text("literature_sources"); color: theme.textMuted }
+                            Repeater {
+                                model: downloadController.availableSources
+                                ModernCheckBox {
+                                    text: modelData.label
+                                    checked: root.selectedSources.indexOf(modelData.key) >= 0
+                                    activePulse: downloadController.running && downloadController.activeSourceKey === modelData.key
+                                    onToggled: root.toggleSource(modelData.key, checked)
+                                    ModernToolTip {
+                                        placement: "bottom"
+                                        delay: 250
+                                        timeout: 5000
+                                        shown: parent.activePulse || parent.hovered
+                                        text: parent.activePulse ? downloadController.activeSourceText : modelData.label
+                                    }
+                                }
+                            }
+                            Item { Layout.fillWidth: true }
+                        }
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            implicitHeight: downloadController.activeSourceText.length > 0 ? activeSourceText.implicitHeight + 14 : 0
+                            opacity: downloadController.activeSourceText.length > 0 ? 1 : 0
+                            radius: 8
                             color: theme.accentSofter
                             border.color: theme.border
                             clip: true
-                            Behavior on noticeHeight { NumberAnimation { duration: motion.fast; easing.type: Easing.OutCubic } }
                             Behavior on opacity { NumberAnimation { duration: motion.fast } }
+                            Behavior on implicitHeight { NumberAnimation { duration: motion.fast; easing.type: Easing.OutCubic } }
                             Text {
-                                id: discoveryNoticeText
+                                id: activeSourceText
                                 anchors.fill: parent
-                                anchors.margins: 8
-                                text: i18n.text("discovery_mode_active_tip")
+                                anchors.margins: 7
+                                text: downloadController.activeSourceText
                                 color: theme.text
                                 font.weight: Font.DemiBold
-                                wrapMode: Text.Wrap
                                 verticalAlignment: Text.AlignVCenter
+                                elide: Text.ElideRight
                             }
                         }
+
                         Text {
                             Layout.fillWidth: true
                             text: i18n.text("settings_group_filter_quality")
                             color: theme.text
                             font.weight: Font.Bold
                         }
-                        GridLayout {
-                            Layout.fillWidth: true; columns: metrics.narrow ? 2 : 4; columnSpacing: 12; rowSpacing: metrics.compact ? 6 : 8
-                            ModernCheckBox {
-                                id: strictMatch
-                                Layout.fillWidth: true
-                                text: i18n.text("strict_match")
-                                checked: true
-                                enabled: !root.discoveryModeActive
-                                opacity: enabled ? 1 : 0.55
-                                onToggled: root.scheduleSave()
-                                ModernToolTip {
-                                    placement: "bottom"
-                                    delay: 250
-                                    timeout: 5000
-                                    shown: parent.hovered && root.discoveryModeActive
-                                    text: i18n.text("discovery_managed_setting_tip")
-                                }
-                            }
-                            Text { text: i18n.text("match_ratio"); color: theme.textMuted }
-                            TextField {
-                                id: matchRatio
-                                Layout.fillWidth: true
-                                text: "0.75"
-                                enabled: !root.discoveryModeActive
-                                opacity: enabled ? 1 : 0.55
-                                hoverEnabled: true
-                                onTextChanged: root.scheduleSave()
-                                ModernToolTip {
-                                    placement: "bottom"
-                                    delay: 250
-                                    timeout: 5000
-                                    shown: parent.hovered && root.discoveryModeActive
-                                    text: i18n.text("discovery_managed_setting_tip")
-                                }
-                            }
-                            Text { text: i18n.text("topic_filter_strength"); color: theme.textMuted }
-                            ColumnLayout {
-                                Layout.fillWidth: true
-                                spacing: 2
-                                ComboBox {
-                                    id: minTopicScore
-                                    Layout.fillWidth: true
-                                    model: root.topicScoreLabels
-                                    currentIndex: 0
-                                    enabled: !root.discoveryModeActive
-                                    opacity: enabled ? 1 : 0.55
-                                    hoverEnabled: true
-                                    onCurrentIndexChanged: root.scheduleSave()
+
+                        Flow {
+                            Layout.fillWidth: true
+                            spacing: 8
+                            Repeater {
+                                model: root.qualityValues.length
+                                PillButton {
+                                    text: i18n.text(root.qualityLabelKeys[index])
+                                    primary: root.selectedQualityIndex === index
+                                    onClicked: root.selectedQualityIndex = index
                                     ModernToolTip {
                                         placement: "bottom"
-                                        delay: 350
+                                        delay: 250
                                         timeout: 9000
                                         shown: parent.hovered
-                                        text: root.discoveryModeActive ? i18n.text("discovery_managed_setting_tip") : i18n.text("topic_filter_strength_tip")
+                                        text: i18n.text(root.qualityTipKeys[index])
                                     }
                                 }
-                                Text {
-                                    Layout.fillWidth: true
-                                    text: i18n.text("topic_filter_hint")
-                                    color: theme.textMuted
-                                    font.pixelSize: Math.max(10, theme.baseFontSize - 3)
-                                    wrapMode: Text.Wrap
-                                }
-                            }
-                            Text { text: i18n.text("journal_scope"); color: theme.textMuted }
-                            ComboBox {
-                                id: journalScope
-                                Layout.fillWidth: true
-                                model: [i18n.text("journal_rank_only"), i18n.text("journal_whitelist_only")]
-                                currentIndex: 0
-                                enabled: !root.discoveryModeActive
-                                opacity: enabled ? 1 : 0.55
-                                hoverEnabled: true
-                                onCurrentIndexChanged: root.scheduleSave()
-                                ModernToolTip {
-                                    placement: "bottom"
-                                    delay: 350
-                                    timeout: 9000
-                                    shown: parent.hovered
-                                    text: root.discoveryModeActive ? i18n.text("discovery_managed_setting_tip") : i18n.text("journal_scope_tip")
-                                }
-                            }
-                            Text { text: i18n.text("min_impact_factor"); color: theme.textMuted }
-                            TextField {
-                                id: minImpactFactor
-                                Layout.fillWidth: true
-                                placeholderText: i18n.text("optional")
-                                validator: DoubleValidator { bottom: 0 }
-                                onTextChanged: root.scheduleSave()
-                            }
-                            ModernCheckBox {
-                                id: includeUnknownImpactFactor
-                                Layout.fillWidth: true
-                                text: i18n.text("include_unknown_impact_factor")
-                                checked: true
-                                onToggled: root.scheduleSave()
-                            }
-                            Item { Layout.fillWidth: true; visible: !metrics.narrow }
-                            Text { text: i18n.text("journal_metric_source"); color: theme.textMuted }
-                            ComboBox {
-                                id: journalMetricSource
-                                Layout.fillWidth: true
-                                model: root.journalMetricSourceLabels
-                                currentIndex: 0
-                                onCurrentIndexChanged: root.scheduleSave()
-                            }
-                            Text { text: i18n.text("journal_metric_csv"); color: theme.textMuted }
-                            TextField {
-                                id: journalMetricCsv
-                                Layout.fillWidth: true
-                                placeholderText: i18n.text("optional")
-                                onTextChanged: root.scheduleSave()
-                            }
-                            Text {
-                                Layout.fillWidth: true
-                                Layout.columnSpan: metrics.narrow ? 2 : 4
-                                text: i18n.text("impact_metric_hint")
-                                color: theme.textMuted
-                                font.pixelSize: Math.max(10, theme.baseFontSize - 3)
-                                wrapMode: Text.Wrap
                             }
                         }
-                        Text {
+
+                        RowLayout {
                             Layout.fillWidth: true
-                            text: i18n.text("settings_group_runtime")
-                            color: theme.text
-                            font.weight: Font.Bold
-                        }
-                        GridLayout {
-                            Layout.fillWidth: true
-                            columns: metrics.narrow ? 2 : 4
-                            Text { text: i18n.text("request_delay"); color: theme.textMuted }
-                            TextField { id: requestDelay; Layout.fillWidth: true; text: "0.2"; onTextChanged: root.scheduleSave() }
-                            Text { text: i18n.text("page_delay"); color: theme.textMuted }
-                            TextField { id: pageDelay; Layout.fillWidth: true; text: "0.5"; onTextChanged: root.scheduleSave() }
-                            Text { text: i18n.text("min_pdf_bytes"); color: theme.textMuted }
-                            TextField { id: minPdfBytes; Layout.fillWidth: true; text: "1024"; onTextChanged: root.scheduleSave() }
-                            Text { text: i18n.text("loop_sleep"); color: theme.textMuted }
-                            TextField { id: loopSleep; Layout.fillWidth: true; text: "3600"; onTextChanged: root.scheduleSave() }
-                            Text { text: i18n.text("runtime_hours"); color: theme.textMuted }
-                            TextField { id: runtimeHours; Layout.fillWidth: true; placeholderText: i18n.text("optional"); onTextChanged: root.scheduleSave() }
-                            ModernCheckBox { id: retryMissing; text: i18n.text("retry_missing"); checked: true; onToggled: root.scheduleSave() }
-                            ModernCheckBox { id: writeRetry; text: i18n.text("write_retry"); onToggled: root.scheduleSave() }
-                            ModernCheckBox { id: loopJob; text: i18n.text("loop_job"); onToggled: root.scheduleSave() }
-                            ModernCheckBox {
-                                id: fastForward
-                                text: i18n.text("fast_forward")
-                                checked: true
-                                enabled: !root.discoveryModeActive
-                                opacity: enabled ? 1 : 0.55
-                                onToggled: root.scheduleSave()
+                            Item { Layout.fillWidth: true }
+                            PillButton {
+                                text: downloadController.running ? i18n.text("running") : i18n.text("start_download")
+                                primary: true
+                                busy: downloadController.running
+                                onClicked: downloadController.start(config())
+                            }
+                            PillButton {
+                                text: i18n.text("pdf_backfill")
+                                enabled: !downloadController.running
+                                onClicked: downloadController.backfillMissingPdfs(config())
                                 ModernToolTip {
                                     placement: "bottom"
                                     delay: 250
-                                    timeout: 5000
-                                    shown: parent.hovered && root.discoveryModeActive
-                                    text: i18n.text("discovery_managed_setting_tip")
-                                }
-                            }
-                        }
-                        Text {
-                            Layout.fillWidth: true
-                            text: i18n.text("settings_group_filter_strategy")
-                            color: theme.text
-                            font.weight: Font.Bold
-                        }
-                        GridLayout {
-                            Layout.fillWidth: true
-                            columns: metrics.narrow ? 2 : 4
-                            Text { text: i18n.text("filter_strategy"); color: theme.textMuted }
-                            ComboBox {
-                                id: filterStrategy
-                                Layout.fillWidth: true
-                                model: [i18n.text("standard_filter"), i18n.text("loose_discovery")]
-                                currentIndex: 0
-                                hoverEnabled: true
-                                onCurrentIndexChanged: {
-                                    root.handleFilterStrategyChanged(currentIndex)
-                                    root.scheduleSave()
-                                }
-                                ModernToolTip {
-                                    placement: "bottom"
-                                    delay: 350
-                                    timeout: 9000
+                                    timeout: 6000
                                     shown: parent.hovered
-                                    text: i18n.text("discovery_mode_tip")
+                                    text: i18n.text("pdf_backfill_tip")
                                 }
                             }
+                            PillButton {
+                                text: i18n.text("stop")
+                                enabled: downloadController.running
+                                onClicked: downloadController.stop()
+                            }
+                        }
+
+                        StatusBanner {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: implicitHeight
+                            Layout.minimumHeight: implicitHeight
+                            Layout.maximumHeight: implicitHeight
+                            reserveSpace: true
+                            maximumLines: 2
+                            text: downloadController.statusText
+                            busy: downloadController.running
                         }
                     }
                 }
-                RowLayout {
-                    Item { Layout.fillWidth: true }
-                    PillButton { text: "补全已有文献 PDF"; enabled: !downloadController.running; onClicked: downloadController.backfillMissingPdfs(config()) }
-                    PillButton { text: downloadController.running ? i18n.text("running") : i18n.text("start_download"); primary: true; busy: downloadController.running; onClicked: downloadController.start(config()) }
-                    PillButton { text: i18n.text("stop"); enabled: downloadController.running; onClicked: downloadController.stop() }
-                }
-                    StatusBanner {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: implicitHeight
-                        Layout.minimumHeight: implicitHeight
-                        Layout.maximumHeight: implicitHeight
+            }
 
-                        reserveSpace: true
-                        maximumLines: 2
-                        text: downloadController.statusText
-                        busy: downloadController.running
+            RowLayout {
+                id: statsRow
+                Layout.fillWidth: true
+                Layout.preferredHeight: root.statsPaneHeight
+                spacing: 8
+                StatCard { Layout.preferredHeight: root.statsPaneHeight; title: i18n.text("literature_records"); value: String(downloadController.stats.fetched_items_total || downloadController.stats.fetched_items || 0); detail: i18n.text("fetched") }
+                StatCard { Layout.preferredHeight: root.statsPaneHeight; title: i18n.text("metadata"); value: String(downloadController.stats.added_records || 0); detail: i18n.text("saved") }
+                StatCard { Layout.preferredHeight: root.statsPaneHeight; title: "PDF"; value: String(downloadController.stats.downloaded_pdfs || downloadController.stats.pdf_downloaded || 0); detail: i18n.text("downloaded") }
+            }
+
+            Card {
+                Layout.fillWidth: true
+                Layout.preferredHeight: root.logPanePreferredHeight
+                Layout.minimumHeight: root.logPaneMinimumHeight
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 12
+
+                    Text {
+                        text: i18n.text("task_log")
+                        color: theme.text
+                        font.weight: Font.Bold
+                    }
+
+                    ScrollPreservingTextArea {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        text: downloadController.logText
+                        readOnly: true
+                        wrapMode: TextArea.Wrap
                     }
                 }
             }
         }
-        RowLayout {
-            id: statsRow
-            Layout.fillWidth: true; Layout.preferredHeight: root.statsPaneHeight; spacing: 8
-            StatCard { Layout.preferredHeight: root.statsPaneHeight; title: i18n.text("literature_records"); value: String(downloadController.stats.fetched_items || 0); detail: i18n.text("fetched") }
-            StatCard { Layout.preferredHeight: root.statsPaneHeight; title: i18n.text("metadata"); value: String(downloadController.stats.added_records || 0); detail: i18n.text("saved") }
-            StatCard { Layout.preferredHeight: root.statsPaneHeight; title: "PDF"; value: String((downloadController.stats.downloaded_pdfs || 0) + (downloadController.stats.backfill_downloaded_pdfs || 0)); detail: i18n.text("downloaded") }
-            StatCard { Layout.preferredHeight: root.statsPaneHeight; title: i18n.text("journal_metric_resolved"); value: String(downloadController.stats.journal_metric_resolved || 0); detail: i18n.text("local_then_openalex") }
-            StatCard { Layout.preferredHeight: root.statsPaneHeight; title: i18n.text("journal_metric_missing"); value: String(downloadController.stats.journal_metric_missing || 0); detail: i18n.text("impact_metric") }
-            StatCard { Layout.preferredHeight: root.statsPaneHeight; title: i18n.text("skipped_by_impact_factor"); value: String(downloadController.stats.skipped_by_impact_factor || 0); detail: i18n.text("min_impact_factor") }
-        }
-        Card {
-            Layout.fillWidth: true
-            Layout.preferredHeight: root.logPanePreferredHeight
-            Layout.minimumHeight: root.logPaneMinimumHeight
-
-            ColumnLayout {
-                anchors.fill: parent
-                anchors.margins: 12
-
-                Text{
-                    text: i18n.text("task_log")
-                    color: theme.text
-                    font.weight: Font.Bold
-                }
-
-                ScrollPreservingTextArea{
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    text: downloadController.logText
-                    readOnly: true
-                    wrapMode: TextArea.Wrap
-                }
-            }
-        }
-    }
     }
 
-    // 灏嗙晫闈㈠瓧娈甸泦涓槧灏勫埌涓嬭浇鏍稿績锛岄伩鍏嶉珮绾ч€夐」鍦ㄨ縼绉诲悗闈欓粯涓㈠け銆?
     function config() {
-        return { email: email.text, outputDir: outputDir.text, fromDate: fromDate.text,
-                 toDate: normalizedToDate(toDate.text), toDateAuto: root.toDateAuto,
-                 keywords: keywords.text, sort: root.sortValues[sortMode.currentIndex], maxPages: pages.value,
-                 perPage: perPage.value, maxRecords: maxRecords.text, requestDelay: requestDelay.text,
-                 pageDelay: pageDelay.text, minPdfBytes: minPdfBytes.text, downloadPdfs: downloadPdfs.checked,
-                 retryMissingPdfs: retryMissing.checked, writeRetryRecords: writeRetry.checked,
-                 strictKeywordMatch: strictMatch.checked, minKeywordMatchRatio: matchRatio.text,
-                 topicPack: "auto", journalPack: "auto",
-                 selectedJournals: root.selectedJournals, minTopicScore: root.topicScoreValues[minTopicScore.currentIndex],
-                 journalWhitelistOnly: journalScope.currentIndex === 1,
-                 minImpactFactor: minImpactFactor.text,
-                 includeUnknownImpactFactor: includeUnknownImpactFactor.checked,
-                 journalMetricSource: root.journalMetricSourceValues[journalMetricSource.currentIndex],
-                 journalMetricCsv: journalMetricCsv.text,
-                 discoveryMode: filterStrategy.currentIndex === 1,
-                 loop: loopJob.checked, loopSleep: loopSleep.text, maxRuntimeHours: runtimeHours.text,
-                 resume: resume.checked, fastForwardExistingPages: fastForward.checked, oaOnly: oaOnly.checked,
-                 sources: root.selectedSources, advancedVisible: root.advancedVisible }
+        return {
+            email: downloadController.contactEmail,
+            outputDir: outputDir.text,
+            fromDate: fromDate.text,
+            toDate: normalizedToDate(toDate.text),
+            toDateAuto: root.toDateAuto,
+            keywords: root.keywordTerms.join("\n"),
+            sort: "relevance_score:desc",
+            maxPages: 1000,
+            perPage: 50,
+            maxRecords: "",
+            requestDelay: "0.2",
+            pageDelay: "0.5",
+            minPdfBytes: "1024",
+            downloadPdfs: true,
+            retryMissingPdfs: true,
+            writeRetryRecords: false,
+            qualityPreset: root.qualityValues[root.selectedQualityIndex],
+            topicPack: "auto",
+            journalPack: "auto",
+            selectedJournals: [],
+            minTopicScore: 0,
+            journalWhitelistOnly: false,
+            minImpactFactor: "",
+            includeUnknownImpactFactor: true,
+            journalMetricSource: "local_then_openalex",
+            journalMetricCsv: "",
+            loop: false,
+            loopSleep: "3600",
+            maxRuntimeHours: "",
+            resume: true,
+            fastForwardExistingPages: true,
+            oaOnly: false,
+            sources: root.selectedSources,
+            advancedVisible: false
+        }
     }
+
     function savedValue(settings, key, fallback) {
         return settings[key] !== undefined && settings[key] !== null ? settings[key] : fallback
     }
-    function journalMetricSourceIndex(value) {
-        let index = root.journalMetricSourceValues.indexOf(String(value || "local_then_openalex"))
-        return index >= 0 ? index : 0
-    }
+
     function isIsoDate(value) {
         return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ""))
     }
@@ -510,13 +443,8 @@ Item {
     function normalizedToDate(value) {
         let today = downloadController.defaultToDate
         let text = String(value || "").trim()
-
-        if(!isIsoDate(text))
+        if(!isIsoDate(text) || text > today)
             return today
-
-        if(text > today)
-            return today
-
         return text
     }
 
@@ -524,142 +452,165 @@ Item {
         let today = downloadController.defaultToDate
         let savedAuto = savedValue(settings, "toDateAuto", true)
         let savedToDate = String(savedValue(settings, "toDate", "") || "").trim()
-
-        // 旧配置没有 toDateAuto，默认走自动结束日期。
-        // 这样可以修复“旧日期一直卡住”的问题。
         if(savedAuto || !isIsoDate(savedToDate) || savedToDate > today) {
             root.toDateAuto = true
             return today
         }
-
         root.toDateAuto = false
         return savedToDate
     }
-    function topicScoreIndex(value) {
-        let numericValue = Number(value)
-        let bestIndex = 2
-        let bestDistance = Math.abs(root.topicScoreValues[bestIndex] - numericValue)
-        for(let i = 0; i < root.topicScoreValues.length; i++) {
-            let distance = Math.abs(root.topicScoreValues[i] - numericValue)
-            if(distance < bestDistance) {
-                bestDistance = distance
-                bestIndex = i
+
+    function splitKeywords(value) {
+        let text = String(value || "")
+        return text.split(/[\r\n;,，；]+/).map(item => item.trim()).filter(item => item.length > 0)
+    }
+
+    function keywordOptionsFrom(value) {
+        let result = []
+        let seen = ({})
+        let candidates = []
+        for(let i = 0; i < downloadController.keywordSuggestions.length; i++)
+            candidates.push(downloadController.keywordSuggestions[i])
+        let saved = splitKeywords(value)
+        for(let j = 0; j < saved.length; j++)
+            candidates.push(saved[j])
+        for(let k = 0; k < candidates.length; k++) {
+            let item = String(candidates[k] || "").trim()
+            let key = item.toLowerCase()
+            if(item.length > 0 && !seen[key]) {
+                result.push(item)
+                seen[key] = true
             }
         }
-        return bestIndex
+        return result
     }
-    function journalScopeIndex(value) {
-        return value === true || value === 1 || value === "true" || value === "1" ? 1 : 0
+
+    function addKeywords(value) {
+        let result = root.keywordTerms.slice()
+        let seen = ({})
+        for(let i = 0; i < result.length; i++)
+            seen[String(result[i]).toLowerCase()] = true
+        let incoming = splitKeywords(value)
+        let changed = false
+        for(let j = 0; j < incoming.length; j++) {
+            let item = incoming[j]
+            let key = item.toLowerCase()
+            if(!seen[key]) {
+                result.push(item)
+                seen[key] = true
+                changed = true
+            }
+        }
+        if(!changed)
+            return
+        root.keywordTerms = result
+        root.keywordOptions = keywordOptionsFrom(result.join("\n"))
+        root.scheduleSave()
     }
-    function filterStrategyIndex(value) {
-        return value === true || value === 1 || value === "true" || value === "1" ? 1 : 0
+
+    function startEditKeyword(index) {
+        root.addingKeyword = false
+        root.editingKeywordIndex = index
     }
+
+    function startAddKeyword() {
+        root.editingKeywordIndex = -1
+        root.addingKeyword = true
+    }
+
+    function commitNewKeyword(value) {
+        if(!root.addingKeyword)
+            return
+        root.addingKeyword = false
+        addKeywords(value)
+    }
+
+    function commitKeywordEdit(index, value) {
+        if(root.editingKeywordIndex !== index)
+            return
+        let edited = splitKeywords(value)
+        let result = []
+        let seen = ({})
+        for(let i = 0; i < root.keywordTerms.length; i++) {
+            let terms = i === index ? edited : [root.keywordTerms[i]]
+            for(let j = 0; j < terms.length; j++) {
+                let item = String(terms[j] || "").trim()
+                let key = item.toLowerCase()
+                if(item.length > 0 && !seen[key]) {
+                    result.push(item)
+                    seen[key] = true
+                }
+            }
+        }
+        root.editingKeywordIndex = -1
+        root.keywordTerms = result
+        root.keywordOptions = keywordOptionsFrom(result.join("\n"))
+        root.scheduleSave()
+    }
+
+    function removeKeyword(index) {
+        let result = root.keywordTerms.slice()
+        if(index >= 0 && index < result.length)
+            result.splice(index, 1)
+        if(root.editingKeywordIndex === index)
+            root.editingKeywordIndex = -1
+        root.addingKeyword = false
+        root.keywordTerms = result
+        root.scheduleSave()
+    }
+
+    function qualityPresetIndex(value) {
+        let index = root.qualityValues.indexOf(String(value || "balanced"))
+        return index >= 0 ? index : 2
+    }
+
+    function legacyQualityPreset(settings) {
+        if(savedValue(settings, "discoveryMode", false))
+            return "keyword"
+        let score = Number(savedValue(settings, "minTopicScore", 6))
+        if(score <= 0)
+            return "keyword"
+        if(score <= 4)
+            return "relaxed"
+        if(score <= 6)
+            return "balanced"
+        if(score <= 9)
+            return "strict"
+        return "very_strict"
+    }
+
     function scheduleSave() {
-        if(!root.restoringSettings) saveSettingsTimer.restart()
+        if(!root.restoringSettings)
+            saveSettingsTimer.restart()
     }
-    function saveDiscoverySnapshot() {
-        if(root.discoverySnapshotAvailable)
-            return
-        root.discoverySnapshot = {
-            strictMatch: strictMatch.checked,
-            matchRatio: matchRatio.text,
-            minTopicScore: minTopicScore.currentIndex,
-            journalScope: journalScope.currentIndex,
-            resume: resume.checked,
-            fastForward: fastForward.checked
-        }
-        root.discoverySnapshotAvailable = true
-    }
-    function clearDiscoverySnapshot() {
-        root.discoverySnapshot = ({})
-        root.discoverySnapshotAvailable = false
-    }
-    function applyDiscoveryMode(rememberPrevious) {
-        if(rememberPrevious)
-            root.saveDiscoverySnapshot()
-        strictMatch.checked = false
-        matchRatio.text = "0.3"
-        minTopicScore.currentIndex = topicScoreIndex(0)
-        journalScope.currentIndex = journalScopeIndex(false)
-        resume.checked = false
-        fastForward.checked = false
-    }
-    function restoreDiscoveryMode() {
-        if(root.discoverySnapshotAvailable) {
-            strictMatch.checked = root.discoverySnapshot.strictMatch
-            matchRatio.text = root.discoverySnapshot.matchRatio
-            minTopicScore.currentIndex = root.discoverySnapshot.minTopicScore
-            journalScope.currentIndex = root.discoverySnapshot.journalScope
-            resume.checked = root.discoverySnapshot.resume
-            fastForward.checked = root.discoverySnapshot.fastForward
-        } else {
-            strictMatch.checked = true
-            matchRatio.text = "0.75"
-            minTopicScore.currentIndex = topicScoreIndex(0)
-            journalScope.currentIndex = journalScopeIndex(false)
-            resume.checked = true
-            fastForward.checked = true
-        }
-        root.clearDiscoverySnapshot()
-    }
-    function handleFilterStrategyChanged(index) {
-        if(root.restoringSettings)
-            return
-        if(index === filterStrategyIndex(true))
-            root.applyDiscoveryMode(true)
-        else
-            root.restoreDiscoveryMode()
-    }
+
     function restoreSavedConfig() {
-        let settings=downloadController.savedConfig || {}
-        root.clearDiscoverySnapshot()
-        email.text=savedValue(settings, "email", "")
-        outputDir.text=savedValue(settings, "outputDir", downloadController.defaultOutputDir)
-        fromDate.text=savedValue(settings, "fromDate", downloadController.defaultFromDate)
-        toDate.text=restoredToDate(settings)
-        keywords.text=savedValue(settings, "keywords", downloadController.defaultKeywords)
-        let sortIndex=root.sortValues.indexOf(savedValue(settings, "sort", "relevance_score:desc"))
-        sortMode.currentIndex=sortIndex >= 0 ? sortIndex : 1
-        pages.value=savedValue(settings, "maxPages", 1)
-        perPage.value=savedValue(settings, "perPage", 20)
-        maxRecords.text=savedValue(settings, "maxRecords", "")
-        requestDelay.text=savedValue(settings, "requestDelay", "0.2")
-        pageDelay.text=savedValue(settings, "pageDelay", "0.5")
-        minPdfBytes.text=savedValue(settings, "minPdfBytes", "1024")
-        downloadPdfs.checked=savedValue(settings, "downloadPdfs", true)
-        retryMissing.checked=savedValue(settings, "retryMissingPdfs", true)
-        writeRetry.checked=savedValue(settings, "writeRetryRecords", false)
-        strictMatch.checked=savedValue(settings, "strictKeywordMatch", true)
-        matchRatio.text=savedValue(settings, "minKeywordMatchRatio", "0.75")
-        root.selectedJournals=savedValue(settings, "selectedJournals", [])
-        minTopicScore.currentIndex=topicScoreIndex(savedValue(settings, "minTopicScore", 0))
-        journalScope.currentIndex=journalScopeIndex(savedValue(settings, "journalWhitelistOnly", false))
-        minImpactFactor.text=savedValue(settings, "minImpactFactor", "")
-        includeUnknownImpactFactor.checked=savedValue(settings, "includeUnknownImpactFactor", true)
-        journalMetricSource.currentIndex=journalMetricSourceIndex(savedValue(settings, "journalMetricSource", "local_then_openalex"))
-        journalMetricCsv.text=savedValue(settings, "journalMetricCsv", "")
-        loopJob.checked=savedValue(settings, "loop", false)
-        loopSleep.text=savedValue(settings, "loopSleep", "3600")
-        runtimeHours.text=savedValue(settings, "maxRuntimeHours", "")
-        resume.checked=savedValue(settings, "resume", true)
-        fastForward.checked=savedValue(settings, "fastForwardExistingPages", true)
-        filterStrategy.currentIndex=filterStrategyIndex(savedValue(settings, "discoveryMode", false))
-        if(root.discoveryModeActive)
-            root.applyDiscoveryMode(false)
-        oaOnly.checked=savedValue(settings, "oaOnly", false)
-        root.selectedSources=savedValue(settings, "sources", ["openalex"])
-        root.advancedVisible=savedValue(settings, "advancedVisible", false)
+        let settings = downloadController.savedConfig || {}
+        let savedKeywords = savedValue(settings, "keywords", downloadController.defaultKeywords)
+        root.keywordOptions = keywordOptionsFrom(savedKeywords)
+        outputDir.text = savedValue(settings, "outputDir", downloadController.defaultOutputDir)
+        fromDate.text = savedValue(settings, "fromDate", downloadController.defaultFromDate)
+        toDate.text = restoredToDate(settings)
+        root.keywordTerms = splitKeywords(savedKeywords)
+        root.selectedQualityIndex = qualityPresetIndex(savedValue(settings, "qualityPreset", legacyQualityPreset(settings)))
+        root.selectedSources = savedValue(settings, "sources", ["openalex", "europe_pmc", "arxiv", "crossref", "doaj"])
     }
+
     function toggleSource(source, enabled) {
-        let result=root.selectedSources.slice(); let index=result.indexOf(source)
-        if(enabled && index<0) result.push(source)
-        if(!enabled && index>=0) result.splice(index,1)
-        root.selectedSources=result
+        let result = root.selectedSources.slice()
+        let index = result.indexOf(source)
+        if(enabled && index < 0)
+            result.push(source)
+        if(!enabled && index >= 0)
+            result.splice(index, 1)
+        root.selectedSources = result
     }
+
     function registerTourTargets() {
         if(root.tourHost)
             root.tourHost.registerTourTarget("nav.download", functionCard)
     }
+
     function unregisterTourTargets() {
         if(root.tourHost)
             root.tourHost.unregisterTourTarget("nav.download", functionCard)

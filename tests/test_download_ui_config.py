@@ -4,26 +4,25 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from omnilit_qt.download_controller import DOWNLOAD_FORM_FIELDS, DownloadController
 from omnilit_qt.paths import AppPaths
 from omnilit_qt.services import build_download_config
-from omnilit_qt.download_controller import DOWNLOAD_FORM_FIELDS, DownloadController
 
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
 class DownloadUiConfigTests(unittest.TestCase):
-    def test_build_download_config_maps_new_fields(self) -> None:
+    def test_build_download_config_maps_pack_and_metric_fields(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             paths = AppPaths(ROOT, Path(temp) / "data", ROOT)
             _core, config = build_download_config(
                 paths,
                 {
+                    "qualityPreset": "strict",
                     "topicPack": "li_sulfur",
                     "journalPack": "li_sulfur",
                     "selectedJournals": ["Batteries", "ACS Omega"],
-                    "minTopicScore": "8",
-                    "journalWhitelistOnly": True,
                     "minImpactFactor": "5.5",
                     "includeUnknownImpactFactor": False,
                     "journalMetricSource": "openalex_only",
@@ -36,8 +35,8 @@ class DownloadUiConfigTests(unittest.TestCase):
             self.assertEqual(config.topic_pack, "li_sulfur")
             self.assertEqual(config.journal_pack, "li_sulfur")
             self.assertEqual(config.selected_journals, ["Batteries", "ACS Omega"])
-            self.assertEqual(config.min_topic_score, 8)
-            self.assertTrue(config.journal_whitelist_only)
+            self.assertEqual(config.min_topic_score, 9)
+            self.assertFalse(config.journal_whitelist_only)
             self.assertEqual(config.min_impact_factor, 5.5)
             self.assertFalse(config.include_unknown_impact_factor)
             self.assertEqual(config.journal_metric_source, "openalex_only")
@@ -46,12 +45,7 @@ class DownloadUiConfigTests(unittest.TestCase):
     def test_build_download_config_defaults_impact_metric_fields(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             paths = AppPaths(ROOT, Path(temp) / "data", ROOT)
-            _core, config = build_download_config(
-                paths,
-                {"minImpactFactor": ""},
-                lambda: False,
-                lambda _stats, _message: None,
-            )
+            _core, config = build_download_config(paths, {"minImpactFactor": ""}, lambda: False, lambda _stats, _message: None)
 
             self.assertIsNone(config.min_impact_factor)
             self.assertTrue(config.include_unknown_impact_factor)
@@ -65,138 +59,136 @@ class DownloadUiConfigTests(unittest.TestCase):
             metrics = output_dir / "journal_metrics.csv"
             metrics.write_text("journal_title,issn\nBatteries,2313-0105\n", encoding="utf-8")
             paths = AppPaths(ROOT, Path(temp) / "data", ROOT)
-            _core, config = build_download_config(
-                paths,
-                {},
-                lambda: False,
-                lambda _stats, _message: None,
-            )
+            _core, config = build_download_config(paths, {}, lambda: False, lambda _stats, _message: None)
 
             self.assertEqual(config.journal_metric_csv.resolve(), metrics.resolve())
 
     def test_build_download_config_treats_empty_selected_journals_as_none(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             paths = AppPaths(ROOT, Path(temp) / "data", ROOT)
-            _core, config = build_download_config(
-                paths,
-                {"selectedJournals": []},
-                lambda: False,
-                lambda _stats, _message: None,
-            )
+            _core, config = build_download_config(paths, {"selectedJournals": []}, lambda: False, lambda _stats, _message: None)
 
             self.assertIsNone(config.selected_journals)
             self.assertEqual(config.topic_pack, "auto")
             self.assertEqual(config.journal_pack, "auto")
-            self.assertEqual(config.min_topic_score, 0)
+            self.assertEqual(config.min_topic_score, 6)
 
-    def test_build_download_config_discovery_mode_relaxes_core_filters(self) -> None:
+    def test_build_download_config_quality_preset_controls_core_filters(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             paths = AppPaths(ROOT, Path(temp) / "data", ROOT)
             _core, config = build_download_config(
                 paths,
                 {
-                    "discoveryMode": True,
-                    "strictKeywordMatch": True,
-                    "minKeywordMatchRatio": "0.9",
-                    "minTopicScore": "12",
-                    "journalWhitelistOnly": True,
-                    "resume": True,
-                    "fastForwardExistingPages": True,
+                    "qualityPreset": "very_strict",
+                    "strictKeywordMatch": False,
+                    "minKeywordMatchRatio": "0.3",
+                    "minTopicScore": "0",
+                    "journalWhitelistOnly": False,
+                    "resume": False,
+                    "fastForwardExistingPages": False,
+                    "oaOnly": False,
                 },
                 lambda: False,
                 lambda _stats, _message: None,
             )
 
-            self.assertFalse(config.strict_keyword_match)
-            self.assertEqual(config.min_keyword_match_ratio, 0.3)
-            self.assertEqual(config.min_topic_score, 0)
-            self.assertFalse(config.journal_whitelist_only)
-            self.assertFalse(config.resume)
-            self.assertFalse(config.fast_forward_existing_pages)
+            self.assertTrue(config.strict_keyword_match)
+            self.assertEqual(config.min_keyword_match_ratio, 0.9)
+            self.assertEqual(config.min_topic_score, 12)
+            self.assertTrue(config.journal_whitelist_only)
+            self.assertTrue(config.oa_only)
+            self.assertTrue(config.resume)
+            self.assertTrue(config.fast_forward_existing_pages)
 
-    def test_qml_config_contains_new_fields(self) -> None:
+    def test_build_download_config_uses_hidden_runtime_defaults(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            paths = AppPaths(ROOT, Path(temp) / "data", ROOT)
+            _core, config = build_download_config(
+                paths,
+                {"downloadPdfs": False, "loop": True, "maxRuntimeHours": "2", "maxRecords": "5"},
+                lambda: False,
+                lambda _stats, _message: None,
+            )
+
+            self.assertTrue(config.download_pdfs)
+            self.assertTrue(config.retry_missing_pdfs)
+            self.assertFalse(config.write_retry_records)
+            self.assertFalse(config.loop)
+            self.assertIsNone(config.max_runtime_hours)
+            self.assertIsNone(config.max_records)
+            self.assertEqual(config.max_pages_per_keyword, 1000)
+            self.assertEqual(config.per_page, 50)
+
+    def test_build_download_config_splits_and_deduplicates_keywords(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            paths = AppPaths(ROOT, Path(temp) / "data", ROOT)
+            _core, config = build_download_config(
+                paths,
+                {"keywords": "lithium-sulfur batteries\npolysulfides, lithium-sulfur batteries; Polysulfides"},
+                lambda: False,
+                lambda _stats, _message: None,
+            )
+
+            self.assertEqual(config.keywords, ["lithium-sulfur batteries", "polysulfides"])
+
+    def test_qml_uses_unified_quality_and_research_keyword_tags(self) -> None:
         qml = (ROOT / "ui" / "qml" / "DownloadPage.qml").read_text(encoding="utf-8")
         checkbox = (ROOT / "ui" / "qml" / "ModernCheckBox.qml").read_text(encoding="utf-8")
 
-        for field in (
-            "topicPack",
-            "journalPack",
-            "selectedJournals",
-            "minTopicScore",
-            "journalWhitelistOnly",
-            "includeUnknownImpactFactor",
-            "journalMetricSource",
-            "journalMetricCsv",
-            "discoveryMode",
-        ):
-            self.assertIn(field, qml)
+        self.assertIn('property var qualityValues: ["keyword", "relaxed", "balanced", "strict", "very_strict"]', qml)
+        self.assertIn('property var qualityTipKeys: ["quality_keyword_tip", "quality_relaxed_tip", "quality_balanced_tip", "quality_strict_tip", "quality_very_strict_tip"]', qml)
+        self.assertIn("property int selectedQualityIndex: 2", qml)
+        self.assertIn("qualityPreset: root.qualityValues[root.selectedQualityIndex]", qml)
+        self.assertIn("text: i18n.text(root.qualityTipKeys[index])", qml)
+        self.assertIn("property var keywordTerms: []", qml)
+        self.assertIn("model: root.keywordTerms", qml)
+        self.assertIn("function addKeywords(value)", qml)
+        self.assertIn("function startEditKeyword(index)", qml)
+        self.assertIn("function startAddKeyword()", qml)
+        self.assertIn("function commitNewKeyword(value)", qml)
+        self.assertIn("function commitKeywordEdit(index, value)", qml)
+        self.assertIn("function removeKeyword(index)", qml)
+        self.assertIn("root.editingKeywordIndex === index", qml)
+        self.assertIn("onAccepted: root.commitKeywordEdit(index, text)", qml)
+        self.assertIn("id: addKeywordChip", qml)
+        self.assertIn("id: addKeywordEdit", qml)
+        self.assertIn("onClicked: root.startAddKeyword()", qml)
+        self.assertIn("onAccepted: root.commitNewKeyword(text)", qml)
+        self.assertIn('placeholderText: i18n.text("keyword_input_placeholder")', qml)
+        self.assertNotIn("id: keywordInput", qml)
+        self.assertNotIn('text: i18n.text("add_keyword")', qml)
+        self.assertIn("downloadController.keywordSuggestions", qml)
+        self.assertIn("downloadController.contactEmail", qml)
+        self.assertIn('Text { text: i18n.text("from_date"); color: theme.textMuted }', qml)
+        self.assertIn("maxPages: 1000", qml)
+        self.assertIn("perPage: 50", qml)
+        self.assertIn("downloadPdfs: true", qml)
+        self.assertIn("resume: true", qml)
+        self.assertIn("loop: false", qml)
+        self.assertIn('property var selectedSources: ["openalex", "europe_pmc", "arxiv", "crossref", "doaj"]', qml)
+        self.assertIn('text: i18n.text("pdf_backfill")', qml)
+        self.assertIn('text: i18n.text("pdf_backfill_tip")', qml)
+        self.assertIn("downloadController.backfillMissingPdfs(config())", qml)
+        self.assertNotIn('text: "PDF backfill"', qml)
+        self.assertNotIn("Scan existing metadata and download missing legal OA PDFs.", qml)
+        self.assertNotIn("chooseDirectory", qml)
+        for hidden in ('i18n.text("email")', "id: email", "id: keywordSuggestion", "model: root.keywordOptions", "id: filterStrategy", "id: journalScope", "id: downloadPdfs", "id: resume", "id: oaOnly", "id: pages", "id: perPage", "id: maxRecords"):
+            self.assertNotIn(hidden, qml)
 
         self.assertIn("activePulse: downloadController.running && downloadController.activeSourceKey === modelData.key", qml)
         self.assertIn("downloadController.activeSourceText", qml)
         self.assertIn("property bool activePulse: false", checkbox)
         self.assertIn("SequentialAnimation on opacity", checkbox)
-        self.assertIn('topicPack: "auto", journalPack: "auto"', qml)
-        self.assertIn('property var topicScoreValues: [0, 4, 6, 9, 12]', qml)
-        self.assertIn('currentIndex: 0', qml)
-        self.assertIn('关键词提及即可 / 0', qml)
 
-    def test_qml_uses_compact_hidden_filter_guidance(self) -> None:
-        qml = (ROOT / "ui" / "qml" / "DownloadPage.qml").read_text(encoding="utf-8")
-
-        self.assertIn('property var topicScoreValues: [0, 4, 6, 9, 12]', qml)
-        self.assertIn('property var topicScoreLabels:', qml)
-        self.assertIn('id: journalScope', qml)
-        self.assertIn('id: filterStrategy', qml)
-        self.assertIn('text: i18n.text("journal_scope")', qml)
-        self.assertIn('journalWhitelistOnly: journalScope.currentIndex === 1', qml)
-        self.assertIn('minImpactFactor: minImpactFactor.text', qml)
-        self.assertIn('includeUnknownImpactFactor: includeUnknownImpactFactor.checked', qml)
-        self.assertIn('journalMetricSource: root.journalMetricSourceValues[journalMetricSource.currentIndex]', qml)
-        self.assertIn('journalMetricCsv: journalMetricCsv.text', qml)
-        self.assertIn('discoveryMode: filterStrategy.currentIndex === 1', qml)
-        self.assertIn('minTopicScore.currentIndex=topicScoreIndex', qml)
-        self.assertIn('journalScope.currentIndex=journalScopeIndex(savedValue(settings, "journalWhitelistOnly", false))', qml)
-        self.assertIn('minImpactFactor.text=savedValue(settings, "minImpactFactor", "")', qml)
-        self.assertIn('includeUnknownImpactFactor.checked=savedValue(settings, "includeUnknownImpactFactor", true)', qml)
-        self.assertIn('journalMetricSource.currentIndex=journalMetricSourceIndex(savedValue(settings, "journalMetricSource", "local_then_openalex"))', qml)
-        self.assertIn('journalMetricCsv.text=savedValue(settings, "journalMetricCsv", "")', qml)
-        self.assertIn('filterStrategy.currentIndex=filterStrategyIndex(savedValue(settings, "discoveryMode", false))', qml)
-        self.assertIn('text: i18n.text("topic_filter_hint")', qml)
-        self.assertIn('text: i18n.text("settings_group_search_scope")', qml)
-        self.assertIn('text: i18n.text("settings_group_filter_quality")', qml)
-        self.assertIn('text: i18n.text("settings_group_runtime")', qml)
-        self.assertIn('text: i18n.text("settings_group_filter_strategy")', qml)
-        self.assertNotIn('id: smartFilterChip', qml)
-        self.assertNotIn('id: oaFilterChip', qml)
-        self.assertNotIn('id: smartFilterHelp\n                        anchors.fill: parent', qml)
-        self.assertNotIn("\\u767d\\u540d\\u5355".encode().decode("unicode_escape"), qml)
-        self.assertNotIn("\\u76f8\\u5173\\u6027\\u8fc7\\u6ee4\\u5f3a\\u5ea6\\uff1a".encode().decode("unicode_escape"), qml)
-
-    def test_qml_discovery_mode_snapshots_and_restores_managed_settings(self) -> None:
-        qml = (ROOT / "ui" / "qml" / "DownloadPage.qml").read_text(encoding="utf-8")
-
-        self.assertIn("property var discoverySnapshot", qml)
-        self.assertIn("property bool discoverySnapshotAvailable: false", qml)
-        self.assertIn("function saveDiscoverySnapshot()", qml)
-        self.assertIn("function applyDiscoveryMode(rememberPrevious)", qml)
-        self.assertIn("function restoreDiscoveryMode()", qml)
-        self.assertIn("function handleFilterStrategyChanged(index)", qml)
-        self.assertIn("root.applyDiscoveryMode(true)", qml)
-        self.assertIn("root.restoreDiscoveryMode()", qml)
-        self.assertIn("root.applyDiscoveryMode(false)", qml)
-        self.assertIn("enabled: !root.discoveryModeActive", qml)
-        self.assertIn("readonly property bool discoveryModeActive: filterStrategy.currentIndex === 1", qml)
-        self.assertIn('text: i18n.text("discovery_mode_active_tip")', qml)
-        self.assertIn('text: i18n.text("discovery_mode_tip")', qml)
-
-    def test_download_controller_tracks_impact_metric_fields_and_stats(self) -> None:
-        for field in ("includeUnknownImpactFactor", "journalMetricSource", "journalMetricCsv"):
+    def test_download_controller_tracks_quality_email_and_stats(self) -> None:
+        for field in ("includeUnknownImpactFactor", "journalMetricSource", "journalMetricCsv", "qualityPreset"):
             self.assertIn(field, DOWNLOAD_FORM_FIELDS)
 
         stats = DownloadController._empty_stats()
         self.assertIn("journal_metric_resolved", stats)
         self.assertIn("journal_metric_missing", stats)
         self.assertIn("skipped_by_impact_factor", stats)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -6,7 +6,9 @@ cd "$(dirname "$0")"
 APP_NAME="OmniLit"
 ENTRY_FILE="omnilit_qt_app.py"
 RELEASE_HELPER="sync_release_metadata.py"
-DEFAULT_KEY_FILE="Translate/APIKey.enc"
+DEFAULT_KEY_FILE="Workspace/Translate/APIKey.enc"
+LEGACY_KEY_FILE="Translate/APIKey.enc"
+PACKAGED_KEY_FILE=""
 KEY_ENCRYPT_HELPER="encrypt_default_key.py"
 ICON_SOURCE="assets/omnilit_logo.png"
 ICON_ICNS="assets/omnilit_logo.icns"
@@ -25,7 +27,7 @@ Usage:
   ./build_omnilit_macos.sh                 Build OmniLit.app for macOS.
   ./build_omnilit_macos.sh --refresh-key   Recreate encrypted default key, then build.
   ./build_omnilit_macos.sh --encrypt-default-key   Only create encrypted default key.
-  ./build_omnilit_macos.sh --skip-key      Build without packaging Translate/APIKey.enc.
+  ./build_omnilit_macos.sh --skip-key      Build without packaging Workspace/Translate/APIKey.enc.
 
 Optional:
   OMNILIT_MAC_ARCH=universal2 ./build_omnilit_macos.sh
@@ -77,8 +79,19 @@ if [[ "$MODE" == "--encrypt-default-key" ]]; then
 fi
 
 if [[ -z "$SKIP_KEY" ]]; then
-  if [[ -n "$REFRESH_KEY" || ! -f "$DEFAULT_KEY_FILE" ]]; then
+  if [[ -n "$REFRESH_KEY" ]]; then
     "$PYTHON_CMD" "$KEY_ENCRYPT_HELPER" --output "$DEFAULT_KEY_FILE"
+    PACKAGED_KEY_FILE="$DEFAULT_KEY_FILE"
+  elif [[ -f "$DEFAULT_KEY_FILE" ]]; then
+    PACKAGED_KEY_FILE="$DEFAULT_KEY_FILE"
+    echo "Found encrypted default key: $DEFAULT_KEY_FILE"
+  elif [[ -f "$LEGACY_KEY_FILE" ]]; then
+    PACKAGED_KEY_FILE="$LEGACY_KEY_FILE"
+    echo "Found legacy encrypted default key: $LEGACY_KEY_FILE"
+    echo "New deployment keys should be saved to $DEFAULT_KEY_FILE."
+  else
+    "$PYTHON_CMD" "$KEY_ENCRYPT_HELPER" --output "$DEFAULT_KEY_FILE"
+    PACKAGED_KEY_FILE="$DEFAULT_KEY_FILE"
   fi
 fi
 
@@ -144,7 +157,6 @@ PYINSTALLER_ARGS=(
   --add-data "Download/__init__.py:Download"
   --add-data "Download/literature_download_core.py:Download"
   --add-data "Download/journal_metrics.py:Download"
-  --add-data "Download/journal_metrics.csv:Download"
   --add-data "Update/__init__.py:Update"
   --add-data "Update/update_core.py:Update"
   --add-data "Translate/__init__.py:Translate"
@@ -158,8 +170,8 @@ fi
 if [[ -n "${OMNILIT_MAC_ARCH:-}" ]]; then
   PYINSTALLER_ARGS+=(--target-architecture "$OMNILIT_MAC_ARCH")
 fi
-if [[ -z "$SKIP_KEY" && -f "$DEFAULT_KEY_FILE" ]]; then
-  PYINSTALLER_ARGS+=(--add-data "$DEFAULT_KEY_FILE:Translate")
+if [[ -z "$SKIP_KEY" && -n "$PACKAGED_KEY_FILE" ]]; then
+  PYINSTALLER_ARGS+=(--add-data "$PACKAGED_KEY_FILE:Translate")
 fi
 
 "$PYTHON_CMD" -m PyInstaller "${PYINSTALLER_ARGS[@]}" "$ENTRY_FILE"

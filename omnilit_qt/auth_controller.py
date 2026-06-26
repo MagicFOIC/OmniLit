@@ -5,7 +5,7 @@ from PySide6.QtCore import QObject, Property, Signal, Slot
 from .app_controller import AppController
 from .i18n import LocaleController
 from .secrets import protect_secret, unprotect_secret
-from .services import AccountStore
+from .services import AccountStore, EMAIL_PATTERN
 
 
 class AuthController(QObject):
@@ -125,14 +125,19 @@ class AuthController(QObject):
         self.authenticated.emit()
         return True
 
-    @Slot(str, str, str, bool, result=bool)
-    def registerUser(self, username: str, password: str, confirm_password: str, remember_password: bool = False) -> bool:
+    @Slot(str, str, str, str, bool, result=bool)
+    def registerUser(self, username: str, password: str, confirm_password: str, contact_email: str, remember_password: bool = False) -> bool:
         """注册并登录。参数：账号、两次密码和记忆开关。返回值：是否成功。"""
         if password != confirm_password:
             self._set_status(self.locale.textf("password_mismatch"))
             return False
+        contact_email = str(contact_email or "").strip()
+        if not contact_email or not EMAIL_PATTERN.fullmatch(contact_email):
+            self._set_status(self.locale.textf("contact_email_invalid"))
+            return False
         try:
             self.store.register(username, password)
+            self.store.save_contact_email(contact_email)
             self.store.login(username, password)
             self._save_login_secret(username, password, remember_password)
         except (ValueError, OSError) as exc:

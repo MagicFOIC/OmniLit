@@ -6,7 +6,8 @@ set "APP_NAME=OmniLit"
 set "ENTRY_FILE=omnilit_qt_app.py"
 set "OUTPUT_EXE=%CD%\%APP_NAME%.exe"
 set "RELEASE_HELPER=sync_release_metadata.py"
-set "DEFAULT_KEY_FILE=Translate\APIKey.enc"
+set "DEFAULT_KEY_FILE=Workspace\Translate\APIKey.enc"
+set "PACKAGED_KEY_FILE="
 set "KEY_ENCRYPT_HELPER=encrypt_default_key.py"
 
 set "MODE=%~1"
@@ -104,6 +105,7 @@ if defined REFRESH_KEY (
 )
 
 if exist "%DEFAULT_KEY_FILE%" (
+  set "PACKAGED_KEY_FILE=%DEFAULT_KEY_FILE%"
   echo Found encrypted default key: %DEFAULT_KEY_FILE%
   echo It will be packaged automatically.
   goto after_key
@@ -116,6 +118,7 @@ goto encrypt_key
 call "%PYTHON_CMD%" "%KEY_ENCRYPT_HELPER%" --output "%DEFAULT_KEY_FILE%"
 if errorlevel 1 goto fail
 echo Encrypted key saved to: %DEFAULT_KEY_FILE%
+set "PACKAGED_KEY_FILE=%DEFAULT_KEY_FILE%"
 goto after_key
 
 :encrypt_key_only
@@ -136,7 +139,7 @@ if exist dist rmdir /s /q dist
 if exist "%APP_NAME%.spec" del /f /q "%APP_NAME%.spec"
 
 set "EXTRA_KEY_ARGS="
-if not defined SKIP_KEY if exist "%DEFAULT_KEY_FILE%" set EXTRA_KEY_ARGS=--add-data "%DEFAULT_KEY_FILE%;Translate"
+if not defined SKIP_KEY if defined PACKAGED_KEY_FILE set EXTRA_KEY_ARGS=--add-data "%PACKAGED_KEY_FILE%;Translate"
 
 echo [8/9] Building one-file desktop app...
 call "%PYTHON_CMD%" -m PyInstaller ^
@@ -184,6 +187,10 @@ call "%PYTHON_CMD%" -m PyInstaller ^
   --add-binary "%CONDA_PREFIX%\Library\bin\libssl-3-x64.dll;." ^
   --add-binary "%CONDA_PREFIX%\Library\bin\libcrypto-3-x64.dll;." ^
   --hidden-import Download.literature_download_core ^
+  --hidden-import Download.journal_metrics ^
+  --hidden-import Download.journal_registry ^
+  --hidden-import Download.pack_builder ^
+  --hidden-import Download.topic_packs ^
   --hidden-import Translate.literature_translate_core ^
   --hidden-import Update.update_core ^
   --add-data "assets\omnilit_logo.png;assets" ^
@@ -194,12 +201,19 @@ call "%PYTHON_CMD%" -m PyInstaller ^
   --add-data "Download\__init__.py;Download" ^
   --add-data "Download\literature_download_core.py;Download" ^
   --add-data "Download\journal_metrics.py;Download" ^
-  --add-data "Download\journal_metrics.csv;Download" ^
   --add-data "Update\__init__.py;Update" ^
   --add-data "Update\update_core.py;Update" ^
   --add-data "Translate\__init__.py;Translate" ^
   --add-data "Translate\literature_translate_core.py;Translate" ^
-  --add-data "Translate\glossary;Translate\glossary" ^
+  --add-data "Workspace\Translate\glossary\00_general_academic.csv;Translate\glossary" ^
+  --add-data "Workspace\Translate\glossary\01_ai_ml_data_science.csv;Translate\glossary" ^
+  --add-data "Workspace\Translate\glossary\02_catalysis_chemistry_materials.csv;Translate\glossary" ^
+  --add-data "Workspace\Translate\glossary\03_biology_medicine_pharmaceuticals.csv;Translate\glossary" ^
+  --add-data "Workspace\Translate\glossary\04_energy_environment_chemical_engineering.csv;Translate\glossary" ^
+  --add-data "Workspace\Translate\glossary\05_physics_electronics_mechanical_engineering.csv;Translate\glossary" ^
+  --add-data "Workspace\Translate\glossary\06_computer_science_software.csv;Translate\glossary" ^
+  --add-data "Workspace\Translate\glossary\07_economics_management_finance.csv;Translate\glossary" ^
+  --add-data "Workspace\Translate\glossary\08_social_science_education_psychology.csv;Translate\glossary" ^
   %EXTRA_KEY_ARGS% ^
   "%ENTRY_FILE%"
 if errorlevel 1 goto fail
@@ -219,15 +233,15 @@ if exist "%APP_NAME%.spec" del /f /q "%APP_NAME%.spec"
 echo Done: %OUTPUT_EXE%
 echo Release file: %OUTPUT_EXE%
 echo update_manifest.json has been updated with version %APP_VERSION%, the release SHA-256, and its Ed25519 signature.
-if not defined SKIP_KEY if exist "%DEFAULT_KEY_FILE%" echo Encrypted default key included in the packaged resources and also kept at: %DEFAULT_KEY_FILE%
+if not defined SKIP_KEY if defined PACKAGED_KEY_FILE echo Encrypted default key included in the packaged resources from: %PACKAGED_KEY_FILE%
 pause
 exit /b 0
 
 :usage
 echo Usage:
-echo   build_omnilit_exe.bat                 Create encrypted default key with the CLI if missing, then build EXE.
-echo   build_omnilit_exe.bat --refresh-key   Recreate encrypted default key, then build EXE.
-echo   build_omnilit_exe.bat --encrypt-default-key   Only create encrypted default key.
+echo   build_omnilit_exe.bat                 Package Workspace\Translate\APIKey.enc if present; create it with the CLI if missing.
+echo   build_omnilit_exe.bat --refresh-key   Recreate Workspace\Translate\APIKey.enc, then build EXE.
+echo   build_omnilit_exe.bat --encrypt-default-key   Only create Workspace\Translate\APIKey.enc.
 echo   build_omnilit_exe.bat --skip-key      Build EXE without default key.
 echo   build_omnilit_exe.bat --check-env     Verify Conda environment discovery only.
 pause

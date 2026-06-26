@@ -34,11 +34,10 @@ class DownloadConfigLisFieldsTests(unittest.TestCase):
             _core, config = build_download_config(
                 paths,
                 {
+                    "qualityPreset": "very_strict",
                     "topicPack": "li_sulfur",
                     "journalPack": "li_sulfur",
                     "selectedJournals": ["Batteries"],
-                    "minTopicScore": "7",
-                    "journalWhitelistOnly": True,
                     "includeUnknownImpactFactor": False,
                     "journalMetricSource": "local_only",
                     "journalMetricCsv": str(Path(temp) / "metrics.csv"),
@@ -50,7 +49,7 @@ class DownloadConfigLisFieldsTests(unittest.TestCase):
         self.assertEqual(config.topic_pack, "li_sulfur")
         self.assertEqual(config.journal_pack, "li_sulfur")
         self.assertEqual(config.selected_journals, ["Batteries"])
-        self.assertEqual(config.min_topic_score, 7)
+        self.assertEqual(config.min_topic_score, 12)
         self.assertTrue(config.journal_whitelist_only)
         self.assertFalse(config.include_unknown_impact_factor)
         self.assertEqual(config.journal_metric_source, "local_only")
@@ -67,6 +66,7 @@ class DownloadConfigLisFieldsTests(unittest.TestCase):
             "includeUnknownImpactFactor",
             "journalMetricSource",
             "journalMetricCsv",
+            "qualityPreset",
         ):
             self.assertIn(f'"{field}"', controller)
 

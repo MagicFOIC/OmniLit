@@ -8,6 +8,7 @@ Item {
     property int drawerPage: 0
     property string draftAvatarStatus: ""
     property string systemSettingsWorkdirDraft: ""
+    property string systemContactEmailDraft: ""
     property string systemSettingsMessage: ""
     property bool systemSettingsMessageIsError: false
     property string mineruApiUrlDraft: ""
@@ -18,6 +19,7 @@ Item {
     onDrawerPageChanged: {
         if(drawerPage === 6) {
             root.systemSettingsWorkdirDraft = onboardingController.workdir
+            root.systemContactEmailDraft = downloadController.contactEmail
             root.mineruApiUrlDraft = pdfExtractionController.mineruApiUrl
             root.paddleocrApiUrlDraft = pdfExtractionController.paddleocrApiUrl
             root.mineruTokenDraft = ""
@@ -945,8 +947,53 @@ Item {
                                     text: i18n.text("choose")
                                     onClicked: {
                                         const selected = onboardingController.chooseWorkdir()
-                                        if(selected)
+                                        if(selected) {
                                             root.systemSettingsWorkdirDraft = selected
+                                            systemWorkdirField.text = selected
+                                            root.systemSettingsMessage = ""
+                                        }
+                                    }
+                                }
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                text: i18n.text("contact_email_settings")
+                                color: theme.text
+                                font.pixelSize: theme.baseFontSize
+                                font.weight: Font.DemiBold
+                            }
+                            Text {
+                                Layout.fillWidth: true
+                                text: i18n.text("contact_email_settings_detail")
+                                color: theme.textMuted
+                                font.pixelSize: Math.max(11, theme.baseFontSize - 1)
+                                wrapMode: Text.WordWrap
+                            }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 8
+                                TextField {
+                                    id: systemContactEmailField
+                                    Layout.fillWidth: true
+                                    text: root.systemContactEmailDraft
+                                    placeholderText: i18n.text("email")
+                                    onTextChanged: {
+                                        root.systemContactEmailDraft = text
+                                        root.systemSettingsMessage = ""
+                                    }
+                                }
+                                PillButton {
+                                    text: i18n.text("save")
+                                    onClicked: {
+                                        if(downloadController.saveContactEmail(root.systemContactEmailDraft)) {
+                                            root.systemContactEmailDraft = downloadController.contactEmail
+                                            root.systemSettingsMessage = i18n.text("contact_email_saved")
+                                            root.systemSettingsMessageIsError = false
+                                        } else {
+                                            root.systemSettingsMessage = i18n.text("contact_email_invalid")
+                                            root.systemSettingsMessageIsError = true
+                                        }
                                     }
                                 }
                             }
@@ -983,8 +1030,10 @@ Item {
                                     text: i18n.text("save_workspace_folder")
                                     primary: true
                                     onClicked: {
-                                        if(onboardingController.saveWorkdirPreference(root.systemSettingsWorkdirDraft)) {
+                                        root.systemSettingsWorkdirDraft = systemWorkdirField.text
+                                        if(onboardingController.saveWorkdirPreference(systemWorkdirField.text)) {
                                             root.systemSettingsWorkdirDraft = onboardingController.workdir
+                                            systemWorkdirField.text = onboardingController.workdir
                                             root.systemSettingsMessage = i18n.text("workspace_folder_saved")
                                             root.systemSettingsMessageIsError = false
                                         } else {
@@ -1103,6 +1152,7 @@ Item {
     }
     function openSystemSettings() {
         root.systemSettingsWorkdirDraft = onboardingController.workdir
+        root.systemContactEmailDraft = downloadController.contactEmail
         root.systemSettingsMessage = ""
         root.systemSettingsMessageIsError = false
         root.drawerPage = 6

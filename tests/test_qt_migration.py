@@ -158,6 +158,25 @@ class AccountStoreTests(unittest.TestCase):
             self.assertTrue(str(encoded).startswith(PASSWORD_SCHEME + "$"))
             self.assertEqual(store.setting("remember_username"), "alice")
 
+    def test_auth_registration_saves_contact_email(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            paths = AppPaths(ROOT, Path(temp), ())
+            store = AccountStore(paths.data("accounts.sqlite3"))
+            locale = LocaleController(store)
+            auth = AuthController(AppController(paths, locale), store, locale)
+
+            self.assertTrue(auth.registerUser("alice", "secret12", "secret12", "alice@example.com", False))
+
+            self.assertEqual(store.contact_email(), "alice@example.com")
+            self.assertEqual(store.setting("remember_username"), "alice")
+
+    def test_login_does_not_store_invalid_username_as_contact_email(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            store = AccountStore(Path(temp) / "accounts.sqlite3")
+            store.register("alice", "secret12")
+            self.assertTrue(store.login("alice", "secret12"))
+            self.assertEqual(store.contact_email(), "")
+
     def test_legacy_hash_is_upgraded_after_login(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             store = AccountStore(Path(temp) / "accounts.sqlite3")
@@ -413,7 +432,7 @@ class DatePickerTests(unittest.TestCase):
 
 
 class DownloadConfigTests(unittest.TestCase):
-    def test_advanced_download_config_maps_to_core(self) -> None:
+    def test_download_config_uses_quality_and_hidden_runtime_defaults(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             paths = AppPaths(ROOT, Path(temp) / "data", ROOT)
             _core, config = build_download_config(
@@ -421,6 +440,7 @@ class DownloadConfigTests(unittest.TestCase):
                 {
                     "keywords": "alpha\nbeta",
                     "outputDir": str(Path(temp) / "download"),
+                    "qualityPreset": "keyword",
                     "pageDelay": "1.5",
                     "minPdfBytes": "4096",
                     "retryMissingPdfs": False,
@@ -439,14 +459,14 @@ class DownloadConfigTests(unittest.TestCase):
             self.assertEqual(config.keywords, ["alpha", "beta"])
             self.assertEqual(config.page_delay, 1.5)
             self.assertEqual(config.min_pdf_bytes, 4096)
-            self.assertFalse(config.retry_missing_pdfs)
-            self.assertTrue(config.write_retry_records)
+            self.assertTrue(config.retry_missing_pdfs)
+            self.assertFalse(config.write_retry_records)
             self.assertFalse(config.strict_keyword_match)
-            self.assertEqual(config.min_keyword_match_ratio, 0.4)
-            self.assertTrue(config.loop)
+            self.assertEqual(config.min_keyword_match_ratio, 0.3)
+            self.assertFalse(config.loop)
             self.assertEqual(config.loop_sleep, 45)
-            self.assertEqual(config.max_runtime_hours, 2.5)
-            self.assertFalse(config.fast_forward_existing_pages)
+            self.assertIsNone(config.max_runtime_hours)
+            self.assertTrue(config.fast_forward_existing_pages)
             self.assertEqual(config.sources, ["openalex", "europe_pmc", "arxiv"])
             self.assertEqual(config.language, "zh")
 
@@ -498,6 +518,33 @@ class DownloadConfigTests(unittest.TestCase):
             self.assertTrue(FakeCore.called)
             self.assertFalse(controller.running)
 
+    def test_pdf_backfill_status_uses_current_language(self) -> None:
+        class FakeCore:
+            @staticmethod
+            def validate_config(_config) -> None:
+                return None
+
+        class HoldingWorker:
+            def __init__(self, *, target, **_kwargs):
+                self.target = target
+
+            def start(self) -> None:
+                return None
+
+        with tempfile.TemporaryDirectory() as temp:
+            paths = AppPaths(ROOT, Path(temp), ())
+            store = AccountStore(paths.data("accounts.sqlite3"))
+            locale = LocaleController(store)
+            locale.setLanguage("en")
+            controller = DownloadController(AppController(paths, locale), paths, store, locale)
+            with patch("omnilit_qt.download_controller.build_download_config", return_value=(FakeCore, object())), patch(
+                "omnilit_qt.download_controller.ManagedWorker", HoldingWorker
+            ):
+                self.assertTrue(controller.backfillMissingPdfs({}))
+
+            self.assertEqual(controller.activeTaskText, tr("en", "pdf_backfill_task"))
+            self.assertEqual(controller.statusText, tr("en", "pdf_backfill_started"))
+
     def test_download_controller_exposes_active_keyword_summary(self) -> None:
         class FakeCore:
             @staticmethod
@@ -523,6 +570,43 @@ class DownloadConfigTests(unittest.TestCase):
             expected_keywords = "alpha、beta、gamma" + tr("zh", "keyword_count_suffix", count=4)
             self.assertEqual(controller.activeTaskText, tr("zh", "downloading_keywords", keywords=expected_keywords))
 
+
+    def test_download_controller_deduplicates_active_keyword_summary(self) -> None:
+        class FakeCore:
+            @staticmethod
+            def validate_config(_config) -> None:
+                return None
+
+        class HoldingWorker:
+            def __init__(self, *, target, **_kwargs):
+                self.target = target
+
+            def start(self) -> None:
+                return None
+
+        with tempfile.TemporaryDirectory() as temp:
+            paths = AppPaths(ROOT, Path(temp), ())
+            store = AccountStore(paths.data("accounts.sqlite3"))
+            locale = LocaleController(store)
+            controller = DownloadController(AppController(paths, locale), paths, store, locale)
+            with patch("omnilit_qt.download_controller.build_download_config", return_value=(FakeCore, object())), patch(
+                "omnilit_qt.download_controller.ManagedWorker", HoldingWorker
+            ):
+                self.assertTrue(
+                    controller.start(
+                        {
+                            "keywords": (
+                                "lithium-sulfur batteries\n"
+                                "polysulfides\n"
+                                "lithium-sulfur batteries\n"
+                                "Polysulfides"
+                            )
+                        }
+                    )
+                )
+
+            expected_keywords = "lithium-sulfur batteries、polysulfides"
+            self.assertEqual(controller.activeTaskText, tr("zh", "downloading_keywords", keywords=expected_keywords))
 
     def test_download_controller_exposes_active_literature_source(self) -> None:
         class FakeCore:
@@ -1498,12 +1582,15 @@ class QtOnlyTests(unittest.TestCase):
         self.assertIn("Layout.preferredHeight: 84", stats)
         self.assertNotIn("Layout.preferredHeight: 76", download)
         self.assertIn("translationController.openDirectory(translationDir.text)", translation)
+        self.assertNotIn("translationController.chooseDirectory(", translation)
+        self.assertNotIn('text: i18n.text("choose")', translation)
         self.assertIn('color: navigationButton.selected ? theme.navSelected : "transparent"', workspace)
 
     def test_translation_page_uses_one_directory_pending_list_and_scroll_preserving_preview(self) -> None:
         translation = (ROOT / "ui" / "qml" / "TranslationPage.qml").read_text(encoding="utf-8")
         self.assertIn("id: translationDir", translation)
         self.assertNotIn("id: outputDir", translation)
+        self.assertNotIn("choose_translation_dir", translation)
         self.assertIn("translationDir.text=settings.translationDir || settings.inputDir || translationController.defaultInputDir", translation)
         self.assertIn("translationController.pendingDocuments", translation)
         self.assertNotIn("translationController.addDocuments(translationDir.text)", translation)
@@ -1585,15 +1672,32 @@ class QtOnlyTests(unittest.TestCase):
         self.assertIn("readonly property int logPaneMinimumHeight", download)
         self.assertIn("readonly property real logPanePreferredHeight: Math.max(", download)
         self.assertIn("root.height - metrics.pageMargin * 2 - heading.implicitHeight - downloadFormPaneHeight - statsPaneHeight", download)
-        self.assertIn("advancedVisible ? 78 : 105", download)
         self.assertIn("form.implicitHeight + metrics.cardPadding * 2", download)
-        self.assertIn("root.advancedVisible ? 360 : 320", download)
-        download_options_row = download[
-            download.index("ModernCheckBox { id: downloadPdfs") : download.index("id: advancedPanel")
-        ]
-        self.assertLess(download_options_row.index("id: oaOnly"), download_options_row.index("id: pages"))
-        self.assertLess(download_options_row.index("id: pages"), download_options_row.index("id: perPage"))
-        self.assertIn('i18n.text("advanced")', download_options_row)
+        self.assertIn('property var qualityValues: ["keyword", "relaxed", "balanced", "strict", "very_strict"]', download)
+        self.assertIn('property var qualityTipKeys: ["quality_keyword_tip", "quality_relaxed_tip", "quality_balanced_tip", "quality_strict_tip", "quality_very_strict_tip"]', download)
+        self.assertIn("qualityPreset: root.qualityValues[root.selectedQualityIndex]", download)
+        self.assertIn("model: root.keywordTerms", download)
+        self.assertIn("function addKeywords(value)", download)
+        self.assertIn("function startAddKeyword()", download)
+        self.assertIn("function commitNewKeyword(value)", download)
+        self.assertIn("function commitKeywordEdit(index, value)", download)
+        self.assertIn("id: addKeywordChip", download)
+        self.assertIn("id: addKeywordEdit", download)
+        self.assertIn("onClicked: root.startAddKeyword()", download)
+        self.assertNotIn("id: keywordInput", download)
+        self.assertNotIn('text: i18n.text("add_keyword")', download)
+        self.assertIn("text: i18n.text(root.qualityTipKeys[index])", download)
+        self.assertIn('text: i18n.text("pdf_backfill")', download)
+        self.assertIn('text: i18n.text("pdf_backfill_tip")', download)
+        self.assertNotIn('text: "PDF backfill"', download)
+        self.assertNotIn("Scan existing metadata and download missing legal OA PDFs.", download)
+        self.assertIn('text: i18n.text("open")', download)
+        self.assertNotIn('i18n.text("email")', download)
+        self.assertNotIn("id: advancedPanel", download)
+        self.assertNotIn("ModernCheckBox { id: downloadPdfs", download)
+        self.assertNotIn("id: pages", download)
+        self.assertNotIn("id: perPage", download)
+        self.assertNotIn('i18n.text("advanced")', download)
         self.assertIn("Layout.preferredHeight: root.logPanePreferredHeight", download)
         self.assertIn("Layout.minimumHeight: root.logPaneMinimumHeight", download)
         self.assertIn("id: pageScroll", translation)
@@ -1628,7 +1732,7 @@ class QtOnlyTests(unittest.TestCase):
         main = (qml_dir / "Main.qml").read_text(encoding="utf-8")
         auth = (qml_dir / "AuthPage.qml").read_text(encoding="utf-8")
         self.assertIn("readonly property int authWindowWidth: 472", main)
-        self.assertIn("readonly property int authWindowHeight: 580", main)
+        self.assertIn("readonly property int authWindowHeight: 620", main)
         self.assertIn("readonly property int workspaceMinimumWidth: 1280", main)
         self.assertIn("readonly property int workspaceMinimumHeight: 860", main)
         self.assertIn("maximumWidth: 16777215", main)
@@ -1656,6 +1760,15 @@ class QtOnlyTests(unittest.TestCase):
         auth_field = (qml_dir / "AuthTextField.qml").read_text(encoding="utf-8")
         self.assertIn("border.color: control.activeFocus ? theme.accent : theme.border", auth_field)
         self.assertIn('iconName: "user"', auth)
+        self.assertIn('iconName: "email"', auth)
+        self.assertIn("authController.registerUser(username.text, password.text, confirm.text, contactEmail.text, remember.checked)", auth)
+        self.assertIn("readonly property int authSpacing: 6", auth)
+        self.assertIn("readonly property int authFieldHeight: 42", auth)
+        self.assertIn("anchors.margins: 18", auth)
+        self.assertIn("opacity: registerMode ? 1 : 0", auth)
+        self.assertIn("enabled: registerMode", auth)
+        self.assertIn("echoMode: showPassword.checked ? TextInput.Normal : TextInput.Password", auth)
+        self.assertIn("reserveSpace: true", auth)
         self.assertEqual(auth.count('iconName: "lock"'), 2)
         self.assertNotIn("height: 3", auth)
         mode_switch = auth.split("id: modeSwitch", 1)[1].split("Item { Layout.fillHeight", 1)[0]
@@ -1807,7 +1920,9 @@ class QtOnlyTests(unittest.TestCase):
         self.assertIn("id: systemPromptSettingsCard", workspace)
         self.assertIn('root.registerTourTarget("system.prompt_settings", systemPromptSettingsCard)', workspace)
         self.assertIn("onboardingController.chooseWorkdir()", workspace)
-        self.assertIn("onboardingController.saveWorkdirPreference(root.systemSettingsWorkdirDraft)", workspace)
+        self.assertIn("onboardingController.saveWorkdirPreference(systemWorkdirField.text)", workspace)
+        self.assertIn("systemWorkdirField.text = selected", workspace)
+        self.assertIn("systemWorkdirField.text = onboardingController.workdir", workspace)
         self.assertIn("onboardingController.setShowEveryLogin(checked)", workspace)
         self.assertIn("onboardingController.startTour()", workspace)
         self.assertIn('text: i18n.text("show_guide_every_open")', workspace)
@@ -1946,9 +2061,10 @@ class QtOnlyTests(unittest.TestCase):
         qml_dir = ROOT / "ui" / "qml"
         download = (qml_dir / "DownloadPage.qml").read_text(encoding="utf-8")
         translation = (qml_dir / "TranslationPage.qml").read_text(encoding="utf-8")
-        for text in (download, translation):
-            self.assertIn("id: saveSettingsTimer; interval: 350", text)
-            self.assertIn("if(!root.restoringSettings) saveSettingsTimer.restart()", text)
+        self.assertIn("id: saveSettingsTimer; interval: 350", download)
+        self.assertIn("if(!root.restoringSettings)\n            saveSettingsTimer.restart()", download)
+        self.assertIn("id: saveSettingsTimer; interval: 350", translation)
+        self.assertIn("if(!root.restoringSettings) saveSettingsTimer.restart()", translation)
         self.assertIn("onSelectedSourcesChanged: scheduleSave()", download)
         self.assertIn("onSelectedGlossariesChanged: scheduleSave()", translation)
         self.assertNotIn('onClicked: downloadController.saveConfig(config())', download)

@@ -31,6 +31,18 @@ LAYER_ORDER = {
     "missinginfo": 5,
 }
 
+TYPE_ORDER = {
+    "paper": 0, "section": 1, "problem": 2, "researchgap": 3, "concept": 4,
+    "contribution": 5, "method": 6, "algorithm": 7, "model": 8,
+    "experiment": 9, "dataset": 10, "metric": 11, "baseline": 12,
+    "result": 13, "claim": 14, "limitation": 15, "futurework": 16,
+    "figure": 17, "table": 18, "equation": 19,
+}
+
+STAGE_NAMES = {
+    0: "paper", 1: "context", 2: "approach", 3: "evaluation", 4: "findings", 5: "evidence",
+}
+
 
 def academic_layout(nodes: list[dict[str, Any]], comparison: bool = False) -> dict[str, dict[str, float | int | str]]:
     """Return deterministic normalized positions for a layered academic graph."""
@@ -39,32 +51,42 @@ def academic_layout(nodes: list[dict[str, Any]], comparison: bool = False) -> di
         kind = str(node.get("type") or "concept").casefold()
         layers[LAYER_ORDER.get(kind, 2)].append(node)
     for values in layers.values():
-        values.sort(key=lambda item: (-float(item.get("importance", item.get("weight", 0.5)) or 0.0), str(item.get("label") or "").casefold(), str(item.get("id") or "")))
+        values.sort(key=lambda item: (
+            TYPE_ORDER.get(str(item.get("type") or "concept").casefold(), 99),
+            -float(item.get("importance", item.get("weight", 0.5)) or 0.0),
+            str(item.get("label") or "").casefold(),
+            str(item.get("id") or ""),
+        ))
 
     result: dict[str, dict[str, float | int | str]] = {}
-    max_layer = max(layers, default=0)
+    per_row = 6
+    row_counts = {layer: max(1, math.ceil(len(values) / per_row)) for layer, values in layers.items()}
+    total_rows = sum(row_counts.values())
+    row_cursor = 0
     for layer in sorted(layers):
         values = layers[layer]
-        per_row = 7
-        row_count = max(1, math.ceil(len(values) / per_row))
+        row_count = row_counts[layer]
         for index, node in enumerate(values):
             if comparison and str(node.get("type") or "").casefold() == "paper":
                 x = (index + 1) / (len(values) + 1)
-                y = 0.08
+                y = 0.06
             else:
                 row = index // per_row
                 position = index % per_row
                 items_in_row = min(per_row, len(values) - row * per_row)
                 x = (position + 1) / (items_in_row + 1)
-                base_y = 0.08 + (layer / max(1, max_layer)) * 0.84
-                y = max(0.04, min(0.96, base_y + (row - (row_count - 1) / 2) * 0.052))
+                y = (row_cursor + row + 1) / (total_rows + 1)
+            kind = str(node.get("type") or "concept").casefold()
             result[str(node.get("id") or "")] = {
                 "x": round(x, 6),
                 "y": round(y, 6),
                 "layer": layer,
                 "order": index,
-                "lane": str((node.get("details") or {}).get("only_in") or ""),
+                "lane": str((node.get("details") or {}).get("only_in") or kind),
+                "stage": STAGE_NAMES.get(layer, "approach"),
+                "type_lane": kind,
             }
+        row_cursor += row_count
     return result
 
 

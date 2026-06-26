@@ -38,6 +38,7 @@ Item {
     property var wordCloudRecord: ({})
     property var wordCloudRecords: []
     property string pendingGraphKeyword: ""
+    property string pendingGraphNodeId: ""
 
     readonly property var relevanceValues: ["all", "keyword_only", "loose", "balanced", "strict", "very_strict"]
     readonly property var statusValues: ["all", "downloaded", "no_candidate", "failed", "not_open_access", "not_pdf", "request_error"]
@@ -88,8 +89,13 @@ Item {
     Connections {
         target: knowledgeGraphController
         function onGraphReady(recordId) {
-            if (recordId === root.graphRecordId && root.pendingGraphKeyword) {
-                knowledgeGraphController.search(root.pendingGraphKeyword)
+            if (recordId === root.graphRecordId) {
+                var selected = false
+                if (root.pendingGraphNodeId)
+                    selected = knowledgeGraphController.selectNode(root.pendingGraphNodeId)
+                if (!selected && root.pendingGraphKeyword)
+                    knowledgeGraphController.search(root.pendingGraphKeyword)
+                root.pendingGraphNodeId = ""
                 root.pendingGraphKeyword = ""
             }
         }
@@ -110,115 +116,148 @@ Item {
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 72
+            Layout.preferredHeight: 86
             radius: theme.radiusMedium
             color: theme.surface
             border.color: theme.border
+            clip: true
 
-            RowLayout {
+            Flickable {
+                id: libraryToolbarFlick
                 anchors.fill: parent
-                anchors.margins: 10
-                spacing: 10
+                anchors.leftMargin: 10
+                anchors.rightMargin: 10
+                anchors.topMargin: 10
+                anchors.bottomMargin: 18
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                flickableDirection: Flickable.HorizontalFlick
+                contentWidth: libraryToolbarRow.implicitWidth
+                contentHeight: libraryToolbarRow.implicitHeight
 
-                TextField {
-                    id: query
-                    Layout.preferredWidth: 320
-                    Layout.minimumWidth: 320
-                    Layout.maximumWidth: 320
-                    placeholderText: "搜索标题、摘要、作者或 DOI"
-                    selectByMouse: true
-                    onTextChanged: root.applyFilters()
-                }
-                ComboBox {
-                    id: relevanceFilter
-                    Layout.preferredWidth: 170
-                    model: root.relevanceLabels
-                    currentIndex: 0
-                    enabled: !literatureLibraryController.loading
-                    onCurrentIndexChanged: root.applyFilters()
-                }
-                ComboBox {
-                    id: pdfStatusFilter
-                    Layout.preferredWidth: 150
-                    model: root.statusLabels
-                    currentIndex: 0
-                    enabled: !literatureLibraryController.loading
-                    onCurrentIndexChanged: root.applyFilters()
-                }
-                ComboBox {
-                    id: sortFilter
-                    Layout.preferredWidth: 150
-                    model: root.sortLabels
-                    currentIndex: 0
-                    enabled: !literatureLibraryController.loading
-                    onCurrentIndexChanged: root.applyFilters()
-                }
-                ComboBox {
-                    id: journalTypeFilter
-                    Layout.preferredWidth: 150
-                    model: root.journalTypeLabels
-                    currentIndex: 0
-                    enabled: !literatureLibraryController.loading
-                    onCurrentIndexChanged: root.applyFilters()
-                }
-                ComboBox {
-                    id: projectFilter
-                    Layout.preferredWidth: 150
-                    model: root.favoriteProjectFilterLabels()
-                    currentIndex: 0
-                    enabled: !literatureLibraryController.loading
-                    onCurrentIndexChanged: root.applyFilters()
-                }
-                PillButton {
-                    text: "新建收藏分类"
-                    enabled: !literatureLibraryController.loading
-                    onClicked: createProjectPopup.open()
-                }
-                PillButton {
-                    id: keywordGroupButton
-                    text: root.selectedKeywordGroupsText()
-                    enabled: !literatureLibraryController.loading && literatureLibraryController.keywordGroupOptions.length > 0
-                    onClicked: keywordGroupPopup.open()
-                    ModernToolTip {
-                        placement: "bottom"
-                        delay: 350
-                        shown: parent.hovered && literatureLibraryController.keywordGroupOptions.length === 0
-                        text: i18n.text("no_keyword_groups")
+                WheelHandler {
+                    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                    onWheel: function(event) {
+                        var delta = event.angleDelta.y !== 0 ? event.angleDelta.y : event.angleDelta.x
+                        var maxX = Math.max(0, libraryToolbarFlick.contentWidth - libraryToolbarFlick.width)
+                        libraryToolbarFlick.contentX = Math.max(0, Math.min(maxX, libraryToolbarFlick.contentX - delta))
+                        event.accepted = true
                     }
                 }
-                PillButton {
-                    text: literatureLibraryController.loading && literatureLibraryController.busyAction === "refresh" ? "刷新中..." : i18n.text("refresh")
-                    enabled: !literatureLibraryController.loading
-                    onClicked: literatureLibraryController.refresh()
+
+                ScrollBar.horizontal: ScrollBar {
+                    parent: libraryToolbarFlick.parent
+                    anchors.left: libraryToolbarFlick.left
+                    anchors.right: libraryToolbarFlick.right
+                    anchors.bottom: parent.bottom
+                    anchors.bottomMargin: 4
+                    policy: ScrollBar.AlwaysOn
                 }
-                PillButton {
-                    text: literatureLibraryController.loading && literatureLibraryController.busyAction === "recompute" ? "重算中..." : "重算相关性"
-                    enabled: !literatureLibraryController.loading
-                    onClicked: literatureLibraryController.recomputeRelevance()
-                }
-                PillButton {
-                    text: literatureLibraryController.loading && literatureLibraryController.busyAction === "organize" ? "归档中..." : "按相关性归档"
-                    enabled: !literatureLibraryController.loading
-                    primary: true
-                    onClicked: literatureLibraryController.organizeByRelevance()
-                }
-                PillButton {
-                    text: knowledgeGraphController.loading && knowledgeGraphController.currentRecordId === "__batch__" ? "批量生成中..." : "批量生成图谱"
-                    enabled: !knowledgeGraphController.loading && literatureLibraryController.records.length > 0
-                    onClicked: knowledgeGraphController.generateGraphs(literatureLibraryController.records)
-                }
-                PillButton {
-                    text: wordCloudController.loading && wordCloudController.currentScope === "library" ? "词云生成中..." : "筛选词云"
-                    enabled: !wordCloudController.loading && literatureLibraryController.records.length > 0
-                    onClicked: root.openLibraryWordCloud()
-                }
-                PillButton {
-                    text: literatureLibraryController.loading && literatureLibraryController.busyAction === "preview_cleanup" ? "扫描中..." :
-                          literatureLibraryController.loading && literatureLibraryController.busyAction === "confirm_cleanup" ? "删除中..." : "清理旧 PDF"
-                    enabled: !literatureLibraryController.loading
-                    onClicked: {
-                        cleanupPopup.open()
-                        literatureLibraryController.previewCleanup()
+
+                RowLayout {
+                    id: libraryToolbarRow
+                    spacing: 10
+
+                    TextField {
+                        id: query
+                        Layout.preferredWidth: 320
+                        Layout.minimumWidth: 320
+                        Layout.maximumWidth: 320
+                        placeholderText: "搜索标题、摘要、作者或 DOI"
+                        selectByMouse: true
+                        onTextChanged: root.applyFilters()
+                    }
+                    ComboBox {
+                        id: relevanceFilter
+                        Layout.preferredWidth: 170
+                        model: root.relevanceLabels
+                        currentIndex: 0
+                        enabled: !literatureLibraryController.loading
+                        onCurrentIndexChanged: root.applyFilters()
+                    }
+                    ComboBox {
+                        id: pdfStatusFilter
+                        Layout.preferredWidth: 150
+                        model: root.statusLabels
+                        currentIndex: 0
+                        enabled: !literatureLibraryController.loading
+                        onCurrentIndexChanged: root.applyFilters()
+                    }
+                    ComboBox {
+                        id: sortFilter
+                        Layout.preferredWidth: 150
+                        model: root.sortLabels
+                        currentIndex: 0
+                        enabled: !literatureLibraryController.loading
+                        onCurrentIndexChanged: root.applyFilters()
+                    }
+                    ComboBox {
+                        id: journalTypeFilter
+                        Layout.preferredWidth: 150
+                        model: root.journalTypeLabels
+                        currentIndex: 0
+                        enabled: !literatureLibraryController.loading
+                        onCurrentIndexChanged: root.applyFilters()
+                    }
+                    ComboBox {
+                        id: projectFilter
+                        Layout.preferredWidth: 150
+                        model: root.favoriteProjectFilterLabels()
+                        currentIndex: 0
+                        enabled: !literatureLibraryController.loading
+                        onCurrentIndexChanged: root.applyFilters()
+                    }
+                    PillButton {
+                        text: "新建收藏分类"
+                        enabled: !literatureLibraryController.loading
+                        onClicked: createProjectPopup.open()
+                    }
+                    PillButton {
+                        id: keywordGroupButton
+                        text: root.selectedKeywordGroupsText()
+                        enabled: !literatureLibraryController.loading && literatureLibraryController.keywordGroupOptions.length > 0
+                        onClicked: keywordGroupPopup.open()
+                        ModernToolTip {
+                            placement: "bottom"
+                            delay: 350
+                            shown: parent.hovered && literatureLibraryController.keywordGroupOptions.length === 0
+                            text: i18n.text("no_keyword_groups")
+                        }
+                    }
+                    PillButton {
+                        text: literatureLibraryController.loading && literatureLibraryController.busyAction === "refresh" ? "刷新中..." : i18n.text("refresh")
+                        enabled: !literatureLibraryController.loading
+                        onClicked: literatureLibraryController.refresh()
+                    }
+                    PillButton {
+                        text: literatureLibraryController.loading && literatureLibraryController.busyAction === "recompute" ? "重算中..." : "重算相关性"
+                        enabled: !literatureLibraryController.loading
+                        onClicked: literatureLibraryController.recomputeRelevance()
+                    }
+                    PillButton {
+                        text: literatureLibraryController.loading && literatureLibraryController.busyAction === "organize" ? "归档中..." : "按相关性归档"
+                        enabled: !literatureLibraryController.loading
+                        primary: true
+                        onClicked: literatureLibraryController.organizeByRelevance()
+                    }
+                    PillButton {
+                        text: knowledgeGraphController.loading && knowledgeGraphController.currentRecordId === "__batch__" ? "批量生成中..." : "批量生成图谱"
+                        enabled: !knowledgeGraphController.loading && literatureLibraryController.records.length > 0
+                        onClicked: knowledgeGraphController.generateGraphs(literatureLibraryController.records)
+                    }
+                    PillButton {
+                        text: wordCloudController.loading && wordCloudController.currentScope === "library" ? "词云生成中..." : "筛选词云"
+                        enabled: !wordCloudController.loading && literatureLibraryController.records.length > 0
+                        onClicked: root.openLibraryWordCloud()
+                    }
+                    PillButton {
+                        text: literatureLibraryController.loading && literatureLibraryController.busyAction === "preview_cleanup" ? "扫描中..." :
+                              literatureLibraryController.loading && literatureLibraryController.busyAction === "confirm_cleanup" ? "删除中..." : "清理旧 PDF"
+                        enabled: !literatureLibraryController.loading
+                        onClicked: {
+                            cleanupPopup.open()
+                            literatureLibraryController.previewCleanup()
+                        }
                     }
                 }
             }
@@ -684,7 +723,7 @@ Item {
             }
         }
         onEvidenceRequested: function(recordId, page, bbox, elementId) { root.openEvidenceInReader(recordId, page, bbox, elementId) }
-        onGraphRequested: function(recordId, keyword) { root.openGraphFromWordCloud(recordId, keyword) }
+        onGraphRequested: function(recordId, nodeId, keyword) { root.openGraphFromWordCloud(recordId, nodeId, keyword) }
     }
 
     function applyFilters() {
@@ -904,7 +943,7 @@ Item {
         root.wordCloudOpen = true
         wordCloudController.generateForRecords(records)
     }
-    function openGraphFromWordCloud(recordId, keyword) {
+    function openGraphFromWordCloud(recordId, nodeId, keyword) {
         var records = literatureLibraryController.records || []
         var target = null
         for (var i = 0; i < records.length; ++i) {
@@ -919,6 +958,7 @@ Item {
             return
         root.wordCloudOpen = false
         root.pendingGraphKeyword = String(keyword || "")
+        root.pendingGraphNodeId = String(nodeId || "")
         root.graphRecordId = String(target.recordId || "")
         root.graphPdfPath = String(target.localPdfPath || "")
         root.graphTitle = String(target.title || "知识图谱")
@@ -927,7 +967,10 @@ Item {
         root.graphOpen = true
         knowledgeGraphController.generateGraph(root.graphRecordId, target, root.graphPdfPath)
         if (!knowledgeGraphController.loading) {
-            knowledgeGraphController.search(root.pendingGraphKeyword)
+            var selected = root.pendingGraphNodeId && knowledgeGraphController.selectNode(root.pendingGraphNodeId)
+            if (!selected)
+                knowledgeGraphController.search(root.pendingGraphKeyword)
+            root.pendingGraphNodeId = ""
             root.pendingGraphKeyword = ""
         }
     }

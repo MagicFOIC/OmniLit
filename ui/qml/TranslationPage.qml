@@ -136,16 +136,6 @@ Item {
                             onTextChanged: root.scheduleSave()
                             onEditingFinished: translationController.refreshPendingDocuments(text)
                         }
-                        PillButton {
-                            text: i18n.text("choose")
-                            onClicked: {
-                                let p=translationController.chooseDirectory(i18n.text("choose_translation_dir"), translationDir.text)
-                                if(p) {
-                                    translationDir.text=p
-                                    translationController.refreshPendingDocuments(p)
-                                }
-                            }
-                        }
                         PillButton { text: i18n.text("open"); onClicked: translationController.openDirectory(translationDir.text) }
                     }
                     Card {

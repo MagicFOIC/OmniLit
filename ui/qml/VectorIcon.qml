@@ -44,6 +44,7 @@ Item {
         if (iconName === "image") return "M4 5 L20 5 L20 19 L4 19 Z M7 15 L10.5 11.5 L13 14 L15 12 L20 17 M8 9 L8.1 9"
         if (iconName === "status") return "M12 4 A8 8 0 1 0 12 20 A8 8 0 1 0 12 4 M8 12 L11 15 L16 9"
         if (iconName === "user") return "M12 12 A4 4 0 1 0 12 4 A4 4 0 1 0 12 12 M4.5 21 C5.2 16.8 7.7 15 12 15 C16.3 15 18.8 16.8 19.5 21"
+        if (iconName === "email") return "M4 6 L20 6 L20 18 L4 18 Z M4 7 L12 13 L20 7"
         if (iconName === "lock") return "M6 10 L18 10 L18 21 L6 21 Z M8.5 10 L8.5 7.5 C8.5 3 15.5 3 15.5 7.5 L15.5 10 M12 14 L12 17"
         return ""
     }

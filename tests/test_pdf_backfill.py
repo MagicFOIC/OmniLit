@@ -110,6 +110,7 @@ class PdfBackfillTests(unittest.TestCase):
                 page_delay=0,
                 resume=True,
             )
+            progress_messages: list[str] = []
 
             with patch.object(core, "build_session", return_value=session), patch.object(
                 core,
@@ -124,7 +125,10 @@ class PdfBackfillTests(unittest.TestCase):
                     "pdf_urls": ["https://repo.example/doi.pdf"],
                 },
             ):
-                stats = core.backfill_missing_pdfs_from_metadata(config)
+                stats = core.backfill_missing_pdfs_from_metadata(
+                    config,
+                    progress_callback=lambda _stats, message: progress_messages.append(message),
+                )
 
             self.assertEqual(stats.backfill_scanned_records, 3)
             self.assertEqual(stats.backfill_missing_pdf_records, 2)
@@ -139,6 +143,74 @@ class PdfBackfillTests(unittest.TestCase):
             ][3:]
             self.assertEqual([record["download_status"] for record in appended], ["downloaded", "downloaded"])
             self.assertTrue(all(record["resolver_version"] == core.PDF_RESOLVER_VERSION for record in appended))
+            self.assertEqual(stats.downloaded_pdfs, 2)
+            self.assertEqual(stats.pdf_downloaded, 2)
+            self.assertTrue(progress_messages[-1].startswith("元数据 PDF 补全完成。"))
+
+    def test_backfill_summary_uses_config_language(self) -> None:
+        stats = core.CrawlStats(
+            backfill_scanned_records=7,
+            backfill_missing_pdf_records=3,
+            pdf_candidates_found=4,
+            pdf_download_attempted=2,
+            backfill_downloaded_pdfs=1,
+            backfill_failed_pdfs=1,
+        )
+        zh = core.format_backfill_finished_message(core.CrawlConfig(language="zh"), stats)
+        en = core.format_backfill_finished_message(core.CrawlConfig(language="en"), stats)
+
+        self.assertIn("元数据 PDF 补全完成。", zh)
+        self.assertIn("Metadata PDF backfill finished.", en)
+
+    def test_run_once_automatically_backfills_missing_pdf_after_crawl(self) -> None:
+        payload = valid_pdf_bytes()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            metadata_path = root / "metadata_battery.jsonl"
+            metadata_path.write_text(
+                json.dumps({
+                    "title": "OA record missing a PDF",
+                    "doi": "10.1/auto-backfill",
+                    "download_status": "no_candidate",
+                    "open_access": {"is_oa": True},
+                }) + "\n",
+                encoding="utf-8",
+            )
+
+            crawl_session = BackfillSession(payload)
+            backfill_session = BackfillSession(payload)
+            config = core.CrawlConfig(
+                email="qa@example.com",
+                sources=[],
+                out_dir=root / "pdfs",
+                meta_path=metadata_path,
+                state_path=root / "crawl_state.json",
+                min_pdf_bytes=8,
+                request_delay=0,
+                page_delay=0,
+                resume=False,
+                auto_backfill_missing_pdfs=True,
+            )
+
+            with patch.object(core, "build_session", side_effect=[crawl_session, backfill_session]), patch.object(
+                core,
+                "query_openalex_work",
+                return_value=None,
+            ), patch.object(
+                core,
+                "query_unpaywall",
+                return_value={
+                    "is_oa": True,
+                    "pdf_url": "repo.example/auto.pdf",
+                    "pdf_urls": ["repo.example/auto.pdf"],
+                },
+            ):
+                stats = core.run_once(config)
+
+            self.assertEqual(stats.backfill_missing_pdf_records, 1)
+            self.assertEqual(stats.backfill_downloaded_pdfs, 1)
+            self.assertEqual(stats.downloaded_pdfs, 1)
+            self.assertIn("https://repo.example/auto.pdf", backfill_session.get_urls)
 
     def test_not_open_access_old_resolver_version_can_retry(self) -> None:
         old_record = {
@@ -158,6 +230,34 @@ class PdfBackfillTests(unittest.TestCase):
 
         self.assertTrue(core.record_needs_pdf_retry(old_record, now=core.datetime(2026, 6, 5, 1, 0, 0)))
         self.assertFalse(core.record_needs_pdf_retry(current_record, now=core.datetime(2026, 6, 5, 1, 0, 0)))
+
+    def test_retry_policy_keeps_transient_failures_eligible_without_bypassing_permanent_blocks(self) -> None:
+        now = core.datetime(2026, 6, 26, 12, 0, 0)
+        transient = {
+            "doi": "10.1/transient",
+            "download_status": "request_error",
+            "resolver_version": core.PDF_RESOLVER_VERSION,
+            "pdf_retry_attempts": core.MAX_PDF_RETRY_ATTEMPTS - 1,
+            "last_pdf_retry_at": now.isoformat(),
+        }
+        blocked = {
+            "doi": "10.1/blocked",
+            "download_status": "blocked_or_login",
+            "resolver_version": core.PDF_RESOLVER_VERSION,
+            "pdf_retry_attempts": 1,
+            "last_pdf_retry_at": now.isoformat(),
+        }
+        closed = {
+            "doi": "10.1/closed",
+            "download_status": "not_open_access",
+            "resolver_version": core.PDF_RESOLVER_VERSION,
+            "pdf_retry_attempts": 1,
+            "last_pdf_retry_at": now.isoformat(),
+        }
+
+        self.assertTrue(core.record_needs_pdf_retry(transient, now=now))
+        self.assertFalse(core.record_needs_pdf_retry(blocked, now=now))
+        self.assertFalse(core.record_needs_pdf_retry(closed, now=now))
 
 
 if __name__ == "__main__":

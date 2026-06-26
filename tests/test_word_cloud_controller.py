@@ -39,3 +39,25 @@ class WordCloudControllerTests(unittest.TestCase):
                 self.assertEqual(controller.currentScope, "library")
                 self.assertTrue(controller._collection_path(controller.currentKey).is_file())
                 self.assertNotEqual(record_path, controller._collection_path(controller.currentKey))
+
+    def test_term_selection_syncs_bound_graph_node(self) -> None:
+        class FakeGraph:
+            currentRecordId = "p1"
+
+            def __init__(self) -> None:
+                self.selected = []
+
+            def selectNode(self, node_id: str) -> bool:
+                self.selected.append(node_id)
+                return True
+
+        with tempfile.TemporaryDirectory() as temp:
+            controller = WordCloudController(None, FakePaths(Path(temp)), None, None)
+            graph = FakeGraph()
+            controller.setKnowledgeGraphController(graph)
+            controller._cloud = {"terms": [{
+                "normalized": "knowledge graph", "primaryNodeId": "method:p1:kg",
+                "nodeRefs": [{"recordId": "p1", "nodeId": "method:p1:kg"}],
+            }]}
+            self.assertTrue(controller.selectTerm("knowledge graph"))
+            self.assertEqual(graph.selected, ["method:p1:kg"])

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib
 import json
+import re
 import secrets
 import sqlite3
 import sys
@@ -19,6 +20,47 @@ PASSWORD_ITERATIONS = 310_000
 LEGACY_TK_PASSWORD_ITERATIONS = 260_000
 WORKDIR_SETTING = "onboarding/workdir"
 DOWNLOAD_FORM_SETTING = "download_form_config"
+CONTACT_EMAIL_SETTING = "contact_email"
+KEYWORD_SPLIT_RE = re.compile(r"[\r\n;,，；]+")
+SPACE_RE = re.compile(r"\s+")
+EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+QUALITY_PRESETS: dict[str, dict[str, Any]] = {
+    "keyword": {
+        "strict_keyword_match": False,
+        "min_keyword_match_ratio": 0.3,
+        "min_topic_score": 0,
+        "journal_whitelist_only": False,
+        "oa_only": False,
+    },
+    "relaxed": {
+        "strict_keyword_match": False,
+        "min_keyword_match_ratio": 0.5,
+        "min_topic_score": 4,
+        "journal_whitelist_only": False,
+        "oa_only": False,
+    },
+    "balanced": {
+        "strict_keyword_match": True,
+        "min_keyword_match_ratio": 0.7,
+        "min_topic_score": 6,
+        "journal_whitelist_only": False,
+        "oa_only": True,
+    },
+    "strict": {
+        "strict_keyword_match": True,
+        "min_keyword_match_ratio": 0.8,
+        "min_topic_score": 9,
+        "journal_whitelist_only": False,
+        "oa_only": True,
+    },
+    "very_strict": {
+        "strict_keyword_match": True,
+        "min_keyword_match_ratio": 0.9,
+        "min_topic_score": 12,
+        "journal_whitelist_only": True,
+        "oa_only": True,
+    },
+}
 
 
 def as_bool(value: Any, default: bool = False) -> bool:
@@ -56,6 +98,32 @@ def optional_float(value: Any) -> float | None:
     """解析可选浮点数。参数：原始值。返回值：浮点数或空值。"""
     text = str(value or "").strip()
     return float(text) if text else None
+
+
+def parse_download_keywords(value: Any) -> list[str]:
+    """Return unique user-entered download keywords from form text or lists."""
+    if value is None:
+        return []
+
+    if isinstance(value, (list, tuple, set)):
+        raw_items: list[Any] = []
+        for item in value:
+            raw_items.extend(KEYWORD_SPLIT_RE.split(str(item or "")))
+    else:
+        raw_items = KEYWORD_SPLIT_RE.split(str(value or ""))
+
+    keywords: list[str] = []
+    seen: set[str] = set()
+    for item in raw_items:
+        keyword = SPACE_RE.sub(" ", str(item or "").strip())
+        if not keyword:
+            continue
+        key = keyword.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        keywords.append(keyword)
+    return keywords
 
 
 def import_resource_module(paths: AppPaths, folder: str, module_name: str):
@@ -110,6 +178,11 @@ def normalize_download_form_config(paths: AppPaths, store: "AccountStore", setti
     normalized = dict(settings or {})
     if is_legacy_default_download_dir(paths, normalized.get("outputDir")):
         normalized["outputDir"] = str(default_download_dir(paths, store))
+    if "keywords" in normalized:
+        normalized["keywords"] = "\n".join(parse_download_keywords(normalized.get("keywords")))
+    if "sources" not in normalized:
+        core = import_resource_module(paths, "Download", "literature_download_core")
+        normalized["sources"] = list(core.DEFAULT_SOURCES)
     return normalized
 
 
@@ -177,6 +250,18 @@ class AccountStore:
         with closing(sqlite3.connect(self.db_path)) as conn:
             conn.execute("DELETE FROM settings WHERE key = ?", (key,))
             conn.commit()
+
+    def contact_email(self) -> str:
+        """Return the user contact email used by literature APIs."""
+        saved = self.setting(CONTACT_EMAIL_SETTING, "").strip()
+        if saved:
+            return saved
+        username = self.setting("remember_username", "").strip()
+        return username if EMAIL_PATTERN.fullmatch(username) else ""
+
+    def save_contact_email(self, email: str) -> None:
+        """Persist the literature API contact email."""
+        self.set_setting(CONTACT_EMAIL_SETTING, email.strip())
 
     @staticmethod
     def encode_password(password: str, salt: bytes | None = None) -> tuple[str, str]:
@@ -269,6 +354,8 @@ class AccountStore:
             else:
                 raise ValueError("密码不正确。")
         self.set_setting("remember_username", username)
+        if not self.setting(CONTACT_EMAIL_SETTING, "").strip() and EMAIL_PATTERN.fullmatch(username):
+            self.save_contact_email(username)
         return True
 
 
@@ -278,13 +365,7 @@ def build_download_config(paths: AppPaths, raw: dict[str, Any], stop_callback, p
     output_root = Path(str(raw.get("outputDir") or paths.data("Download"))).expanduser()
     if not output_root.is_absolute():
         output_root = paths.data(output_root)
-    keywords_text = str(raw.get("keywords") or "").strip()
-    keywords = [
-        item.strip()
-        for chunk in keywords_text.splitlines()
-        for item in chunk.split(";")
-        if item.strip()
-    ] or None
+    keywords = parse_download_keywords(raw.get("keywords")) or None
     sources_raw = raw.get("sources")
     if sources_raw is None:
         sources = None
@@ -299,11 +380,13 @@ def build_download_config(paths: AppPaths, raw: dict[str, Any], stop_callback, p
         selected_journals = [str(item).strip() for item in selected_journals_raw if str(item).strip()] or None
     else:
         selected_journals = [item.strip() for item in str(selected_journals_raw).replace(";", "\n").splitlines() if item.strip()] or None
-    discovery_mode = as_bool(raw.get("discoveryMode"))
-    strict_keyword_match = as_bool(raw.get("strictKeywordMatch"), True)
-    min_keyword_match_ratio = as_float(raw.get("minKeywordMatchRatio"), 0.75)
-    min_topic_score = as_int(raw.get("minTopicScore"), 0)
-    journal_whitelist_only = as_bool(raw.get("journalWhitelistOnly"))
+    quality_preset = str(raw.get("qualityPreset") or "balanced").strip()
+    quality = QUALITY_PRESETS.get(quality_preset, QUALITY_PRESETS["balanced"])
+    strict_keyword_match = bool(quality["strict_keyword_match"])
+    min_keyword_match_ratio = float(quality["min_keyword_match_ratio"])
+    min_topic_score = int(quality["min_topic_score"])
+    journal_whitelist_only = bool(quality["journal_whitelist_only"])
+    oa_only = bool(quality["oa_only"])
     include_unknown_impact_factor = as_bool(raw.get("includeUnknownImpactFactor"), True)
     journal_metric_source = str(raw.get("journalMetricSource") or "local_then_openalex").strip()
     if raw.get("journalMetricCsv"):
@@ -311,15 +394,8 @@ def build_download_config(paths: AppPaths, raw: dict[str, Any], stop_callback, p
     else:
         default_metric_csv = output_root / "journal_metrics.csv"
         journal_metric_csv = default_metric_csv if default_metric_csv.exists() else None
-    resume = as_bool(raw.get("resume"), True)
-    fast_forward_existing_pages = as_bool(raw.get("fastForwardExistingPages"), True)
-    if discovery_mode:
-        strict_keyword_match = False
-        min_keyword_match_ratio = 0.3
-        min_topic_score = 0
-        journal_whitelist_only = False
-        resume = False
-        fast_forward_existing_pages = False
+    resume = True
+    fast_forward_existing_pages = True
 
     return core, core.CrawlConfig(
         email=str(raw.get("email") or "").strip(),
@@ -330,17 +406,18 @@ def build_download_config(paths: AppPaths, raw: dict[str, Any], stop_callback, p
         sources=sources,
         from_date=str(raw.get("fromDate") or core.DEFAULT_FROM_DATE).strip(),
         to_date=str(raw.get("toDate") or core.DEFAULT_TO_DATE).strip(),
-        oa_only=as_bool(raw.get("oaOnly")),
-        sort=str(raw.get("sort") or "").strip() or None,
-        max_pages_per_keyword=as_int(raw.get("maxPages"), 1),
-        per_page=as_int(raw.get("perPage"), 20),
-        max_records=optional_int(raw.get("maxRecords")),
+        oa_only=oa_only,
+        sort=str(raw.get("sort") or "relevance_score:desc").strip() or None,
+        max_pages_per_keyword=as_int(raw.get("maxPages"), 1000),
+        per_page=as_int(raw.get("perPage"), 50),
+        max_records=None,
         request_delay=as_float(raw.get("requestDelay"), 0.2),
         page_delay=as_float(raw.get("pageDelay"), 0.5),
         min_pdf_bytes=as_int(raw.get("minPdfBytes"), 1024),
-        download_pdfs=as_bool(raw.get("downloadPdfs"), True),
-        retry_missing_pdfs=as_bool(raw.get("retryMissingPdfs"), True),
-        write_retry_records=as_bool(raw.get("writeRetryRecords")),
+        download_pdfs=True,
+        retry_missing_pdfs=True,
+        write_retry_records=False,
+        auto_backfill_missing_pdfs=True,
         strict_keyword_match=strict_keyword_match,
         min_keyword_match_ratio=min_keyword_match_ratio,
         topic_pack=str(raw.get("topicPack") or "auto").strip() or None,
@@ -352,9 +429,9 @@ def build_download_config(paths: AppPaths, raw: dict[str, Any], stop_callback, p
         include_unknown_impact_factor=include_unknown_impact_factor,
         journal_metric_source=journal_metric_source or "local_then_openalex",
         journal_metric_csv=journal_metric_csv,
-        loop=as_bool(raw.get("loop")),
+        loop=False,
         loop_sleep=as_float(raw.get("loopSleep"), 3600),
-        max_runtime_hours=optional_float(raw.get("maxRuntimeHours")),
+        max_runtime_hours=None,
         resume=resume,
         fast_forward_existing_pages=fast_forward_existing_pages,
         language=language,

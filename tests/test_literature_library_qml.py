@@ -30,6 +30,18 @@ class LiteratureLibraryQmlTests(unittest.TestCase):
         self.assertIn("literatureLibraryController.ensureLoaded()", qml)
         self.assertIn("onClicked: literatureLibraryController.refresh()", qml)
 
+    def test_library_toolbar_scrolls_horizontally_when_narrow(self) -> None:
+        qml = (ROOT / "ui" / "qml" / "LiteratureLibraryPage.qml").read_text(encoding="utf-8")
+
+        self.assertIn("id: libraryToolbarFlick", qml)
+        self.assertIn("flickableDirection: Flickable.HorizontalFlick", qml)
+        self.assertIn("contentWidth: libraryToolbarRow.implicitWidth", qml)
+        self.assertIn("WheelHandler {", qml)
+        self.assertIn("libraryToolbarFlick.contentX", qml)
+        self.assertIn("ScrollBar.horizontal: ScrollBar", qml)
+        self.assertIn("policy: ScrollBar.AlwaysOn", qml)
+        self.assertIn("id: libraryToolbarRow", qml)
+
     def test_qml_exposes_pdf_extraction_reader_entry(self) -> None:
         qml_dir = ROOT / "ui" / "qml"
         qml = (qml_dir / "LiteratureLibraryPage.qml").read_text(encoding="utf-8")

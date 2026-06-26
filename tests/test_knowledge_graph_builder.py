@@ -1,12 +1,39 @@
 from __future__ import annotations
 
+import json
 import unittest
 import time
+from pathlib import Path
 
-from omnilit_qt.knowledge_graph_builder import build_document
+from omnilit_qt.knowledge_graph_builder import BUILDER_VERSION, build_document
+
+
+FIXTURE_DIR = Path(__file__).parent / "fixtures" / "knowledge_graph"
+
+
+def load_golden_fixture(stem: str) -> tuple[dict, dict]:
+    extraction = json.loads((FIXTURE_DIR / f"{stem}.extraction.json").read_text(encoding="utf-8"))
+    expected = json.loads((FIXTURE_DIR / f"{stem}.expected_graph.json").read_text(encoding="utf-8"))
+    return extraction, expected
 
 
 class KnowledgeGraphBuilderTests(unittest.TestCase):
+    def test_golden_fixtures_extract_required_nodes_and_entities(self) -> None:
+        for stem in ("sample_paper_01", "sample_paper_02"):
+            with self.subTest(stem=stem):
+                fixture, expected = load_golden_fixture(stem)
+                record = fixture["record"]
+                document = build_document(record["recordId"], record, fixture["extraction_index"])
+                node_types = {node.type for node in document.nodes}
+                self.assertTrue(set(expected["required_node_types"]).issubset(node_types))
+                for entity in expected["entities"]:
+                    matches = [
+                        node for node in document.nodes
+                        if node.type == entity["type"] and node.label == entity["canonical_label"]
+                    ]
+                    self.assertEqual(len(matches), entity["expected_count"], entity)
+                    self.assertGreaterEqual(len(matches[0].evidence), entity["minimum_evidence"])
+
     def test_builds_sections_claims_and_locatable_elements(self) -> None:
         index = {
             "engine": "pymupdf",
@@ -25,8 +52,10 @@ class KnowledgeGraphBuilderTests(unittest.TestCase):
         self.assertEqual(figure.evidence[0].page, 1)
         self.assertGreater(document.metadata["stats"]["evidence"], 0)
         relations = {edge.type for edge in document.edges}
-        self.assertIn("PRODUCES", relations)
-        self.assertTrue(all(edge.evidence for edge in document.edges if edge.type in {"PRODUCES", "SUPPORTED_BY", "MEASURED_BY"}))
+        self.assertIn("ACHIEVES", relations)
+        self.assertIn("SUPPORTS", relations)
+        self.assertTrue(all(edge.relation_evidence for edge in document.edges if edge.type in {"ACHIEVES", "SUPPORTS", "MEASURED_BY"}))
+        self.assertNotIn("proximity_rule", {edge.relation_method for edge in document.edges})
 
     def test_metadata_only_degrades_gracefully(self) -> None:
         document = build_document("p1", {"title": "Graph Learning", "abstract": "A graph model."}, None)
@@ -70,9 +99,13 @@ class KnowledgeGraphBuilderTests(unittest.TestCase):
         self.assertTrue({"contribution", "experiment", "dataset", "metric", "limitation"}.issubset(types))
         self.assertTrue(all(node.evidence for node in document.nodes if node.type not in {"paper"}))
         payload = document.to_dict()
-        self.assertEqual(payload["builder_version"], 3)
+        self.assertEqual(payload["builder_version"], BUILDER_VERSION)
         self.assertEqual(set(payload["layout"]), {node.id for node in document.nodes})
         self.assertGreater(payload["quality_summary"]["evidence_coverage"], 0.9)
+        self.assertEqual(payload["metadata"]["pipeline"], [
+            "section_aware_blocks", "entity_candidates", "canonical_normalization",
+            "relation_candidates", "confidence_scoring", "quality_validation",
+        ])
 
     def test_hundred_page_rule_build_stays_within_budget(self) -> None:
         pages = [{"page": page, "height": 800, "textBlocks": [{"blockNo": 1, "text": "We evaluate the model on a benchmark dataset and accuracy improves by five percent.", "bbox": [20, 80, 500, 120]}]} for page in range(100)]

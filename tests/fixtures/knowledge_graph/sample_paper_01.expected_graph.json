@@ -1,0 +1,15 @@
+{
+  "required_node_types": ["method", "dataset", "metric", "result", "limitation", "futurework"],
+  "entities": [
+    {
+      "type": "metric",
+      "canonical_label": "F1",
+      "aliases_in_source": ["F1", "F1-score"],
+      "expected_count": 1,
+      "minimum_evidence": 2
+    }
+  ],
+  "needs_review_types": ["dataset"],
+  "minimum_evidence_coverage": 1.0,
+  "minimum_edge_evidence_coverage": 1.0
+}

@@ -16,6 +16,24 @@ class KnowledgeGraphLayoutTests(unittest.TestCase):
         positions = {(item["x"], item["y"]) for item in first.values()}
         self.assertEqual(len(positions), len(nodes))
         self.assertGreater(len({first[f"concept:{index}"]["y"] for index in range(20)}), 1)
+        self.assertEqual(first["paper:p1"]["stage"], "paper")
+        self.assertEqual(first["concept:0"]["stage"], "context")
+        self.assertEqual(first["concept:0"]["type_lane"], "concept")
+
+    def test_academic_stages_follow_paper_reasoning_order(self) -> None:
+        nodes = [
+            {"id": "paper", "type": "paper", "label": "Paper"},
+            {"id": "problem", "type": "problem", "label": "Problem"},
+            {"id": "method", "type": "method", "label": "Method"},
+            {"id": "dataset", "type": "dataset", "label": "Dataset"},
+            {"id": "result", "type": "result", "label": "Result"},
+            {"id": "figure", "type": "figure", "label": "Figure"},
+        ]
+        layout = academic_layout(nodes)
+        self.assertEqual([layout[node["id"]]["stage"] for node in nodes], [
+            "paper", "context", "approach", "evaluation", "findings", "evidence",
+        ])
+        self.assertEqual([layout[node["id"]]["y"] for node in nodes], sorted(layout[node["id"]]["y"] for node in nodes))
 
     def test_adjacency_is_bidirectional(self) -> None:
         adjacency = adjacency_index([{"source": "a", "target": "b"}, {"source": "b", "target": "c"}])

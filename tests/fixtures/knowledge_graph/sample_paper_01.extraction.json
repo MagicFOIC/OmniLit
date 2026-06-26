@@ -1,0 +1,42 @@
+{
+  "record": {
+    "recordId": "sample-paper-01",
+    "title": "AtlasNet for Robust Image Classification",
+    "contentSummary": "A benchmark dataset is available for a small pilot analysis.",
+    "keywordsText": "image classification; robust learning"
+  },
+  "extraction_index": {
+    "engine": "golden-fixture",
+    "sourceSha256": "sample-paper-01-sha",
+    "pageCount": 3,
+    "pages": [
+      {
+        "page": 0,
+        "height": 800,
+        "textBlocks": [
+          {"blockNo": 1, "text": "Methods", "bbox": [20, 70, 180, 100]},
+          {"blockNo": 2, "text": "We propose the AtlasNet framework for robust image classification.", "bbox": [20, 120, 520, 155]},
+          {"blockNo": 3, "text": "The experiment evaluates AtlasNet on the OpenImages dataset.", "bbox": [20, 170, 520, 205]}
+        ]
+      },
+      {
+        "page": 1,
+        "height": 800,
+        "textBlocks": [
+          {"blockNo": 1, "text": "Results", "bbox": [20, 70, 180, 100]},
+          {"blockNo": 2, "text": "Results show AtlasNet achieves an F1-score of 84.2 percent.", "bbox": [20, 120, 520, 155]},
+          {"blockNo": 3, "text": "F1 is the primary metric reported for every experiment.", "bbox": [20, 170, 520, 205]}
+        ]
+      },
+      {
+        "page": 2,
+        "height": 800,
+        "textBlocks": [
+          {"blockNo": 1, "text": "Discussion", "bbox": [20, 70, 180, 100]},
+          {"blockNo": 2, "text": "A limitation is the small evaluation cohort used for external validation.", "bbox": [20, 120, 520, 155]},
+          {"blockNo": 3, "text": "Future work will evaluate a larger cohort in multiple hospitals.", "bbox": [20, 170, 520, 205]}
+        ]
+      }
+    ]
+  }
+}

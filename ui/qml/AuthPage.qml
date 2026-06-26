@@ -5,6 +5,8 @@ import QtQuick.Layouts
 Item {
     id: root
     property bool registerMode: false
+    readonly property int authSpacing: 6
+    readonly property int authFieldHeight: 42
     Motion { id: motion }
     I18n { id: i18n }
     Theme { id: theme; dynamic: false }
@@ -39,15 +41,15 @@ Item {
     Card {
         id: loginCard
         width: Math.min(440, parent.width - metrics.pageMargin * 2)
-        height: Math.min(548, parent.height - metrics.pageMargin * 2)
+        height: Math.min(596, parent.height - metrics.pageMargin * 2)
         anchors.centerIn: parent
         opacity: 0
         scale: 0.98
 
         ColumnLayout {
             anchors.fill: parent
-            anchors.margins: 22
-            spacing: 8
+            anchors.margins: 18
+            spacing: root.authSpacing
 
             Text {
                 text: registerMode ? i18n.text("auth_register_eyebrow") : i18n.text("auth_login_eyebrow")
@@ -148,29 +150,47 @@ Item {
 
             ColumnLayout {
                 Layout.fillWidth: true
-                spacing: 8
+                spacing: root.authSpacing
 
                 ColumnLayout {
                     Layout.fillWidth: true
-                    spacing: 4
+                    spacing: 3
                     Text { text: i18n.text("username"); color: theme.textMuted; font.pixelSize: 12; font.weight: Font.DemiBold }
                     AuthTextField {
                         id: username
                         Layout.fillWidth: true
+                        Layout.preferredHeight: root.authFieldHeight
                         iconName: "user"
                         placeholderText: i18n.text("username")
                         text: authController.rememberedUsername
+                        onAccepted: registerMode ? contactEmail.forceActiveFocus() : password.forceActiveFocus()
+                    }
+                }
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 3
+                    enabled: registerMode
+                    opacity: registerMode ? 1 : 0
+                    Text { text: i18n.text("contact_email_settings"); color: theme.textMuted; font.pixelSize: 12; font.weight: Font.DemiBold }
+                    AuthTextField {
+                        id: contactEmail
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: root.authFieldHeight
+                        iconName: "email"
+                        placeholderText: i18n.text("email")
                         onAccepted: password.forceActiveFocus()
                     }
                 }
 
                 ColumnLayout {
                     Layout.fillWidth: true
-                    spacing: 4
+                    spacing: 3
                     Text { text: i18n.text("password"); color: theme.textMuted; font.pixelSize: 12; font.weight: Font.DemiBold }
                     AuthTextField {
                         id: password
                         Layout.fillWidth: true
+                        Layout.preferredHeight: root.authFieldHeight
                         iconName: "lock"
                         placeholderText: i18n.text("password")
                         text: authController.rememberedPassword
@@ -181,15 +201,17 @@ Item {
 
                 ColumnLayout {
                     Layout.fillWidth: true
-                    spacing: 4
-                    visible: registerMode
+                    spacing: 3
+                    enabled: registerMode
+                    opacity: registerMode ? 1 : 0
                     Text { text: i18n.text("confirm_password"); color: theme.textMuted; font.pixelSize: 12; font.weight: Font.DemiBold }
                     AuthTextField {
                         id: confirm
                         Layout.fillWidth: true
+                        Layout.preferredHeight: root.authFieldHeight
                         iconName: "lock"
                         placeholderText: i18n.text("confirm_password")
-                        echoMode: TextInput.Password
+                        echoMode: showPassword.checked ? TextInput.Normal : TextInput.Password
                         onAccepted: root.submit()
                     }
                 }
@@ -202,7 +224,13 @@ Item {
                 ModernCheckBox { id: showPassword; text: i18n.text("show_password"); font.pixelSize: 12 }
             }
 
-            StatusBanner { Layout.fillWidth: true; text: authController.statusText }
+            StatusBanner {
+                Layout.fillWidth: true
+                Layout.preferredHeight: reserveSpace ? reservedHeight : implicitHeight
+                text: authController.statusText
+                reserveSpace: true
+                maximumLines: 1
+            }
 
             PillButton {
                 Layout.fillWidth: true
@@ -222,7 +250,7 @@ Item {
                 onClicked: {
                     registerMode = !registerMode
                     if (registerMode)
-                        confirm.forceActiveFocus()
+                        contactEmail.forceActiveFocus()
                     else
                         username.forceActiveFocus()
                 }
@@ -263,7 +291,7 @@ Item {
 
     function submit() {
         if (registerMode)
-            authController.registerUser(username.text, password.text, confirm.text, remember.checked)
+            authController.registerUser(username.text, password.text, confirm.text, contactEmail.text, remember.checked)
         else
             authController.login(username.text, password.text, remember.checked)
     }

@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+import re
 from typing import Any
+
+
+def _normalized_label(value: Any) -> str:
+    return re.sub(r"[^\w\u3400-\u9fff]+", "", str(value or "").casefold())
 
 
 @dataclass
@@ -44,6 +49,28 @@ class KnowledgeGraphNode:
     evidence: list[KnowledgeGraphEvidence] = field(default_factory=list)
     details: dict[str, Any] = field(default_factory=dict)
     pinned: bool = False
+    normalized_label: str = ""
+    canonical_id: str = ""
+    extraction_method: str = "unknown"
+    confidence_reason: list[str] = field(default_factory=list)
+    source_section: str | None = None
+    needs_review: bool = False
+
+    def __post_init__(self) -> None:
+        self.normalized_label = self.normalized_label or _normalized_label(self.label)
+        self.canonical_id = self.canonical_id or f"{self.type.casefold()}:{self.normalized_label or self.id}"
+        if self.extraction_method == "unknown":
+            if self.type.casefold() in {"comparison", "conflict", "missinginfo"}:
+                self.extraction_method = "merged"
+            elif self.type.casefold() == "paper" or not self.evidence:
+                self.extraction_method = "metadata"
+            else:
+                self.extraction_method = "rule"
+        if not self.confidence_reason:
+            self.confidence_reason = [f"{self.extraction_method}_construction"]
+        if self.source_section is None and self.details.get("section"):
+            self.source_section = str(self.details["section"])
+        self.needs_review = self.needs_review or self.confidence < 0.6 or "needs_review" in self.tags
 
     def to_dict(self) -> dict[str, Any]:
         result = asdict(self)
@@ -71,6 +98,12 @@ class KnowledgeGraphNode:
             evidence=[KnowledgeGraphEvidence.from_dict(item) for item in legacy_evidence or [] if isinstance(item, dict)],
             details=details,
             pinned=bool(data.get("pinned", False)),
+            normalized_label=str(data.get("normalized_label") or data.get("normalizedLabel") or ""),
+            canonical_id=str(data.get("canonical_id") or data.get("canonicalId") or ""),
+            extraction_method=str(data.get("extraction_method") or data.get("extractionMethod") or details.get("extraction_method") or "legacy"),
+            confidence_reason=[str(item) for item in data.get("confidence_reason") or data.get("confidenceReason") or []],
+            source_section=data.get("source_section", data.get("sourceSection", details.get("section"))),
+            needs_review=bool(data.get("needs_review", data.get("needsReview", False))),
         )
 
 
@@ -84,10 +117,35 @@ class KnowledgeGraphEdge:
     confidence: float = 1.0
     evidence: list[KnowledgeGraphEvidence] = field(default_factory=list)
     details: dict[str, Any] = field(default_factory=dict)
+    normalized_label: str = ""
+    canonical_id: str = ""
+    extraction_method: str = "unknown"
+    confidence_reason: list[str] = field(default_factory=list)
+    source_section: str | None = None
+    needs_review: bool = False
+    relation_method: str = "unknown"
+    relation_evidence: list[KnowledgeGraphEvidence] = field(default_factory=list)
+    direction_reason: str = ""
+
+    def __post_init__(self) -> None:
+        self.normalized_label = self.normalized_label or _normalized_label(self.label or self.type)
+        self.canonical_id = self.canonical_id or f"relation:{self.type.casefold()}:{self.source}:{self.target}"
+        if self.extraction_method == "unknown":
+            self.extraction_method = "merged" if self.type in {"SAME_AS", "SIMILAR_TO", "CONTRADICTS", "MISSING"} else "rule"
+        if not self.confidence_reason:
+            self.confidence_reason = [f"{self.extraction_method}_relation"]
+        if self.relation_method == "unknown":
+            self.relation_method = "comparison_rule" if self.extraction_method == "merged" else "declared_relation"
+        if not self.direction_reason:
+            self.direction_reason = f"declared direction from {self.source} to {self.target} for {self.type}"
+        self.needs_review = self.needs_review or self.confidence < 0.6
+        if not self.relation_evidence and self.evidence:
+            self.relation_evidence = list(self.evidence)
 
     def to_dict(self) -> dict[str, Any]:
         result = asdict(self)
         result["evidence"] = [item.to_dict() for item in self.evidence]
+        result["relation_evidence"] = [item.to_dict() for item in self.relation_evidence]
         result["weight"] = self.confidence
         return result
 
@@ -97,6 +155,9 @@ class KnowledgeGraphEdge:
         evidence = data.get("evidence")
         if isinstance(evidence, str):
             evidence = [{"source": evidence}]
+        relation_evidence = data.get("relation_evidence") or data.get("relationEvidence")
+        if isinstance(relation_evidence, str):
+            relation_evidence = [{"source": relation_evidence}]
         source = str(data.get("source") or "")
         target = str(data.get("target") or "")
         edge_type = str(data.get("type") or "MENTIONS")
@@ -109,6 +170,15 @@ class KnowledgeGraphEdge:
             confidence=float(data.get("confidence", data.get("weight", 1.0)) or 0.0),
             evidence=[KnowledgeGraphEvidence.from_dict(item) for item in evidence or [] if isinstance(item, dict)],
             details=dict(data.get("details") or {}),
+            normalized_label=str(data.get("normalized_label") or data.get("normalizedLabel") or ""),
+            canonical_id=str(data.get("canonical_id") or data.get("canonicalId") or ""),
+            extraction_method=str(data.get("extraction_method") or data.get("extractionMethod") or "legacy"),
+            confidence_reason=[str(item) for item in data.get("confidence_reason") or data.get("confidenceReason") or []],
+            source_section=data.get("source_section", data.get("sourceSection")),
+            needs_review=bool(data.get("needs_review", data.get("needsReview", False))),
+            relation_method=str(data.get("relation_method") or data.get("relationMethod") or "legacy"),
+            relation_evidence=[KnowledgeGraphEvidence.from_dict(item) for item in relation_evidence or [] if isinstance(item, dict)],
+            direction_reason=str(data.get("direction_reason") or data.get("directionReason") or ""),
         )
 
 

@@ -11,9 +11,10 @@ import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, TextIO
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, urljoin, urlparse
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -71,6 +72,7 @@ ARXIV_URL = "https://export.arxiv.org/api/query"
 CROSSREF_URL = "https://api.crossref.org/v1/works"
 DOAJ_URL = "https://doaj.org/api/v4/search/articles"
 UNPAYWALL_URL = "https://api.unpaywall.org/v2"
+SEMANTIC_SCHOLAR_PAPER_URL = "https://api.semanticscholar.org/graph/v1/paper"
 SOURCE_OPENALEX = "openalex"
 SOURCE_EUROPE_PMC = "europe_pmc"
 SOURCE_ARXIV = "arxiv"
@@ -83,11 +85,11 @@ SOURCE_LABELS = {
     SOURCE_CROSSREF: "Crossref",
     SOURCE_DOAJ: "DOAJ",
 }
-DEFAULT_SOURCES = [SOURCE_OPENALEX]
+DEFAULT_SOURCES = [SOURCE_OPENALEX, SOURCE_EUROPE_PMC, SOURCE_ARXIV, SOURCE_CROSSREF, SOURCE_DOAJ]
 OPENALEX_SELECT = (
     "id,doi,title,display_name,publication_date,publication_year,"
     "cited_by_count,authorships,primary_location,open_access,"
-    "abstract_inverted_index"
+    "abstract_inverted_index,best_oa_location,locations"
 )
 NON_PDF_EXTENSIONS = (
     ".jpg",
@@ -114,7 +116,7 @@ EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 PDF_RESOLVER_VERSION = "oa_pdf_resolver_v2"
 PDF_RETRY_COOLDOWN = timedelta(days=7)
 PERMANENT_FAILURE_STATUSES = {"blocked_or_login", "not_open_access", "no_candidate"}
-MAX_PDF_RETRY_ATTEMPTS = 5
+MAX_PDF_RETRY_ATTEMPTS = 8
 MAX_PERMANENT_PDF_RETRY_ATTEMPTS = 3
 
 
@@ -141,6 +143,7 @@ class CrawlConfig:
     download_pdfs: bool = True
     retry_missing_pdfs: bool = True
     write_retry_records: bool = False
+    auto_backfill_missing_pdfs: bool = True
     strict_keyword_match: bool = True
     min_keyword_match_ratio: float = 0.75
     topic_pack: str | None = "auto"
@@ -224,6 +227,12 @@ class ExistingIndex:
     keys: set[str]
     downloaded_keys: set[str]
     retry_pdf_keys: set[str]
+    canonical_keys: set[str] = field(default_factory=set)
+    downloaded_canonical_keys: set[str] = field(default_factory=set)
+    canonical_pdf_paths: dict[str, str] = field(default_factory=dict)
+    pdf_sha256_paths: dict[str, str] = field(default_factory=dict)
+    pdf_url_keys: set[str] = field(default_factory=set)
+    pdf_url_paths: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -311,7 +320,10 @@ def note_pdf_failure(stats: CrawlStats, reason: str | None, backfill: bool = Fal
     """Track PDF failure counts without breaking legacy aggregate fields."""
     if backfill:
         stats.backfill_failed_pdfs += 1
+        stats.failed_pdfs += 1
+        stats.pdf_failed += 1
         increment_counter(stats.backfill_failure_reasons, reason)
+        increment_counter(stats.pdf_failure_reasons, reason)
         return
     stats.failed_pdfs += 1
     stats.pdf_failed += 1
@@ -322,6 +334,8 @@ def note_pdf_download(stats: CrawlStats, backfill: bool = False) -> None:
     """Track PDF download counts without breaking legacy aggregate fields."""
     if backfill:
         stats.backfill_downloaded_pdfs += 1
+        stats.downloaded_pdfs += 1
+        stats.pdf_downloaded += 1
         return
     stats.downloaded_pdfs += 1
     stats.pdf_downloaded += 1
@@ -500,6 +514,65 @@ def record_key(record: dict[str, Any]) -> str | None:
     return None
 
 
+def normalize_arxiv_id(value: Any) -> str | None:
+    """Return an arXiv identifier without a version suffix."""
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    text = re.sub(r"^arxiv:\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"^https?://arxiv\.org/(?:abs|pdf)/", "", text, flags=re.IGNORECASE)
+    text = text.split("?", 1)[0].split("#", 1)[0].strip().strip("/")
+    patterns = (
+        r"(\d{4}\.\d{4,5})(?:v\d+)?",
+        r"([a-z.-]+/\d{7})(?:v\d+)?",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            return match.group(1).lower()
+    return None
+
+
+def normalized_title_year_key(record: dict[str, Any]) -> str | None:
+    """Build a conservative title/year fallback key for cross-source duplicates."""
+    title = str(record.get("title") or record.get("display_name") or "").strip()
+    year = record.get("publication_year") or record.get("year")
+    if not year and record.get("publication_date"):
+        year = str(record.get("publication_date"))[:4]
+    try:
+        year_int = int(year)
+    except (TypeError, ValueError):
+        return None
+
+    normalized_title = re.sub(r"[^a-z0-9]+", " ", title.casefold()).strip()
+    terms = [term for term in normalized_title.split() if term]
+    if len(terms) < 4 or len(normalized_title) < 20:
+        return None
+    digest = hashlib.sha1(normalized_title.encode("utf-8")).hexdigest()[:16]
+    return f"titleyear:{year_int}:{digest}"
+
+
+def canonical_record_key(record: dict[str, Any]) -> str | None:
+    """Return a source-independent key for duplicate detection."""
+    doi = normalize_doi(record.get("doi") or record.get("normalized_doi"))
+    if doi:
+        return f"doi:{doi}"
+
+    for key in ("arxiv_id", "source_record_id", "id", "url", "pdf_url"):
+        arxiv_id = normalize_arxiv_id(record.get(key))
+        if arxiv_id:
+            return f"arxiv:{arxiv_id}"
+
+    for key in ("openalex_id", "id", "source_record_id"):
+        work_id = extract_openalex_work_id(record.get(key))
+        if work_id:
+            return f"openalex:{work_id.lower()}"
+
+    return normalized_title_year_key(record)
+
+
 def extract_openalex_work_id(value: Any) -> str | None:
     """Return an OpenAlex work ID suitable for the works endpoint."""
     if not value:
@@ -585,12 +658,34 @@ def strip_query(url: str) -> str:
     return url.split("?", 1)[0].split("#", 1)[0]
 
 
+def normalize_candidate_url(value: Any) -> str | None:
+    """Normalize user/API supplied OA URL candidates into absolute HTTP(S) URLs."""
+    if not value:
+        return None
+    url = html.unescape(str(value)).strip().strip("<>\"'")
+    if not url:
+        return None
+    if url.startswith("//"):
+        url = "https:" + url
+    elif re.match(r"^(?:www\.|doi\.org/|[A-Za-z0-9.-]+\.[A-Za-z]{2,}/)", url):
+        url = "https://" + url
+
+    parsed = urlparse(url)
+    if parsed.scheme and parsed.scheme.lower() not in {"http", "https"}:
+        return None
+    if not parsed.scheme or not parsed.netloc:
+        return None
+
+    return parsed._replace(scheme="https", netloc=parsed.netloc.casefold()).geturl()
+
+
 def looks_like_pdf_url(url: str | None) -> bool:
     """Docstring."""
-    if not url:
+    normalized = normalize_candidate_url(url)
+    if not normalized:
         return False
 
-    normalized_url = strip_query(url).lower()
+    normalized_url = strip_query(normalized).lower()
     if normalized_url.endswith(NON_PDF_EXTENSIONS):
         return False
 
@@ -600,25 +695,28 @@ def looks_like_pdf_url(url: str | None) -> bool:
         or "/articlepdf" in normalized_url
         or "/pdfdirect/" in normalized_url
         or "/servlets/purl/" in normalized_url
-        or "pdf=render" in url.casefold()
+        or "pdf=render" in normalized.casefold()
+        or ".pdf" in urlparse(normalized).query.casefold()
     )
 
 
 def is_shadow_library_url(url: str | None) -> bool:
     """Docstring."""
-    if not url:
+    normalized = normalize_candidate_url(url)
+    if not normalized:
         return False
-    host = urlparse(url).netloc.casefold()
+    host = urlparse(normalized).netloc.casefold()
     return any(domain in host for domain in SHADOW_LIBRARY_DOMAINS)
 
 
 def candidate_urls_from_landing_url(url: str | None) -> list[str]:
     """Docstring."""
-    if not url:
+    normalized = normalize_candidate_url(url)
+    if not normalized:
         return []
 
-    parsed = urlparse(url)
-    normalized_url = strip_query(url)
+    parsed = urlparse(normalized)
+    normalized_url = strip_query(normalized)
     candidates: list[str] = []
 
     if parsed.netloc.endswith("arxiv.org") and "/abs/" in parsed.path:
@@ -649,13 +747,11 @@ def list_values(value: Any) -> list[Any]:
 
 def extend_pdf_candidate_urls(urls: list[str | None], value: Any) -> None:
     """Append a URL and any legal OA PDF heuristics derived from its landing page."""
-    if not value:
+    normalized = normalize_candidate_url(value)
+    if not normalized:
         return
-    url = str(value).strip()
-    if not url:
-        return
-    urls.append(url)
-    urls.extend(candidate_urls_from_landing_url(url))
+    urls.append(normalized)
+    urls.extend(candidate_urls_from_landing_url(normalized))
 
 
 def is_known_oa_record(record: dict[str, Any], unpaywall: dict[str, Any] | None = None) -> bool:
@@ -734,7 +830,7 @@ def unique_urls(urls: list[str | None]) -> list[str]:
     for url in urls:
         if not url:
             continue
-        normalized = url.strip()
+        normalized = str(url).strip()
         if not normalized:
             continue
         parsed = urlparse(normalized)
@@ -744,6 +840,19 @@ def unique_urls(urls: list[str | None]) -> list[str]:
         if key in seen:
             continue
         seen.add(key)
+        result.append(normalized)
+    return result
+
+
+def unique_candidate_urls(urls: list[str | None]) -> list[str]:
+    """Return normalized, deduplicated absolute HTTP(S) candidate URLs."""
+    seen: set[str] = set()
+    result: list[str] = []
+    for url in urls:
+        normalized = normalize_candidate_url(url)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
         result.append(normalized)
     return result
 
@@ -882,13 +991,107 @@ def record_needs_pdf_retry(
     )
 
 
+def pdf_sha256(path: Path) -> str:
+    """Return the SHA-256 digest for a local PDF file."""
+    digest = hashlib.sha256()
+    with path.open("rb") as fin:
+        for chunk in iter(lambda: fin.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def first_valid_pdf_path(paths: list[Path], min_pdf_bytes: int) -> Path | None:
+    """Return the first valid PDF path from compatible metadata locations."""
+    for path in paths:
+        if validate_existing_pdf(path, min_pdf_bytes):
+            return path
+    return None
+
+
+def record_pdf_urls(record: dict[str, Any]) -> list[str]:
+    """Collect normalized PDF URLs already associated with a record."""
+    urls: list[str | None] = [record.get("pdf_url"), record.get("download_source_url")]
+    urls.extend(record.get("pdf_candidates") or [])
+    return [
+        url
+        for url in unique_candidate_urls(urls)
+        if looks_like_pdf_url(url) and not is_shadow_library_url(url)
+    ]
+
+
+def index_pdf_path(
+    existing_index: ExistingIndex,
+    record: dict[str, Any],
+    path: Path,
+    urls: list[str] | None = None,
+) -> None:
+    """Add a local PDF path to all duplicate-detection indexes."""
+    canonical = canonical_record_key(record)
+    if canonical:
+        existing_index.canonical_keys.add(canonical)
+        existing_index.downloaded_canonical_keys.add(canonical)
+        existing_index.canonical_pdf_paths.setdefault(canonical, str(path))
+
+    try:
+        digest = pdf_sha256(path)
+    except OSError:
+        digest = ""
+    if digest:
+        existing_index.pdf_sha256_paths.setdefault(digest, str(path))
+
+    for url in urls if urls is not None else record_pdf_urls(record):
+        existing_index.pdf_url_keys.add(url)
+        existing_index.pdf_url_paths.setdefault(url, str(path))
+
+
+def reuse_duplicate_content_pdf(result: DownloadResult, existing_index: ExistingIndex) -> DownloadResult:
+    """Reuse an existing PDF when a new download has identical bytes."""
+    if not result.path:
+        return result
+    path = Path(result.path)
+    try:
+        digest = pdf_sha256(path)
+    except OSError:
+        return result
+    existing_path = existing_index.pdf_sha256_paths.get(digest)
+    if not existing_path:
+        existing_index.pdf_sha256_paths[digest] = str(path)
+        return result
+
+    existing = Path(existing_path)
+    if existing.resolve() == path.resolve():
+        return result
+    try:
+        path.unlink(missing_ok=True)
+        size_bytes = existing.stat().st_size if existing.exists() else result.size_bytes
+    except OSError:
+        size_bytes = result.size_bytes
+    return DownloadResult(
+        path=str(existing),
+        status="duplicate_content_reused",
+        source_url=result.source_url,
+        reason=result.reason,
+        size_bytes=size_bytes,
+    )
+
+
+def existing_pdf_for_candidates(existing_index: ExistingIndex, candidates: list[str]) -> str | None:
+    """Return a local PDF path already known for any candidate URL."""
+    for candidate in candidates:
+        normalized = normalize_candidate_url(candidate)
+        if normalized and normalized in existing_index.pdf_url_paths:
+            return existing_index.pdf_url_paths[normalized]
+    return None
+
+
 def load_existing_index(meta_path: Path, min_pdf_bytes: int, out_dir: Path) -> ExistingIndex:
     """Docstring."""
     keys: set[str] = set()
     downloaded_keys: set[str] = set()
     retry_pdf_keys: set[str] = set()
+    existing_index = ExistingIndex(keys, downloaded_keys, retry_pdf_keys)
     if not meta_path.exists():
-        return ExistingIndex(keys, downloaded_keys, retry_pdf_keys)
+        return existing_index
 
     with meta_path.open("r", encoding="utf-8") as fin:
         for line_no, line in enumerate(fin, start=1):
@@ -901,6 +1104,9 @@ def load_existing_index(meta_path: Path, min_pdf_bytes: int, out_dir: Path) -> E
                 continue
 
             key = record_key(record)
+            canonical = canonical_record_key(record)
+            if canonical:
+                existing_index.canonical_keys.add(canonical)
             if key:
                 keys.add(key)
                 fallback_out_dirs = [out_dir]
@@ -920,17 +1126,23 @@ def load_existing_index(meta_path: Path, min_pdf_bytes: int, out_dir: Path) -> E
 
                 fallback_pdf_paths = resolve_record_pdf_paths(record, meta_path) + fallback_pdf_paths
 
-                if any(validate_existing_pdf(path, min_pdf_bytes) for path in fallback_pdf_paths):
+                valid_path = first_valid_pdf_path(fallback_pdf_paths, min_pdf_bytes)
+                if valid_path:
                     downloaded_keys.add(key)
                     retry_pdf_keys.discard(key)
+                    index_pdf_path(existing_index, record, valid_path)
                 elif key not in downloaded_keys and record_needs_pdf_retry(
                     record,
                     meta_path=meta_path,
                     min_pdf_bytes=min_pdf_bytes,
                 ):
                     retry_pdf_keys.add(key)
+            elif canonical:
+                valid_path = first_valid_pdf_path(resolve_record_pdf_paths(record, meta_path), min_pdf_bytes)
+                if valid_path:
+                    index_pdf_path(existing_index, record, valid_path)
 
-    return ExistingIndex(keys, downloaded_keys, retry_pdf_keys)
+    return existing_index
 
 
 def search_openalex(
@@ -1043,6 +1255,7 @@ def search_europe_pmc(
                     "is_oa": item.get("isOpenAccess") == "Y",
                     "oa_url": (pdf_urls or oa_urls or [None])[0],
                 },
+                "fullTextUrlList": item.get("fullTextUrlList") or {},
             }
         )
     next_cursor = data.get("nextCursorMark")
@@ -1207,7 +1420,7 @@ def normalize_crossref_item(item: dict[str, Any]) -> dict[str, Any]:
     licenses = item.get("license") or []
     license_urls = unique_urls([license_item.get("URL") for license_item in licenses if isinstance(license_item, dict)])
     links = item.get("link") or []
-    pdf_urls = unique_urls([
+    pdf_urls = unique_candidate_urls([
         link.get("URL")
         for link in links
         if isinstance(link, dict)
@@ -1391,7 +1604,7 @@ def normalize_doaj_item(item: dict[str, Any]) -> dict[str, Any]:
         "publisher": journal.get("publisher"),
         "journal": journal.get("title"),
         "issns": all_issns,
-        "doaj_fulltext_links": unique_urls(fulltext_links),
+        "doaj_fulltext_links": unique_candidate_urls(fulltext_links),
     }
 
 
@@ -1978,8 +2191,8 @@ def query_unpaywall(
     data = response.json()
     best = data.get("best_oa_location") or {}
     all_locations = data.get("oa_locations") or []
-    pdf_urls = unique_urls([best.get("url_for_pdf")] + [loc.get("url_for_pdf") for loc in all_locations])
-    landing_urls = unique_urls([best.get("url")] + [loc.get("url") for loc in all_locations])
+    pdf_urls = unique_candidate_urls([best.get("url_for_pdf")] + [loc.get("url_for_pdf") for loc in all_locations])
+    landing_urls = unique_candidate_urls([best.get("url")] + [loc.get("url") for loc in all_locations])
 
     return {
         "is_oa": data.get("is_oa"),
@@ -2011,7 +2224,7 @@ def query_openalex_work(
     else:
         return None
 
-    params = {"select": OPENALEX_SELECT + ",best_oa_location,locations"}
+    params = {"select": OPENALEX_SELECT}
     if config.email:
         params["mailto"] = config.email
     response = session.get(url, params=params, timeout=(15, 45))
@@ -2022,6 +2235,177 @@ def query_openalex_work(
     data["literature_source"] = SOURCE_OPENALEX
     data["source_record_id"] = data.get("id")
     return data
+
+
+class LandingPdfLinkParser(HTMLParser):
+    """Extract likely PDF links from an OA landing page."""
+
+    def __init__(self, base_url: str) -> None:
+        super().__init__(convert_charrefs=True)
+        self.base_url = base_url
+        self.urls: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        values = {name.casefold(): value or "" for name, value in attrs}
+        tag_name = tag.casefold()
+        name = values.get("name", "").casefold()
+        prop = values.get("property", "").casefold()
+        content = values.get("content", "")
+        href = values.get("href", "")
+        link_type = values.get("type", "").casefold()
+
+        if tag_name == "meta" and (name == "citation_pdf_url" or prop == "citation_pdf_url"):
+            self._append(content)
+        if tag_name in {"link", "a"} and ("pdf" in link_type or looks_like_pdf_url(href)):
+            self._append(href)
+
+    def _append(self, value: str | None) -> None:
+        if not value:
+            return
+        self.urls.append(urljoin(self.base_url, html.unescape(str(value).strip())))
+
+
+def extract_pdf_urls_from_landing_html(base_url: str, html_text: str) -> list[str]:
+    """Extract PDF-like URLs from landing-page metadata and links."""
+    parser = LandingPdfLinkParser(base_url)
+    try:
+        parser.feed(html_text)
+    except Exception:
+        logging.debug("Landing page HTML parsing failed: %s", base_url, exc_info=True)
+
+    urls = parser.urls
+    for match in re.finditer(r'"(?:contentUrl|url)"\s*:\s*"([^"]+)"', html_text, flags=re.IGNORECASE):
+        urls.append(urljoin(base_url, html.unescape(match.group(1))))
+    for match in re.finditer(r"citation_pdf_url[^>]+content=['\"]([^'\"]+)['\"]", html_text, flags=re.IGNORECASE):
+        urls.append(urljoin(base_url, html.unescape(match.group(1))))
+
+    return [
+        url
+        for url in unique_candidate_urls(urls)
+        if looks_like_pdf_url(url) and not is_shadow_library_url(url)
+    ]
+
+
+def landing_page_urls_for_record(record: dict[str, Any], unpaywall: dict[str, Any] | None) -> list[str]:
+    """Collect OA landing pages that may advertise PDF metadata."""
+    if not is_known_oa_record(record, unpaywall):
+        return []
+
+    open_access = record.get("open_access") or {}
+    primary_location = record.get("primary_location") or {}
+    best_oa_location = record.get("best_oa_location") or {}
+    urls: list[str | None] = [
+        primary_location.get("landing_page_url") if isinstance(primary_location, dict) else None,
+        best_oa_location.get("landing_page_url") if isinstance(best_oa_location, dict) else None,
+        open_access.get("oa_url") if isinstance(open_access, dict) else None,
+        record.get("landing_url"),
+        record.get("source_url"),
+        record.get("url"),
+    ]
+    if unpaywall:
+        urls.append(unpaywall.get("landing_url"))
+        urls.extend(unpaywall.get("landing_urls") or [])
+        best = unpaywall.get("best_oa_location") or {}
+        if isinstance(best, dict):
+            urls.append(best.get("url"))
+        for location in unpaywall.get("oa_locations") or []:
+            if isinstance(location, dict):
+                urls.append(location.get("url"))
+
+    return [
+        url
+        for url in unique_candidate_urls(urls)
+        if not looks_like_pdf_url(url) and not is_shadow_library_url(url)
+    ]
+
+
+def resolve_landing_page_pdf_candidates(
+    record: dict[str, Any],
+    unpaywall: dict[str, Any] | None,
+    session: requests.Session,
+    config: CrawlConfig,
+) -> list[str]:
+    """Fetch OA landing pages and extract advertised PDF URLs."""
+    del config
+    get = getattr(session, "get", None)
+    if not callable(get):
+        return []
+
+    candidates: list[str] = []
+    for landing_url in landing_page_urls_for_record(record, unpaywall)[:4]:
+        try:
+            response = get(landing_url, timeout=(10, 30), allow_redirects=True)
+        except (requests.RequestException, TypeError):
+            logging.debug("Could not fetch OA landing page: %s", landing_url, exc_info=True)
+            continue
+        status_code = getattr(response, "status_code", 200)
+        if status_code and (status_code < 200 or status_code >= 400):
+            continue
+        headers = getattr(response, "headers", {}) or {}
+        content_type = str(headers.get("content-type") or headers.get("Content-Type") or "").casefold()
+        if content_type and not any(token in content_type for token in ("text/html", "application/xhtml", "text/plain")):
+            continue
+        text = getattr(response, "text", "")
+        if not text and getattr(response, "content", None):
+            text = response.content.decode("utf-8", errors="ignore")
+        if text:
+            candidates.extend(extract_pdf_urls_from_landing_html(landing_url, str(text)))
+    return unique_candidate_urls(candidates)
+
+
+def semantic_scholar_lookup_id(record: dict[str, Any]) -> str | None:
+    """Return a Semantic Scholar Graph API paper ID for stable OA lookup."""
+    doi = normalize_doi(record.get("doi") or record.get("normalized_doi"))
+    if doi:
+        return f"DOI:{doi}"
+    arxiv_id = normalize_arxiv_id(
+        record.get("arxiv_id")
+        or record.get("source_record_id")
+        or record.get("id")
+        or record.get("url")
+    )
+    if arxiv_id:
+        return f"ARXIV:{arxiv_id}"
+    return None
+
+
+def resolve_semantic_scholar_pdf_candidates(
+    record: dict[str, Any],
+    session: requests.Session,
+    config: CrawlConfig,
+) -> list[str]:
+    """Resolve legal OA PDFs through Semantic Scholar openAccessPdf metadata."""
+    del config
+    paper_id = semantic_scholar_lookup_id(record)
+    get = getattr(session, "get", None)
+    if not paper_id or not callable(get):
+        return []
+    try:
+        response = get(
+            f"{SEMANTIC_SCHOLAR_PAPER_URL}/{quote(paper_id, safe=':')}",
+            params={"fields": "isOpenAccess,openAccessPdf,externalIds"},
+            timeout=(10, 30),
+        )
+    except (requests.RequestException, TypeError):
+        logging.debug("Semantic Scholar OA lookup failed: %s", paper_id, exc_info=True)
+        return []
+
+    status_code = getattr(response, "status_code", 200)
+    if status_code == 404 or status_code == 429:
+        return []
+    if status_code and (status_code < 200 or status_code >= 400):
+        return []
+    try:
+        data = response.json()
+    except Exception:
+        return []
+    open_pdf = data.get("openAccessPdf") if isinstance(data, dict) else None
+    url = open_pdf.get("url") if isinstance(open_pdf, dict) else None
+    return [
+        candidate
+        for candidate in unique_candidate_urls([url])
+        if looks_like_pdf_url(candidate) and not is_shadow_library_url(candidate)
+    ]
 
 
 def iter_pdf_candidates(
@@ -2069,7 +2453,7 @@ def iter_pdf_candidates(
 
     return [
         url
-        for url in unique_urls(urls)
+        for url in unique_candidate_urls(urls)
         if looks_like_pdf_url(url) and not is_shadow_library_url(url)
     ]
 
@@ -2142,7 +2526,12 @@ def resolve_open_access_pdf(
 ) -> PdfResolution:
     """Docstring."""
     unpaywall = record.get("unpaywall")
-    candidates = iter_pdf_candidates(record, unpaywall if isinstance(unpaywall, dict) else None)
+    unpaywall_data = unpaywall if isinstance(unpaywall, dict) else None
+    candidates = iter_pdf_candidates(record, unpaywall_data)
+    if not candidates:
+        candidates = resolve_semantic_scholar_pdf_candidates(record, session, config)
+    if not candidates:
+        candidates = resolve_landing_page_pdf_candidates(record, unpaywall_data, session, config)
     if not candidates:
         return PdfResolution(None, [], "no_oa_pdf" if config.oa_only else "no_candidate")
 
@@ -2153,6 +2542,32 @@ def resolve_open_access_pdf(
             return PdfResolution(url, candidates, None)
         last_reason = reason
         logging.debug("Rejected OA PDF candidate before download: %s | %s", reason, url)
+
+    api_candidates = [
+        url
+        for url in resolve_semantic_scholar_pdf_candidates(record, session, config)
+        if url not in candidates
+    ]
+    for url in api_candidates:
+        candidates.append(url)
+        ok, reason = verify_pdf_url_with_head(session, url, config)
+        if ok:
+            return PdfResolution(url, candidates, None)
+        last_reason = reason
+        logging.debug("Rejected Semantic Scholar PDF candidate before download: %s | %s", reason, url)
+
+    landing_candidates = [
+        url
+        for url in resolve_landing_page_pdf_candidates(record, unpaywall_data, session, config)
+        if url not in candidates
+    ]
+    for url in landing_candidates:
+        candidates.append(url)
+        ok, reason = verify_pdf_url_with_head(session, url, config)
+        if ok:
+            return PdfResolution(url, candidates, None)
+        last_reason = reason
+        logging.debug("Rejected landing-page PDF candidate before download: %s | %s", reason, url)
 
     return PdfResolution(None, candidates, last_reason or "not_pdf")
 
@@ -2268,15 +2683,16 @@ def download_first_available_pdf(
         record["unpaywall"] = unpaywall
     resolution = resolve_open_access_pdf(record, session, config)
     candidates = resolution.candidates
-    if not resolution.url:
+    allow_get_sniff = bool(candidates and resolution.reason == "not_pdf")
+    if not resolution.url and not allow_get_sniff:
         return DownloadResult(None, "failed", reason=resolution.reason), candidates
 
-    start_index = candidates.index(resolution.url)
+    start_index = candidates.index(resolution.url) if resolution.url else 0
     last_result = DownloadResult(None, "failed", reason=resolution.reason)
     for pdf_url in candidates[start_index:]:
         if stop_requested(config):
             return DownloadResult(None, "stopped"), candidates
-        if pdf_url != resolution.url:
+        if pdf_url != resolution.url and not allow_get_sniff:
             ok, reason = verify_pdf_url_with_head(session, pdf_url, config)
             if not ok:
                 last_result = DownloadResult(None, "failed", pdf_url, reason)
@@ -2453,7 +2869,17 @@ def backfill_missing_pdfs_from_metadata(
     stats = CrawlStats()
     if not config.meta_path.exists():
         logging.info("Backfill skipped; metadata file does not exist: %s", config.meta_path)
-        emit_backfill_progress(config, stats, "Backfill skipped: metadata file does not exist.", progress_callback)
+        emit_backfill_progress(
+            config,
+            stats,
+            localized(
+                config,
+                "PDF 补全已跳过：元数据文件不存在。",
+                "Backfill skipped: metadata file does not exist.",
+                "Backfill skipped: metadata file does not exist.",
+            ),
+            progress_callback,
+        )
         return stats
 
     latest_records: dict[str, dict[str, Any]] = {}
@@ -2481,7 +2907,12 @@ def backfill_missing_pdfs_from_metadata(
     emit_backfill_progress(
         config,
         stats,
-        f"Backfill scanned {stats.backfill_scanned_records} metadata lines; inspecting {len(records)} records.",
+        localized(
+            config,
+            f"PDF 补全已扫描 {stats.backfill_scanned_records} 行元数据；将检查 {len(records)} 条记录。",
+            f"Backfill scanned {stats.backfill_scanned_records} metadata lines; inspecting {len(records)} records.",
+            f"Backfill scanned {stats.backfill_scanned_records} metadata lines; inspecting {len(records)} records.",
+        ),
         progress_callback,
     )
 
@@ -2542,12 +2973,29 @@ def backfill_missing_pdfs_from_metadata(
                 emit_backfill_progress(
                     config,
                     stats,
-                    (
-                        f"Backfill scanned={stats.backfill_scanned_records}, "
-                        f"missing={stats.backfill_missing_pdf_records}, "
-                        f"candidates={stats.pdf_candidates_found}, "
-                        f"downloaded={stats.backfill_downloaded_pdfs}, "
-                        f"failed={stats.backfill_failed_pdfs}."
+                    localized(
+                        config,
+                        (
+                            f"PDF 补全：已扫描={stats.backfill_scanned_records}，"
+                            f"缺失={stats.backfill_missing_pdf_records}，"
+                            f"候选={stats.pdf_candidates_found}，"
+                            f"已下载={stats.backfill_downloaded_pdfs}，"
+                            f"失败={stats.backfill_failed_pdfs}。"
+                        ),
+                        (
+                            f"Backfill scanned={stats.backfill_scanned_records}, "
+                            f"missing={stats.backfill_missing_pdf_records}, "
+                            f"candidates={stats.pdf_candidates_found}, "
+                            f"downloaded={stats.backfill_downloaded_pdfs}, "
+                            f"failed={stats.backfill_failed_pdfs}."
+                        ),
+                        (
+                            f"Backfill scanned={stats.backfill_scanned_records}, "
+                            f"missing={stats.backfill_missing_pdf_records}, "
+                            f"candidates={stats.pdf_candidates_found}, "
+                            f"downloaded={stats.backfill_downloaded_pdfs}, "
+                            f"failed={stats.backfill_failed_pdfs}."
+                        ),
                     ),
                     progress_callback,
                 )
@@ -2600,6 +3048,7 @@ def build_record(
         "keyword": keyword,
         "literature_source": item.get("literature_source") or SOURCE_OPENALEX,
         "source_record_id": item.get("source_record_id") or item.get("id"),
+        "canonical_record_key": canonical_record_key(item),
         "openalex_id": item.get("id") if item.get("literature_source") in {None, SOURCE_OPENALEX} else None,
         "doi": item.get("doi"),
         "normalized_doi": doi,
@@ -2685,9 +3134,17 @@ def all_results_already_seen(
 
     for item in results:
         key = record_key(item)
-        if not key or key not in existing_index.keys:
+        canonical = canonical_record_key(item)
+        if not key and not canonical:
+            return False
+        if key and key not in existing_index.keys:
+            if not canonical or canonical not in existing_index.canonical_keys:
+                return False
+        if not key and canonical and canonical not in existing_index.canonical_keys:
             return False
         if retry_missing_pdfs and key in existing_index.retry_pdf_keys:
+            return False
+        if retry_missing_pdfs and canonical and canonical not in existing_index.downloaded_canonical_keys and key not in existing_index.downloaded_keys:
             return False
     return True
 
@@ -2883,6 +3340,7 @@ def crawl_keyword(
                     config.min_impact_factor,
                 )
                 continue
+            canonical = canonical_record_key(item)
             is_existing_record = key in existing_index.keys
             has_downloaded_pdf = key in existing_index.downloaded_keys
             if is_existing_record and (has_downloaded_pdf or not config.retry_missing_pdfs):
@@ -2893,10 +3351,13 @@ def crawl_keyword(
                 stats.retried_existing_records += 1
             else:
                 existing_index.keys.add(key)
+            if canonical:
+                existing_index.canonical_keys.add(canonical)
 
             download = DownloadResult(None, "not_open_access")
             pdf_candidates: list[str] = []
             unpaywall = None
+            duplicate_pdf_path = existing_index.canonical_pdf_paths.get(canonical or "")
 
             try:
                 doi = normalize_doi(item.get("doi"))
@@ -2911,30 +3372,62 @@ def crawl_keyword(
                     stats.open_access_records += 1
                     if config.download_pdfs:
                         doi_or_url = doi or item.get("id") or item.get("title") or ""
-                        emit_source_progress(
-                            config,
-                            stats,
-                            source,
-                            keyword,
-                            "downloading_pdf",
-                            f"Resolving and downloading PDF from {source_label}: {item.get('title') or item.get('display_name') or key}",
-                            f"Resolving and downloading PDF from {source_label}: {item.get('title') or item.get('display_name') or key}",
-                            f"Resolving and downloading PDF from {source_label}: {item.get('title') or item.get('display_name') or key}",
-                            detail=str(item.get("title") or item.get("display_name") or key),
-                        )
-                        download, pdf_candidates = download_first_available_pdf(
-                            session,
-                            item,
-                            unpaywall,
-                            doi_or_url,
-                            config,
-                            keyword_pdf_dir(keyword, config.out_dir),
-                            stats,
-                        )
+                        if duplicate_pdf_path:
+                            duplicate_path = Path(duplicate_pdf_path)
+                            download = DownloadResult(
+                                str(duplicate_path),
+                                "duplicate_reused",
+                                size_bytes=duplicate_path.stat().st_size if duplicate_path.exists() else None,
+                            )
+                            existing_index.downloaded_keys.add(key)
+                            if canonical:
+                                existing_index.downloaded_canonical_keys.add(canonical)
+                        else:
+                            pdf_candidates = iter_pdf_candidates(item, unpaywall)
+                            duplicate_by_url = existing_pdf_for_candidates(existing_index, pdf_candidates)
+                            if duplicate_by_url:
+                                duplicate_path = Path(duplicate_by_url)
+                                download = DownloadResult(
+                                    str(duplicate_path),
+                                    "duplicate_reused",
+                                    source_url=next((url for url in pdf_candidates if normalize_candidate_url(url) in existing_index.pdf_url_paths), None),
+                                    size_bytes=duplicate_path.stat().st_size if duplicate_path.exists() else None,
+                                )
+                                existing_index.downloaded_keys.add(key)
+                                if canonical:
+                                    existing_index.downloaded_canonical_keys.add(canonical)
+                                    existing_index.canonical_pdf_paths.setdefault(canonical, str(duplicate_path))
+                        if download.path:
+                            stats.skipped_duplicates += 1
+                            index_pdf_path(existing_index, item, Path(download.path), pdf_candidates)
+                        else:
+                            emit_source_progress(
+                                config,
+                                stats,
+                                source,
+                                keyword,
+                                "downloading_pdf",
+                                f"Resolving and downloading PDF from {source_label}: {item.get('title') or item.get('display_name') or key}",
+                                f"Resolving and downloading PDF from {source_label}: {item.get('title') or item.get('display_name') or key}",
+                                f"Resolving and downloading PDF from {source_label}: {item.get('title') or item.get('display_name') or key}",
+                                detail=str(item.get("title") or item.get("display_name") or key),
+                            )
+                            download, pdf_candidates = download_first_available_pdf(
+                                session,
+                                item,
+                                unpaywall,
+                                doi_or_url,
+                                config,
+                                keyword_pdf_dir(keyword, config.out_dir),
+                                stats,
+                            )
+                            download = reuse_duplicate_content_pdf(download, existing_index)
                         stats.pdf_candidates_found += len(pdf_candidates)
                         if download.path:
-                            note_pdf_download(stats)
+                            if download.status not in {"duplicate_reused", "duplicate_content_reused"}:
+                                note_pdf_download(stats)
                             existing_index.downloaded_keys.add(key)
+                            index_pdf_path(existing_index, item, Path(download.path), pdf_candidates)
                             existing_index.retry_pdf_keys.discard(key)
                             emit_source_progress(
                                 config,
@@ -3090,6 +3583,33 @@ def log_summary(stats: CrawlStats) -> None:
     )
 
 
+def merge_backfill_stats(stats: CrawlStats, backfill_stats: CrawlStats) -> None:
+    """Merge automatic backfill counters into the crawl-round stats."""
+    stats.backfill_scanned_records += backfill_stats.backfill_scanned_records
+    stats.backfill_missing_pdf_records += backfill_stats.backfill_missing_pdf_records
+    stats.backfill_downloaded_pdfs += backfill_stats.backfill_downloaded_pdfs
+    stats.backfill_failed_pdfs += backfill_stats.backfill_failed_pdfs
+    stats.pdf_candidates_found += backfill_stats.pdf_candidates_found
+    stats.pdf_download_attempted += backfill_stats.pdf_download_attempted
+    stats.downloaded_pdfs += backfill_stats.downloaded_pdfs
+    stats.pdf_downloaded += backfill_stats.pdf_downloaded
+    stats.failed_pdfs += backfill_stats.failed_pdfs
+    stats.pdf_failed += backfill_stats.pdf_failed
+    stats.retried_existing_records += backfill_stats.retried_existing_records
+    for reason, count in backfill_stats.backfill_failure_reasons.items():
+        stats.backfill_failure_reasons[reason] = stats.backfill_failure_reasons.get(reason, 0) + count
+    for reason, count in backfill_stats.pdf_failure_reasons.items():
+        stats.pdf_failure_reasons[reason] = stats.pdf_failure_reasons.get(reason, 0) + count
+
+
+def format_reason_counts(reasons: dict[str, int], limit: int = 8) -> str:
+    """Return a compact sorted reason counter for UI summaries."""
+    if not reasons:
+        return "{}"
+    top = sorted(reasons.items(), key=lambda item: (-item[1], item[0]))[:limit]
+    return "{" + ", ".join(f"{key}: {count}" for key, count in top) + "}"
+
+
 def run_once(config: CrawlConfig) -> CrawlStats:
     """Docstring."""
     config.out_dir.mkdir(parents=True, exist_ok=True)
@@ -3135,6 +3655,25 @@ def run_once(config: CrawlConfig) -> CrawlStats:
     finally:
         session.close()
 
+    if (
+        config.download_pdfs
+        and config.auto_backfill_missing_pdfs
+        and not stop_requested(config)
+        and not should_stop(stats, config)
+    ):
+        emit_progress(
+            config,
+            stats,
+            localized(
+                config,
+                "正在根据已保存元数据自动补全缺失 PDF。",
+                "Starting automatic missing-PDF backfill from saved metadata.",
+                "Starting automatic missing-PDF backfill from saved metadata.",
+            ),
+        )
+        backfill_stats = backfill_missing_pdfs_from_metadata(config, progress_callback=config.progress_callback)
+        merge_backfill_stats(stats, backfill_stats)
+
     log_summary(stats)
     emit_progress(config, stats, format_round_finished_message(config, stats))
     return stats
@@ -3148,13 +3687,43 @@ def format_round_finished_message(config: CrawlConfig, stats: CrawlStats) -> str
     lines = [
         "Crawl round finished.",
         f"Fetched total: {fetched_total}; by source: {stats.fetched_by_source}.",
-        f"Metadata added: {stats.added_records}; duplicate skips: {stats.skipped_duplicates}; missing-key skips: {stats.skipped_without_key}.",
+        f"Metadata records saved this round: {stats.added_records}; duplicate skips: {stats.skipped_duplicates}; missing-key skips: {stats.skipped_without_key}.",
         f"Filter skips: total={stats.skipped_irrelevant}, keyword={stats.skipped_by_keyword_match}, topic_score={stats.skipped_by_topic_score}, impact_factor={stats.skipped_by_impact_factor}, not_oa={stats.skipped_not_oa}.",
         f"Impact-factor metrics: known={stats.journal_metric_resolved}, unknown={stats.journal_metric_missing}.",
-        f"PDF resolver: candidates={stats.pdf_candidates_found}, attempted={stats.pdf_download_attempted}, downloaded={pdf_downloaded}, failed={pdf_failed}.",
+        f"PDF files downloaded this round: {pdf_downloaded}; candidates={stats.pdf_candidates_found}; attempts={stats.pdf_download_attempted}; failed={pdf_failed}.",
     ]
+    if stats.backfill_scanned_records:
+        lines.append(
+            localized(
+                config,
+                (
+                    "自动缺失 PDF 补全："
+                    f"已扫描={stats.backfill_scanned_records}，缺失={stats.backfill_missing_pdf_records}，"
+                    f"已下载={stats.backfill_downloaded_pdfs}，失败={stats.backfill_failed_pdfs}。"
+                ),
+                (
+                    "Automatic missing-PDF backfill: "
+                    f"scanned={stats.backfill_scanned_records}, missing={stats.backfill_missing_pdf_records}, "
+                    f"downloaded={stats.backfill_downloaded_pdfs}, failed={stats.backfill_failed_pdfs}."
+                ),
+                (
+                    "Automatic missing-PDF backfill: "
+                    f"scanned={stats.backfill_scanned_records}, missing={stats.backfill_missing_pdf_records}, "
+                    f"downloaded={stats.backfill_downloaded_pdfs}, failed={stats.backfill_failed_pdfs}."
+                ),
+            )
+        )
     if stats.pdf_failure_reasons:
-        lines.append(f"PDF failure reasons: {stats.pdf_failure_reasons}.")
+        lines.append(f"Top PDF failure reasons: {format_reason_counts(stats.pdf_failure_reasons)}.")
+    if stats.backfill_failure_reasons:
+        lines.append(
+            localized(
+                config,
+                f"主要补全失败原因：{format_reason_counts(stats.backfill_failure_reasons)}。",
+                f"Top backfill failure reasons: {format_reason_counts(stats.backfill_failure_reasons)}.",
+                f"Top backfill failure reasons: {format_reason_counts(stats.backfill_failure_reasons)}.",
+            )
+        )
     if stats.retried_existing_records:
         lines.append(f"Existing metadata records retried for PDF: {stats.retried_existing_records}.")
     if stats.request_failures:
@@ -3169,15 +3738,25 @@ def format_round_finished_message(config: CrawlConfig, stats: CrawlStats) -> str
 
 def format_backfill_finished_message(config: CrawlConfig, stats: CrawlStats) -> str:
     """Return a UI/log summary for metadata PDF backfill."""
-    del config
-    lines = [
-        "Metadata PDF backfill finished.",
-        f"Scanned metadata lines: {stats.backfill_scanned_records}; missing local PDFs: {stats.backfill_missing_pdf_records}.",
-        f"PDF candidates found: {stats.pdf_candidates_found}; download attempts: {stats.pdf_download_attempted}.",
-        f"Downloaded PDFs: {stats.backfill_downloaded_pdfs}; failed PDFs: {stats.backfill_failed_pdfs}.",
-    ]
+    if config.language == "zh":
+        lines = [
+            "元数据 PDF 补全完成。",
+            f"已扫描元数据行数：{stats.backfill_scanned_records}；缺失本地 PDF 的记录：{stats.backfill_missing_pdf_records}。",
+            f"找到 PDF 候选：{stats.pdf_candidates_found}；下载尝试：{stats.pdf_download_attempted}。",
+            f"已下载 PDF：{stats.backfill_downloaded_pdfs}；失败 PDF：{stats.backfill_failed_pdfs}。",
+        ]
+    else:
+        lines = [
+            "Metadata PDF backfill finished.",
+            f"Scanned metadata lines: {stats.backfill_scanned_records}; missing local PDFs: {stats.backfill_missing_pdf_records}.",
+            f"PDF candidates found: {stats.pdf_candidates_found}; download attempts: {stats.pdf_download_attempted}.",
+            f"Downloaded PDFs: {stats.backfill_downloaded_pdfs}; failed PDFs: {stats.backfill_failed_pdfs}.",
+        ]
     if stats.backfill_failure_reasons:
-        lines.append(f"Backfill failure reasons: {stats.backfill_failure_reasons}.")
+        if config.language == "zh":
+            lines.append(f"主要补全失败原因：{format_reason_counts(stats.backfill_failure_reasons)}。")
+        else:
+            lines.append(f"Top backfill failure reasons: {format_reason_counts(stats.backfill_failure_reasons)}.")
     return "\n".join(lines)
 
 def deadline_from_config(config: CrawlConfig) -> datetime | None:

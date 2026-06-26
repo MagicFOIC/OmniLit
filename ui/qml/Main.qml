@@ -6,7 +6,7 @@ ApplicationWindow {
     id: window
     Theme { id: theme; dynamic: authController.loggedIn }
     readonly property int authWindowWidth: 472
-    readonly property int authWindowHeight: 580
+    readonly property int authWindowHeight: 620
     readonly property int workspaceMinimumWidth: 1280
     readonly property int workspaceMinimumHeight: 860
     property int savedWorkspaceWidth: 0

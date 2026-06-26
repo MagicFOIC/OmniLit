@@ -8,21 +8,19 @@ Rectangle {
     property string text: ""
     property bool busy: false
     property string tone: "neutral"
-
-    // 新增：用于防止父布局随文字行数跳动
+    // Reserve a stable slot so status text does not shift surrounding controls.
     property bool reserveSpace: false
     property int maximumLines: 2
     readonly property int reservedHeight: maximumLines * 18 + 14
 
-
     Theme { id: theme }
 
-    implicitHeight: row.implicitHeight + 14
+    implicitHeight: reserveSpace ? reservedHeight : row.implicitHeight + 14
     radius: 8
     color: tone === "error" ? theme.errorSoft : tone === "success" ? theme.successSoft : theme.accentSofter
     border.color: tone === "error" ? theme.errorBorder : tone === "success" ? theme.successBorder : theme.border
-    visible: reserveSpace || !!text
-    opacity: visible ? 1 : 0
+    visible: reserveSpace || !!text || busy
+    opacity: (!!text || busy) ? 1 : 0
     clip: true
 
     Behavior on opacity { NumberAnimation { duration: 120 } }

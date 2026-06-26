@@ -1,0 +1,9 @@
+{
+  "required_node_types": ["method", "dataset", "metric", "result", "limitation", "futurework"],
+  "entities": [
+    {"type": "metric", "canonical_label": "Precision / Recall", "expected_count": 1, "minimum_evidence": 1}
+  ],
+  "needs_review_types": [],
+  "minimum_evidence_coverage": 1.0,
+  "minimum_edge_evidence_coverage": 1.0
+}

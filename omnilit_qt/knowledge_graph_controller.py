@@ -12,7 +12,7 @@ from PySide6.QtCore import QObject, Property, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices
 
 from .background_tasks import ManagedWorker, shutdown_workers
-from .knowledge_graph_builder import BUILDER_VERSION, build_knowledge_graph, source_fingerprint
+from .knowledge_graph_builder import build_knowledge_graph, cache_is_fresh, node_is_visible_at_density
 from .knowledge_graph_compare import compare_graph_dicts
 from .knowledge_graph_export import export_csv, export_markdown, export_mermaid
 from .knowledge_graph_schema import KnowledgeGraphDocument
@@ -180,8 +180,7 @@ class KnowledgeGraphController(QObject):
         query = self._search_text.casefold().strip()
         if query:
             nodes = [node for node in nodes if query in " ".join((str(node.get("label") or ""), str(node.get("summary") or ""), " ".join(str(tag) for tag in node.get("tags") or []))).casefold() or str(node.get("type") or "").casefold() == "paper"]
-        if self._density in {"compact", "normal"} and not query:
-            nodes = [node for node in nodes if str(node.get("type") or "").casefold() == "paper" or float(node.get("confidence", 1.0) or 0.0) >= 0.6]
+        nodes = [node for node in nodes if node_is_visible_at_density(node, self._density, query)]
         paper = [node for node in nodes if str(node.get("type") or "").casefold() == "paper"]
         others = [node for node in nodes if str(node.get("type") or "").casefold() != "paper"]
         others.sort(key=lambda node: (-float(node.get("importance", node.get("weight", 0.5)) or 0.0), -float(node.get("confidence", 1.0) or 0.0), str(node.get("label") or "").casefold()))
@@ -355,8 +354,7 @@ class KnowledgeGraphController(QObject):
             self._remember_graph(key, cached)
             self._filter_mode = "all"
             self._search_text = ""
-            expected = source_fingerprint(payload, extraction_index)
-            fresh = int(cached.get("builder_version") or 1) >= BUILDER_VERSION and str(cached.get("source_fingerprint") or "") == expected
+            fresh = cache_is_fresh(cached, payload, extraction_index)
             self._cache_state = "fresh" if fresh else "stale"
             self._status = "已加载缓存知识图谱。" if fresh else "已显示旧图谱，正在后台更新..."
             self.changed.emit()
