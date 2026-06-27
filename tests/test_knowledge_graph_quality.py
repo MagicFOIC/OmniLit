@@ -45,7 +45,8 @@ class KnowledgeGraphQualityTests(unittest.TestCase):
                 self.assertTrue(all(node.needs_review for node in low_confidence))
                 actual_types = {node.type for node in low_confidence}
                 self.assertTrue(set(expected["needs_review_types"]).issubset(actual_types))
-                self.assertEqual(document.metadata["quality_summary"]["needs_review_count"], len(low_confidence))
+                self.assertGreaterEqual(document.metadata["quality_summary"]["needs_review_count"], len(low_confidence))
+                self.assertEqual(document.metadata["quality_summary"]["needs_review_count"], len([node for node in document.nodes if node.type != "paper" and node.needs_review]))
 
     def test_every_node_and_edge_has_provenance(self) -> None:
         for stem, _, _, document in golden_cases():

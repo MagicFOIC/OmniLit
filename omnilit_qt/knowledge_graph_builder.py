@@ -8,12 +8,13 @@ from .knowledge_graph_core import _authors, _fallback_keywords, _keywords, _norm
 from .knowledge_graph_extractor import extract_entity_candidates
 from .knowledge_graph_layout import academic_layout, adjacency_index
 from .knowledge_graph_normalizer import REVIEW_CONFIDENCE_THRESHOLD, normalize_candidates
+from .knowledge_graph_precision import PRECISION_VERSION
 from .knowledge_graph_quality import validate_graph
 from .knowledge_graph_relation_extractor import extract_relation_candidates
 from .knowledge_graph_schema import KnowledgeGraphDocument, KnowledgeGraphEdge, KnowledgeGraphEvidence, KnowledgeGraphNode
 
 
-BUILDER_VERSION = 5
+BUILDER_VERSION = 6
 
 
 def source_fingerprint(record: dict[str, Any], index: dict[str, Any]) -> str:
@@ -26,6 +27,7 @@ def source_fingerprint(record: dict[str, Any], index: dict[str, Any]) -> str:
         )
     }
     extraction = {
+        "precisionVersion": PRECISION_VERSION,
         "sourceSha256": index.get("sourceSha256"),
         "analyzedAt": index.get("analyzedAt"),
         "engine": index.get("engine"),
@@ -113,7 +115,7 @@ def build_document(record_id: str, metadata: dict, extraction_index: dict | None
 
     keywords, keyword_source = _keywords(record)
     for keyword in keywords:
-        evidence = [KnowledgeGraphEvidence(source=keyword_source, excerpt=keyword, record_id=record_id)]
+        evidence = [KnowledgeGraphEvidence(source=keyword_source, excerpt=keyword, record_id=record_id, section="Keywords", extraction_method="metadata")]
         node = KnowledgeGraphNode(
             f"concept:{_normalized(keyword)}", "concept", keyword, importance=0.65,
             tags=["concept", "keyword"], evidence=evidence, extraction_method="metadata",
@@ -131,6 +133,7 @@ def build_document(record_id: str, metadata: dict, extraction_index: dict | None
         evidence = [KnowledgeGraphEvidence(
             page=block.page, bbox=list(block.bbox), element_id=block.block_id,
             excerpt=block.text, source=block.source, record_id=record_id,
+            section=block.section or "", extraction_method="section",
         )]
         node = KnowledgeGraphNode(
             f"section:{record_id}:{_normalized(block.section)}", "section", block.section,
@@ -150,7 +153,7 @@ def build_document(record_id: str, metadata: dict, extraction_index: dict | None
         if not text or section in section_nodes or (section == "Summary" and _normalized(text) == _normalized(abstract)):
             continue
         section_nodes.add(section)
-        evidence = [KnowledgeGraphEvidence(excerpt=text[:800], source=source, record_id=record_id)]
+        evidence = [KnowledgeGraphEvidence(excerpt=text[:800], source=source, record_id=record_id, section=section, extraction_method="metadata")]
         node = KnowledgeGraphNode(
             f"section:{record_id}:{_normalized(section)}", "section", section,
             summary=text, importance=importance, tags=["structure"], evidence=evidence,
@@ -168,7 +171,7 @@ def build_document(record_id: str, metadata: dict, extraction_index: dict | None
 
     if len(nodes) == 1:
         for keyword in _fallback_keywords(record):
-            evidence = [KnowledgeGraphEvidence(excerpt=title, source="metadata.title", record_id=record_id)]
+            evidence = [KnowledgeGraphEvidence(excerpt=title, source="metadata.title", record_id=record_id, section="Title", extraction_method="metadata")]
             node = KnowledgeGraphNode(
                 f"concept:{_normalized(keyword)}", "concept", keyword, importance=0.5,
                 confidence=0.5, tags=["concept", "needs_review"], evidence=evidence,
@@ -197,11 +200,27 @@ def build_document(record_id: str, metadata: dict, extraction_index: dict | None
                 "evidence": sum(len(node.evidence) for node in nodes) + sum(len(edge.relation_evidence) for edge in edges),
                 "entity_candidates": len(candidates), "normalized_entities": len(entities),
                 "relation_candidates": len(relations),
+                "needs_review": validation.summary["needs_review_count"] + validation.summary["relation_needs_review_count"],
             },
             "pipeline": [
-                "section_aware_blocks", "entity_candidates", "canonical_normalization",
+                "precision_section_filter", "entity_candidates", "canonical_normalization",
                 "relation_candidates", "confidence_scoring", "quality_validation",
             ],
+            "extraction_quality": {
+                "accepted_nodes": validation.summary["accepted_nodes"],
+                "review_nodes": validation.summary["review_nodes"],
+                "dropped_nodes": 0,
+                "accepted_edges": validation.summary["accepted_edges"],
+                "review_edges": validation.summary["review_edges"],
+                "warnings": list(validation.summary.get("warnings") or []),
+            },
+            "review_mode": {
+                "confidence_threshold": REVIEW_CONFIDENCE_THRESHOLD,
+                "needs_review_nodes": validation.summary["needs_review_count"],
+                "needs_review_edges": validation.summary["relation_needs_review_count"],
+                "evidence_count": validation.summary["evidence_count"],
+                "quality_warnings": list(validation.summary.get("warnings") or []),
+            },
             "builder_version": BUILDER_VERSION,
             "source_fingerprint": source_fingerprint(record, index),
             "quality_summary": validation.summary,

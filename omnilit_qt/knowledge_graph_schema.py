@@ -19,6 +19,8 @@ class KnowledgeGraphEvidence:
     translated_text: str = ""
     source: str = ""
     record_id: str = ""
+    section: str = ""
+    extraction_method: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -34,6 +36,8 @@ class KnowledgeGraphEvidence:
             translated_text=str(data.get("translated_text") or ""),
             source=str(data.get("source") or ""),
             record_id=str(data.get("record_id") or data.get("recordId") or ""),
+            section=str(data.get("section") or ""),
+            extraction_method=str(data.get("extraction_method") or data.get("extractionMethod") or ""),
         )
 
 
@@ -55,6 +59,7 @@ class KnowledgeGraphNode:
     confidence_reason: list[str] = field(default_factory=list)
     source_section: str | None = None
     needs_review: bool = False
+    review_reasons: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.normalized_label = self.normalized_label or _normalized_label(self.label)
@@ -71,6 +76,8 @@ class KnowledgeGraphNode:
         if self.source_section is None and self.details.get("section"):
             self.source_section = str(self.details["section"])
         self.needs_review = self.needs_review or self.confidence < 0.6 or "needs_review" in self.tags
+        if self.needs_review and not self.review_reasons:
+            self.review_reasons = ["low_confidence" if self.confidence < 0.6 else "marked_for_review"]
 
     def to_dict(self) -> dict[str, Any]:
         result = asdict(self)
@@ -104,6 +111,7 @@ class KnowledgeGraphNode:
             confidence_reason=[str(item) for item in data.get("confidence_reason") or data.get("confidenceReason") or []],
             source_section=data.get("source_section", data.get("sourceSection", details.get("section"))),
             needs_review=bool(data.get("needs_review", data.get("needsReview", False))),
+            review_reasons=[str(item) for item in data.get("review_reasons") or data.get("reviewReasons") or []],
         )
 
 
@@ -126,6 +134,7 @@ class KnowledgeGraphEdge:
     relation_method: str = "unknown"
     relation_evidence: list[KnowledgeGraphEvidence] = field(default_factory=list)
     direction_reason: str = ""
+    review_reasons: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.normalized_label = self.normalized_label or _normalized_label(self.label or self.type)
@@ -139,6 +148,8 @@ class KnowledgeGraphEdge:
         if not self.direction_reason:
             self.direction_reason = f"declared direction from {self.source} to {self.target} for {self.type}"
         self.needs_review = self.needs_review or self.confidence < 0.6
+        if self.needs_review and not self.review_reasons:
+            self.review_reasons = ["low_confidence" if self.confidence < 0.6 else "marked_for_review"]
         if not self.relation_evidence and self.evidence:
             self.relation_evidence = list(self.evidence)
 
@@ -179,6 +190,7 @@ class KnowledgeGraphEdge:
             relation_method=str(data.get("relation_method") or data.get("relationMethod") or "legacy"),
             relation_evidence=[KnowledgeGraphEvidence.from_dict(item) for item in relation_evidence or [] if isinstance(item, dict)],
             direction_reason=str(data.get("direction_reason") or data.get("directionReason") or ""),
+            review_reasons=[str(item) for item in data.get("review_reasons") or data.get("reviewReasons") or []],
         )
 
 

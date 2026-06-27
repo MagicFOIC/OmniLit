@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass
 
 from .knowledge_graph_normalizer import NormalizedEntity
+from .knowledge_graph_precision import relation_has_cue
 from .knowledge_graph_schema import KnowledgeGraphEdge, KnowledgeGraphEvidence
 
 
@@ -60,6 +61,8 @@ class RelationCandidate:
     source_section: str | None
     confidence_reason: list[str]
     extraction_method: str = "rule"
+    needs_review: bool = False
+    review_reasons: list[str] | None = None
 
     def to_edge(self, record_id: str, index: int) -> KnowledgeGraphEdge:
         return KnowledgeGraphEdge(
@@ -67,9 +70,10 @@ class RelationCandidate:
             type=self.relation_type, label=self.relation_type.replace("_", " ").lower(),
             confidence=self.confidence, evidence=list(self.evidence),
             extraction_method=self.extraction_method, confidence_reason=list(self.confidence_reason),
-            source_section=self.source_section, needs_review=self.confidence < 0.6,
+            source_section=self.source_section, needs_review=self.needs_review or self.confidence < 0.6,
             relation_method=self.relation_method, relation_evidence=list(self.evidence),
             direction_reason=self.direction_reason,
+            review_reasons=list(self.review_reasons or []),
         )
 
 
@@ -108,6 +112,24 @@ def _best_context(source: NormalizedEntity, target: NormalizedEntity) -> str | N
     return max(contexts, key=lambda value: CONTEXT_CONFIDENCE[value], default=None)
 
 
+def _context_text(source: NormalizedEntity, target: NormalizedEntity, context: str) -> str:
+    excerpts: list[str] = []
+    for left in source.candidates:
+        for right in target.candidates:
+            same_sentence = left.block_id == right.block_id and left.sentence_index == right.sentence_index
+            same_block = left.block_id == right.block_id
+            same_section = bool(left.source_section and left.source_section == right.source_section)
+            if context == "same_sentence" and same_sentence:
+                excerpts.extend([left.text, right.text])
+            elif context == "same_block" and same_block:
+                excerpts.extend([left.text, right.text])
+            elif context == "same_section" and same_section:
+                excerpts.extend([left.text, right.text])
+            elif context in {"metadata", "caption"}:
+                excerpts.extend([left.text, right.text])
+    return " ".join(dict.fromkeys(item for item in excerpts if item))
+
+
 def _root_relation(paper_id: str, entity: NormalizedEntity) -> RelationCandidate | None:
     specification = ROOT_RELATIONS.get(entity.kind)
     if not specification:
@@ -144,11 +166,17 @@ def extract_relation_candidates(record_id: str, entities: list[NormalizedEntity]
             if not context:
                 continue
             distance = abs(_ordinal(source) - _ordinal(target))
+            cue_text = _context_text(source, target, context)
+            has_cue = relation_has_cue(relation_type, cue_text)
             if context == "same_section":
+                if not has_cue:
+                    continue
                 key = (target.node_id, relation_type)
                 current = section_fallbacks.get(key)
                 if current is None or distance < current[0]:
                     section_fallbacks[key] = (distance, source, target, context)
+                continue
+            if context in {"same_sentence", "same_block"} and not has_cue:
                 continue
             _append_context_relation(relations, existing, source, target, relation_type, context)
 
@@ -172,9 +200,12 @@ def _append_context_relation(
     confidence = round(min(source.confidence, target.confidence) * CONTEXT_CONFIDENCE[context], 3)
     relations.append(RelationCandidate(
         source_id=source.node_id, target_id=target.node_id, relation_type=relation_type,
-        confidence=confidence, relation_method=context,
+        confidence=confidence if context != "same_section" else min(confidence, 0.58),
+        relation_method=context,
         evidence=_dedupe_evidence(source.evidence, target.evidence),
         direction_reason=f"typed {source.kind} -> {target.kind} relation supported by {context}",
         source_section=target.source_section or source.source_section,
         confidence_reason=["typed_entity_pair", context], extraction_method="rule",
+        needs_review=context == "same_section",
+        review_reasons=["same_section_only_relation"] if context == "same_section" else [],
     ))

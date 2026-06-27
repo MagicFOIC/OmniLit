@@ -5,10 +5,13 @@ import re
 from dataclasses import dataclass, field
 
 from .knowledge_graph_extractor import EntityCandidate
+from .knowledge_graph_precision import canonical_label as precision_canonical_label
+from .knowledge_graph_precision import invalid_label_reason, is_generic_label, semantic_key
 from .knowledge_graph_schema import KnowledgeGraphEvidence, KnowledgeGraphNode
 
 
 REVIEW_CONFIDENCE_THRESHOLD = 0.6
+GENERIC_REVIEW_TYPES = {"concept", "researchgap", "problem", "contribution", "method", "dataset", "metric", "experiment", "result", "limitation", "futurework", "domainentity", "material"}
 
 METRIC_ALIASES = {
     "accuracy": "Accuracy", "auc": "AUC", "bleu": "BLEU", "f1": "F1",
@@ -27,7 +30,7 @@ METHOD_ALIASES = {
 
 
 def normalized_text(value: str) -> str:
-    return re.sub(r"[^\w\u3400-\u9fff]+", "", str(value or "").casefold())
+    return semantic_key(value)
 
 
 def canonical_label(kind: str, label: str) -> str:
@@ -38,8 +41,9 @@ def canonical_label(kind: str, label: str) -> str:
             labels.append(METRIC_ALIASES.get(key, part.strip()))
         return " / ".join(dict.fromkeys(labels))
     if kind == "method":
-        return METHOD_ALIASES.get(normalized_text(label), label.strip())
-    return label.strip()
+        normalized = normalized_text(label)
+        return METHOD_ALIASES.get(normalized, precision_canonical_label(kind, label))
+    return precision_canonical_label(kind, label)
 
 
 @dataclass
@@ -68,7 +72,12 @@ class NormalizedEntity:
     def confidence(self) -> float:
         best = max((candidate.confidence for candidate in self.candidates), default=0.0)
         corroboration = min(0.08, 0.02 * max(0, len(self.candidates) - 1))
-        return round(min(0.98, best + corroboration), 3)
+        value = min(0.98, best + corroboration)
+        if self.kind in GENERIC_REVIEW_TYPES and is_generic_label(self.label):
+            value = min(value, 0.55)
+        if len({candidate.record_id for candidate in self.candidates}) > 1:
+            value = min(value, 0.55)
+        return round(value, 3)
 
     @property
     def confidence_reason(self) -> list[str]:
@@ -87,10 +96,24 @@ class NormalizedEntity:
         methods = {candidate.extraction_method for candidate in self.candidates}
         return next(iter(methods)) if len(self.candidates) == 1 else "merged"
 
+    @property
+    def review_reasons(self) -> list[str]:
+        reasons = list(dict.fromkeys(reason for candidate in self.candidates for reason in candidate.review_reasons))
+        label_reason = invalid_label_reason(self.label) if self.kind in GENERIC_REVIEW_TYPES else ""
+        if label_reason:
+            reasons.append(label_reason)
+        if len({candidate.record_id for candidate in self.candidates}) > 1:
+            reasons.append("cross_record_merge_conflict")
+        if self.confidence < REVIEW_CONFIDENCE_THRESHOLD:
+            reasons.append("low_confidence")
+        return list(dict.fromkeys(reasons))
+
     def to_node(self) -> KnowledgeGraphNode:
         confidence = self.confidence
         tags = [self.kind, "semantic"]
-        if confidence < REVIEW_CONFIDENCE_THRESHOLD:
+        review_reasons = self.review_reasons
+        needs_review = bool(review_reasons) or confidence < REVIEW_CONFIDENCE_THRESHOLD
+        if needs_review:
             tags.append("needs_review")
         first = self.candidates[0]
         importance = 0.84 if self.kind in {"contribution", "result", "researchgap"} else 0.74
@@ -105,22 +128,23 @@ class NormalizedEntity:
             confidence=confidence, tags=tags, evidence=self.evidence, details=details,
             normalized_label=self.normalized_label, canonical_id=self.canonical_id,
             extraction_method=self.extraction_method, confidence_reason=self.confidence_reason,
-            source_section=self.source_section, needs_review=confidence < REVIEW_CONFIDENCE_THRESHOLD,
+            source_section=self.source_section, needs_review=needs_review,
+            review_reasons=review_reasons,
         )
 
 
 def normalize_candidates(candidates: list[EntityCandidate]) -> list[NormalizedEntity]:
-    grouped: dict[tuple[str, str], NormalizedEntity] = {}
+    grouped: dict[tuple[str, str, str], NormalizedEntity] = {}
     for candidate in candidates:
         label = canonical_label(candidate.kind, candidate.label)
         normalized = normalized_text(label)
-        key = (candidate.kind, normalized or normalized_text(candidate.text[:120]))
+        key = (candidate.record_id, candidate.kind, normalized or normalized_text(candidate.text[:120]))
         if key not in grouped:
-            canonical_id = f"{candidate.kind}:{key[1]}"
+            canonical_id = f"{candidate.kind}:{key[2]}"
             grouped[key] = NormalizedEntity(
                 record_id=candidate.record_id, kind=candidate.kind, label=label,
-                normalized_label=key[1], canonical_id=canonical_id,
-                node_id=f"{candidate.kind}:{candidate.record_id}:{key[1]}",
+                normalized_label=key[2], canonical_id=canonical_id,
+                node_id=f"{candidate.kind}:{candidate.record_id}:{key[2]}",
             )
         grouped[key].candidates.append(candidate)
     return list(grouped.values())

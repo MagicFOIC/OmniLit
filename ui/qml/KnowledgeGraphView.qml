@@ -17,6 +17,7 @@ Rectangle {
     property real panX: 0
     property real panY: 0
     property string hoveredNodeId: ""
+    property string hoveredEdgeId: ""
     property int layoutRevision: 0
 
     property bool settingsOpen: true
@@ -33,6 +34,7 @@ Rectangle {
     readonly property color graphEdgeActive: theme.accent
     readonly property color graphText: theme.text
     readonly property color graphTextMuted: theme.textMuted
+    readonly property real relationLabelThreshold: 1.35
     readonly property var styleValues: ["overview", "academic", "radial", "focus"]
     readonly property var displayNodes: root.visibleNodesForRevision(root.layoutRevision)
     readonly property var displayEdges: root.visibleEdgesForRevision(root.layoutRevision)
@@ -53,6 +55,41 @@ Rectangle {
     Connections {
         target: knowledgeGraphController
         function onChanged() { root.refreshGraphLayout() }
+    }
+
+    Canvas {
+        id: backgroundCanvas
+        z: 0
+        anchors.fill: parent
+        onPaint: {
+            var ctx = getContext("2d")
+            ctx.reset()
+            ctx.fillStyle = root.graphBackground
+            ctx.fillRect(0, 0, width, height)
+
+            var highlight = ctx.createRadialGradient(width * 0.45, height * 0.32, 0, width * 0.45, height * 0.32, Math.max(width, height) * 0.72)
+            highlight.addColorStop(0, theme.dark ? "rgba(96, 165, 250, 0.13)" : "rgba(37, 99, 235, 0.08)")
+            highlight.addColorStop(0.52, theme.dark ? "rgba(96, 165, 250, 0.035)" : "rgba(37, 99, 235, 0.025)")
+            highlight.addColorStop(1, "rgba(0, 0, 0, 0)")
+            ctx.fillStyle = highlight
+            ctx.fillRect(0, 0, width, height)
+
+            ctx.strokeStyle = theme.dark ? "rgba(148, 163, 184, 0.08)" : "rgba(71, 85, 105, 0.075)"
+            ctx.lineWidth = 1
+            var step = 28
+            var offsetX = ((root.panX % step) + step) % step
+            var offsetY = ((root.panY % step) + step) % step
+            ctx.beginPath()
+            for (var x = offsetX; x < width; x += step) {
+                ctx.moveTo(x, 0)
+                ctx.lineTo(x, height)
+            }
+            for (var y = offsetY; y < height; y += step) {
+                ctx.moveTo(0, y)
+                ctx.lineTo(width, y)
+            }
+            ctx.stroke()
+        }
     }
 
     Item {
@@ -89,23 +126,31 @@ Rectangle {
                     var sy = root.centerY(sourceIndex)
                     var tx = root.centerX(targetIndex)
                     var ty = root.centerY(targetIndex)
+                    var control = root.edgeControlPoint(sx, sy, tx, ty, i)
                     var selected = selectedEdgeId === String(edge.id || "")
-                    var active = selected
+                    var hovered = root.hoveredEdgeId === String(edge.id || "")
+                    var active = selected || hovered
                             || selectedNodeId === String(edge.source || "")
                             || selectedNodeId === String(edge.target || "")
                             || root.hoveredNodeId === String(edge.source || "")
                             || root.hoveredNodeId === String(edge.target || "")
 
                     ctx.globalAlpha = root.edgeOpacity(active)
-                    ctx.lineWidth = root.linkThickness * (active ? 1.8 : 0.8)
+                    ctx.lineWidth = root.linkThickness * (active ? 1.9 : (edge.needs_review ? 0.65 : 0.85))
                     ctx.strokeStyle = active ? root.graphEdgeActive : root.graphEdge
+                    if (ctx.setLineDash && edge.needs_review && !active)
+                        ctx.setLineDash([5, 5])
+                    else if (ctx.setLineDash)
+                        ctx.setLineDash([])
                     ctx.beginPath()
                     ctx.moveTo(sx, sy)
-                    ctx.lineTo(tx, ty)
+                    ctx.quadraticCurveTo(control.x, control.y, tx, ty)
                     ctx.stroke()
+                    if (ctx.setLineDash)
+                        ctx.setLineDash([])
 
                     if (root.showArrows) {
-                        var angle = Math.atan2(ty - sy, tx - sx)
+                        var angle = Math.atan2(ty - control.y, tx - control.x)
                         var arrowOffset = root.nodeRadius(root.displayNodes[targetIndex]) + 2
                         var arrowX = tx - Math.cos(angle) * arrowOffset
                         var arrowY = ty - Math.sin(angle) * arrowOffset
@@ -118,10 +163,12 @@ Rectangle {
                         ctx.fill()
                     }
 
-                    if (active && root.graphScale >= 1.0) {
+                    var labelVisible = root.showLabels || selected || hovered || (active && root.graphScale >= 0.95) || root.graphScale >= root.relationLabelThreshold
+                    if (labelVisible) {
                         ctx.globalAlpha = 1.0
-                        ctx.fillStyle = root.graphTextMuted
-                        ctx.fillText(String(edge.label || edge.type || ""), (sx + tx) / 2 + 3, (sy + ty) / 2 - 3)
+                        ctx.fillStyle = active ? root.graphText : root.graphTextMuted
+                        var mid = root.curvePoint(sx, sy, control.x, control.y, tx, ty, 0.5)
+                        ctx.fillText(String(edge.label || edge.type || ""), mid.x + 4, mid.y - 4)
                     }
                 }
                 ctx.globalAlpha = 1.0
@@ -166,6 +213,36 @@ Rectangle {
                     }
                 }
 
+                Rectangle {
+                    anchors.centerIn: parent
+                    width: parent.width + 8
+                    height: parent.height + 8
+                    radius: width / 2
+                    color: "transparent"
+                    border.width: String(modelData.type || "").toLowerCase() === "paper" ? 2.6 : 1.8
+                    border.color: root.confidenceColor(Number(modelData.confidence === undefined ? 1 : modelData.confidence), !!modelData.needs_review)
+                    opacity: knowledgeGraphController.selectedNode.id === modelData.id || root.hoveredNodeId === String(modelData.id || "") ? 0.98 : 0.72
+                }
+
+                Text {
+                    anchors.centerIn: parent
+                    text: root.nodeGlyph(modelData.type)
+                    color: String(modelData.type || "").toLowerCase() === "paper" ? theme.accentText : theme.text
+                    opacity: theme.dark ? 0.92 : 0.78
+                    font.pixelSize: Math.max(10, parent.width * 0.42)
+                    font.bold: true
+                }
+
+                GraphEvidenceBadge {
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    anchors.rightMargin: -8
+                    anchors.bottomMargin: -7
+                    count: (modelData.evidence || []).length
+                    confidence: Number(modelData.confidence === undefined ? 1 : modelData.confidence)
+                    needsReview: !!modelData.needs_review || Number(modelData.confidence) < 0.6
+                }
+
                 Text {
                     anchors.top: parent.bottom
                     anchors.horizontalCenter: parent.horizontalCenter
@@ -202,6 +279,14 @@ Rectangle {
                     onEntered: root.hoveredNodeId = String(modelData.id || "")
                     onExited: if (root.hoveredNodeId === String(modelData.id || "")) root.hoveredNodeId = ""
                     onClicked: root.nodeRequested(String(modelData.id || ""))
+                    onDoubleClicked: {
+                        root.nodeRequested(String(modelData.id || ""))
+                        root.displayStyle = "focus"
+                        root.focusDepth = Math.max(1, root.focusDepth)
+                        root.displayStyleRequested(root.displayStyle)
+                        root.refreshGraphLayout()
+                        root.fitGraph()
+                    }
                     ToolTip.visible: containsMouse
                     ToolTip.text: (modelData.summary || modelData.label || "") + root.pageHint(modelData)
                 }
@@ -212,6 +297,7 @@ Rectangle {
     MouseArea {
         anchors.fill: parent
         acceptedButtons: Qt.LeftButton
+        hoverEnabled: true
         property real lastX
         property real lastY
         onPressed: function(mouse) { lastX = mouse.x; lastY = mouse.y }
@@ -221,6 +307,9 @@ Rectangle {
                 root.panY += mouse.y - lastY
                 lastX = mouse.x
                 lastY = mouse.y
+            } else {
+                var hoverEdge = root.edgeAt((mouse.x - root.panX - width / 2) / root.graphScale + width / 2, (mouse.y - root.panY - height / 2) / root.graphScale + height / 2)
+                root.hoveredEdgeId = hoverEdge ? String(hoverEdge.id || "") : ""
             }
         }
         onClicked: function(mouse) {
@@ -228,6 +317,7 @@ Rectangle {
             if (edge)
                 root.edgeRequested(String(edge.id || ""))
         }
+        onExited: root.hoveredEdgeId = ""
         onWheel: function(wheel) {
             root.graphScale = Math.max(0.45, Math.min(2.5, root.graphScale + (wheel.angleDelta.y > 0 ? 0.1 : -0.1)))
             wheel.accepted = true
@@ -373,6 +463,16 @@ Rectangle {
         }
     }
 
+    GraphLegend {
+        z: 3
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        anchors.margins: 10
+        anchors.rightMargin: root.settingsOpen ? Math.min(settingsPanel.width + 46, parent.width * 0.42) : 10
+        nodes: root.displayNodes
+        edges: root.displayEdges
+    }
+
     Text {
         anchors.centerIn: parent
         visible: root.displayNodes.length === 0
@@ -382,12 +482,21 @@ Rectangle {
 
     onNodesChanged: root.refreshGraphLayout()
     onEdgesChanged: root.refreshGraphLayout()
+    onSearchQueryChanged: {
+        root.refreshGraphLayout()
+        if (root.searchQuery.trim().length > 0)
+            root.fitGraph()
+    }
+    onGraphScaleChanged: edgeCanvas.requestPaint()
+    onPanXChanged: { edgeCanvas.requestPaint(); backgroundCanvas.requestPaint() }
+    onPanYChanged: { edgeCanvas.requestPaint(); backgroundCanvas.requestPaint() }
     onDisplayNodesChanged: edgeCanvas.requestPaint()
     onDisplayEdgesChanged: edgeCanvas.requestPaint()
     onDisplayStyleChanged: root.refreshGraphLayout()
     onFocusDepthChanged: root.refreshGraphLayout()
     onReviewModeChanged: root.refreshGraphLayout()
     onHoveredNodeIdChanged: edgeCanvas.requestPaint()
+    onHoveredEdgeIdChanged: edgeCanvas.requestPaint()
     onShowArrowsChanged: edgeCanvas.requestPaint()
     onDimUnrelatedChanged: edgeCanvas.requestPaint()
     onShowLabelsChanged: root.refreshGraphLayout()
@@ -395,8 +504,8 @@ Rectangle {
     onNodeSizeScaleChanged: root.refreshGraphLayout()
     onLinkThicknessChanged: edgeCanvas.requestPaint()
     onAnimateLayoutChanged: root.refreshGraphLayout()
-    onWidthChanged: root.refreshGraphLayout()
-    onHeightChanged: root.refreshGraphLayout()
+    onWidthChanged: { root.refreshGraphLayout(); backgroundCanvas.requestPaint() }
+    onHeightChanged: { root.refreshGraphLayout(); backgroundCanvas.requestPaint() }
 
     function refreshGraphLayout() {
         root.layoutRevision += 1
@@ -721,6 +830,74 @@ Rectangle {
         return neighbors.indexOf(nodeId) >= 0 ? 0.92 : 0.14
     }
 
+    function edgeControlPoint(x1, y1, x2, y2, index) {
+        var dx = x2 - x1
+        var dy = y2 - y1
+        var length = Math.max(1, Math.hypot(dx, dy))
+        var normalX = -dy / length
+        var normalY = dx / length
+        var arc = Math.min(46, Math.max(14, length * 0.08))
+        var direction = (index % 2 === 0) ? 1 : -1
+        var stagger = ((index % 5) - 2) * 2.5
+        return { x: (x1 + x2) / 2 + normalX * (arc + stagger) * direction, y: (y1 + y2) / 2 + normalY * (arc + stagger) * direction }
+    }
+
+    function curvePoint(x1, y1, cx, cy, x2, y2, t) {
+        var inv = 1 - t
+        return {
+            x: inv * inv * x1 + 2 * inv * t * cx + t * t * x2,
+            y: inv * inv * y1 + 2 * inv * t * cy + t * t * y2
+        }
+    }
+
+    function distanceToCurve(px, py, x1, y1, cx, cy, x2, y2) {
+        var best = Number.POSITIVE_INFINITY
+        for (var i = 0; i <= 16; ++i) {
+            var point = root.curvePoint(x1, y1, cx, cy, x2, y2, i / 16)
+            best = Math.min(best, Math.hypot(px - point.x, py - point.y))
+        }
+        return best
+    }
+
+    function confidenceColor(confidence, needsReview) {
+        if (needsReview)
+            return theme.warning
+        if (confidence >= 0.78)
+            return theme.success
+        if (confidence >= 0.6)
+            return theme.accent
+        return theme.error
+    }
+
+    function nodeGlyph(type) {
+        type = String(type || "").toLowerCase()
+        if (type === "paper")
+            return "P"
+        if (type === "method" || type === "algorithm" || type === "model")
+            return "M"
+        if (type === "dataset")
+            return "D"
+        if (type === "metric")
+            return "%"
+        if (type === "result" || type === "claim")
+            return "R"
+        if (type === "contribution")
+            return "+"
+        if (type === "limitation")
+            return "!"
+        if (type === "futurework")
+            return "W"
+        if (type === "citation")
+            return "C"
+        if (type === "figure")
+            return "G"
+        if (type === "table")
+            return "T"
+        if (type === "equation")
+            return "="
+        return String(type || "?").slice(0, 1).toUpperCase()
+    }
+
     function distance(px, py, x1, y1, x2, y2) {
         var dx = x2 - x1
         var dy = y2 - y1
@@ -734,8 +911,15 @@ Rectangle {
         for (var i = root.displayEdges.length - 1; i >= 0; --i) {
             var s = root.nodeIndex(root.displayEdges[i].source)
             var t = root.nodeIndex(root.displayEdges[i].target)
-            if (s >= 0 && t >= 0 && root.distance(x, y, root.centerX(s), root.centerY(s), root.centerX(t), root.centerY(t)) < 7)
-                return root.displayEdges[i]
+            if (s >= 0 && t >= 0) {
+                var sx = root.centerX(s)
+                var sy = root.centerY(s)
+                var tx = root.centerX(t)
+                var ty = root.centerY(t)
+                var control = root.edgeControlPoint(sx, sy, tx, ty, i)
+                if (root.distanceToCurve(x, y, sx, sy, control.x, control.y, tx, ty) < 8)
+                    return root.displayEdges[i]
+            }
         }
         return null
     }

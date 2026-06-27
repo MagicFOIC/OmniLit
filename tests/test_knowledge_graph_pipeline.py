@@ -89,7 +89,7 @@ class KnowledgeGraphPipelineTests(unittest.TestCase):
     def test_builder_exposes_pipeline_counts_and_current_version(self) -> None:
         document = build_document("p1", {"recordId": "p1", "title": "Paper"}, {"pages": []})
         self.assertEqual(document.metadata["builder_version"], BUILDER_VERSION)
-        self.assertEqual(BUILDER_VERSION, 5)
+        self.assertEqual(BUILDER_VERSION, 6)
         self.assertEqual(document.metadata["stats"]["entity_candidates"], 0)
         self.assertEqual(document.metadata["pipeline"][-1], "quality_validation")
 

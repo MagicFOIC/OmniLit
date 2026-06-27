@@ -103,7 +103,7 @@ class KnowledgeGraphBuilderTests(unittest.TestCase):
         self.assertEqual(set(payload["layout"]), {node.id for node in document.nodes})
         self.assertGreater(payload["quality_summary"]["evidence_coverage"], 0.9)
         self.assertEqual(payload["metadata"]["pipeline"], [
-            "section_aware_blocks", "entity_candidates", "canonical_normalization",
+            "precision_section_filter", "entity_candidates", "canonical_normalization",
             "relation_candidates", "confidence_scoring", "quality_validation",
         ])
 

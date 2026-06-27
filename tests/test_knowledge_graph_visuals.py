@@ -20,10 +20,16 @@ class KnowledgeGraphVisualTests(unittest.TestCase):
             "readonly property color graphBackground: theme.canvas",
             "border.color: theme.border",
             "GraphSettingsPanel {",
+            "GraphLegend {",
+            "GraphEvidenceBadge {",
+            "id: backgroundCanvas",
+            "createRadialGradient",
             "function nodeRadius(",
             "width: r * 2",
             "radius: width / 2",
             "function edgeOpacity(",
+            "function confidenceColor(",
+            "function nodeGlyph(",
             "function resetGraphSettings()",
         ):
             self.assertIn(token, view)
@@ -64,6 +70,7 @@ class KnowledgeGraphVisualTests(unittest.TestCase):
             'styleValues: ["overview", "academic", "radial", "focus"]',
             "function neighborhood(", "function overviewPoint(", "function radialPoint(",
             "function academicPoint(", "function edgeAt(", "function nodeOpacity(",
+            "function edgeControlPoint(", "quadraticCurveTo", "distanceToCurve",
             "fullscreenRequested", "displayStyleRequested", "knowledgeGraphController.setDensity",
         ):
             self.assertIn(token, view)
@@ -96,6 +103,7 @@ class KnowledgeGraphVisualTests(unittest.TestCase):
             "root.layoutRevision += 1",
             "property real r: root.layoutRevision, root.nodeRadius(modelData)",
             "x: root.layoutRevision, root.centerX(index) - r",
+            "onDoubleClicked:",
             "Behavior on x",
             "Behavior on y",
             "onShowLabelsChanged: {",
@@ -153,8 +161,17 @@ class KnowledgeGraphVisualTests(unittest.TestCase):
         for token in (
             "normalized_label", "canonical_id", "extraction_method", "source_section",
             "confidence_reason", "relation_method", "direction_reason", "relation_evidence",
+            "review_reasons", "Review reasons", "modelData.section", "modelData.extraction_method",
         ):
             self.assertIn(token, card)
+
+    def test_new_graph_visual_components_surface_review_and_evidence(self) -> None:
+        legend = (QML_DIR / "GraphLegend.qml").read_text(encoding="utf-8")
+        badge = (QML_DIR / "GraphEvidenceBadge.qml").read_text(encoding="utf-8")
+        for token in ("reviewCount()", "evidenceCount()", "nodes.length", "edges.length", "typeColor"):
+            self.assertIn(token, legend)
+        for token in ("property int count", "property real confidence", "property bool needsReview"):
+            self.assertIn(token, badge)
 
 
 if __name__ == "__main__":
