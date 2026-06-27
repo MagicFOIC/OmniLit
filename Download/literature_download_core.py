@@ -89,7 +89,8 @@ DEFAULT_SOURCES = [SOURCE_OPENALEX, SOURCE_EUROPE_PMC, SOURCE_ARXIV, SOURCE_CROS
 OPENALEX_SELECT = (
     "id,doi,title,display_name,publication_date,publication_year,"
     "cited_by_count,authorships,primary_location,open_access,"
-    "abstract_inverted_index,best_oa_location,locations"
+    "abstract_inverted_index,best_oa_location,locations,"
+    "has_content,content_urls,ids"
 )
 NON_PDF_EXTENSIONS = (
     ".jpg",
@@ -112,8 +113,14 @@ SHADOW_LIBRARY_DOMAINS = (
     "booksc",
 )
 PDF_CHUNK_SIZE = 1024 * 64
+HTML_LANDING_PAGE_MAX_BYTES = 1024 * 1024
+ARXIV_MIN_DOWNLOAD_INTERVAL = 3.0
+PDF_HEAD_TIMEOUT = (8, 12)
+PDF_LANDING_TIMEOUT = (8, 15)
+PDF_API_TIMEOUT = (8, 15)
+PDF_DOWNLOAD_TIMEOUT = (12, 30)
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-PDF_RESOLVER_VERSION = "oa_pdf_resolver_v2"
+PDF_RESOLVER_VERSION = "oa_pdf_resolver_v3"
 PDF_RETRY_COOLDOWN = timedelta(days=7)
 PERMANENT_FAILURE_STATUSES = {"blocked_or_login", "not_open_access", "no_candidate"}
 MAX_PDF_RETRY_ATTEMPTS = 8
@@ -243,6 +250,12 @@ class DownloadResult:
     source_url: str | None = None
     reason: str | None = None
     size_bytes: int | None = None
+    candidate_source: str | None = None
+    http_status: int | None = None
+    content_type: str | None = None
+    final_url: str | None = None
+    failure_reason: str | None = None
+    discovered_candidates: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -251,6 +264,15 @@ class PdfResolution:
     url: str | None
     candidates: list[str]
     reason: str | None = None
+    candidate_details: list[dict[str, str]] = field(default_factory=list)
+    candidate_rejection_reasons: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class PdfCandidate:
+    """A legal OA PDF candidate with provenance for diagnostics."""
+    url: str
+    candidate_source: str
 
 
 @dataclass
@@ -308,6 +330,31 @@ def emit_source_progress(
     stats.active_stage = stage
     stats.active_detail = detail
     emit_progress(config, stats, localized(config, zh_message, en_message, ru_message))
+
+
+def emit_pdf_progress(
+    config: CrawlConfig,
+    stats: CrawlStats | None,
+    stage: str,
+    zh_message: str,
+    en_message: str,
+    detail: str = "",
+) -> None:
+    """Emit fine-grained PDF resolver/download progress without losing source context."""
+    if stats is None:
+        return
+    stats.active_stage = stage
+    stats.active_detail = detail
+    emit_progress(config, stats, localized(config, zh_message, en_message, en_message))
+
+
+def host_label(url: str | None) -> str:
+    """Return a compact host label for progress messages."""
+    normalized = normalize_candidate_url(url)
+    if not normalized:
+        return "unknown host"
+    parsed = urlparse(normalized)
+    return parsed.netloc or "unknown host"
 
 
 def increment_counter(mapping: dict[str, int], key: str | None) -> None:
@@ -468,15 +515,18 @@ def build_session(email: str) -> requests.Session:
     adapter = HTTPAdapter(max_retries=retry, pool_connections=10, pool_maxsize=10)
 
     session = requests.Session()
-    user_agent = "BatteryLiteratureCrawler/0.3"
+    user_agent = "OmniLit/1.0 LiteratureDownloader (+https://github.com/MagicFOIC/OmniLit"
     if email:
-        user_agent = f"{user_agent} mailto:{email}"
-    session.headers.update(
-        {
-            "User-Agent": user_agent,
-            "Accept": "application/json, application/pdf;q=0.9, */*;q=0.5",
-        }
-    )
+        user_agent = f"{user_agent}; mailto:{email}"
+    user_agent = f"{user_agent})"
+    headers = {
+        "User-Agent": user_agent,
+        "Accept": "application/pdf, text/html;q=0.9, application/json;q=0.8, */*;q=0.5",
+        "Accept-Language": "en-US,en;q=0.8",
+    }
+    if email:
+        headers["From"] = email
+    session.headers.update(headers)
     session.mount("https://", adapter)
     session.mount("http://", adapter)
     return session
@@ -591,6 +641,20 @@ def extract_pmcid(record: dict[str, Any]) -> str | None:
         match = re.search(r"\bPMC\d+\b", str(value), flags=re.IGNORECASE)
         if match:
             return match.group(0).upper()
+    full_text_urls = (record.get("fullTextUrlList") or {}).get("fullTextUrl") or []
+    for link in full_text_urls:
+        if not isinstance(link, dict):
+            continue
+        for key in ("url", "URL"):
+            match = re.search(r"\bPMC\d+\b", str(link.get(key) or ""), flags=re.IGNORECASE)
+            if match:
+                return match.group(0).upper()
+    ids = record.get("ids") or {}
+    if isinstance(ids, dict):
+        for key in ("pmcid", "pmc", "pmc_id"):
+            match = re.search(r"\bPMC\d+\b", str(ids.get(key) or ""), flags=re.IGNORECASE)
+            if match:
+                return match.group(0).upper()
     return None
 
 
@@ -609,6 +673,12 @@ def extract_arxiv_id(record: dict[str, Any]) -> str | None:
             return match.group(1)
         if re.fullmatch(r"\d{4}\.\d{4,5}(?:v\d+)?", text):
             return text
+    ids = record.get("ids") or {}
+    if isinstance(ids, dict):
+        for key in ("arxiv", "arxiv_id"):
+            arxiv_id = normalize_arxiv_id(ids.get(key))
+            if arxiv_id:
+                return arxiv_id
     return None
 
 
@@ -676,7 +746,7 @@ def normalize_candidate_url(value: Any) -> str | None:
     if not parsed.scheme or not parsed.netloc:
         return None
 
-    return parsed._replace(scheme="https", netloc=parsed.netloc.casefold()).geturl()
+    return parsed._replace(scheme="https", netloc=parsed.netloc.casefold(), fragment="").geturl()
 
 
 def looks_like_pdf_url(url: str | None) -> bool:
@@ -686,6 +756,7 @@ def looks_like_pdf_url(url: str | None) -> bool:
         return False
 
     normalized_url = strip_query(normalized).lower()
+    query = urlparse(normalized).query.casefold()
     if normalized_url.endswith(NON_PDF_EXTENSIONS):
         return False
 
@@ -696,7 +767,9 @@ def looks_like_pdf_url(url: str | None) -> bool:
         or "/pdfdirect/" in normalized_url
         or "/servlets/purl/" in normalized_url
         or "pdf=render" in normalized.casefold()
-        or ".pdf" in urlparse(normalized).query.casefold()
+        or ".pdf" in query
+        or re.search(r"(?:^|[&;])(?:type|format|output|view|filetype)=pdf(?:$|[&;])", query) is not None
+        or re.search(r"(?:^|[&;])download=(?:1|true|yes)(?:$|[&;])", query) is not None
     )
 
 
@@ -735,6 +808,18 @@ def candidate_urls_from_landing_url(url: str | None) -> list[str]:
     if parsed.netloc.endswith("frontiersin.org") and "/articles/" in parsed.path:
         candidates.append(normalized_url.rstrip("/") + "/pdf")
 
+    doi_match = re.search(r"(/doi)/(?:full|abs|abstract)?/?(10\.\d{4,9}/.+)$", parsed.path, flags=re.IGNORECASE)
+    if doi_match and "/doi/pdf/" not in parsed.path.casefold() and "/doi/epdf/" not in parsed.path.casefold():
+        candidates.append(urljoin(normalized, f"{doi_match.group(1)}/pdf/{doi_match.group(2)}"))
+
+    springer_match = re.search(r"^/article/(10\.\d{4,9}/.+)$", parsed.path, flags=re.IGNORECASE)
+    if parsed.netloc.endswith("link.springer.com") and springer_match:
+        candidates.append(f"https://link.springer.com/content/pdf/{springer_match.group(1)}.pdf")
+
+    nature_match = re.search(r"^/articles/([^/?#]+)$", parsed.path, flags=re.IGNORECASE)
+    if parsed.netloc.endswith("nature.com") and nature_match and not nature_match.group(1).casefold().endswith(".pdf"):
+        candidates.append(f"https://www.nature.com/articles/{nature_match.group(1)}.pdf")
+
     return candidates
 
 
@@ -754,6 +839,216 @@ def extend_pdf_candidate_urls(urls: list[str | None], value: Any) -> None:
     urls.extend(candidate_urls_from_landing_url(normalized))
 
 
+def append_pdf_candidate(
+    candidates: list[PdfCandidate],
+    value: Any,
+    candidate_source: str,
+    *,
+    include_publisher_rules: bool = True,
+) -> None:
+    """Append a normalized legal PDF candidate and derived publisher-rule URLs."""
+    normalized = normalize_candidate_url(value)
+    if not normalized or is_shadow_library_url(normalized):
+        return
+    if looks_like_pdf_url(normalized):
+        candidates.append(PdfCandidate(normalized, candidate_source))
+    if include_publisher_rules:
+        for derived_url in candidate_urls_from_landing_url(normalized):
+            normalized_derived = normalize_candidate_url(derived_url)
+            if (
+                normalized_derived
+                and looks_like_pdf_url(normalized_derived)
+                and not is_shadow_library_url(normalized_derived)
+            ):
+                candidates.append(PdfCandidate(normalized_derived, "publisher_rule"))
+
+
+def unique_pdf_candidate_details(candidates: list[PdfCandidate]) -> list[PdfCandidate]:
+    """Deduplicate candidate URLs while preserving priority and source."""
+    seen: set[str] = set()
+    result: list[PdfCandidate] = []
+    for candidate in candidates:
+        normalized = normalize_candidate_url(candidate.url)
+        if not normalized or normalized in seen:
+            continue
+        if is_shadow_library_url(normalized) or not looks_like_pdf_url(normalized):
+            continue
+        seen.add(normalized)
+        result.append(PdfCandidate(normalized, candidate.candidate_source))
+    return result
+
+
+def candidate_host_priority(url: str) -> int:
+    """Rank hosts by likely legal OA reliability before publisher direct links."""
+    normalized = normalize_candidate_url(url) or url
+    parsed = urlparse(normalized)
+    host = parsed.netloc.casefold()
+    path = parsed.path.casefold()
+    publisher_hosts = (
+        "onlinelibrary.wiley.com",
+        "sciencedirect.com",
+        "cell.com",
+        "pubs.acs.org",
+        "link.springer.com",
+        "nature.com",
+        "tandfonline.com",
+        "ieeexplore.ieee.org",
+        "publisher.test",
+    )
+    if host.endswith("arxiv.org"):
+        return 0
+    if host.endswith("ncbi.nlm.nih.gov") or host.endswith("pmc.ncbi.nlm.nih.gov"):
+        return 1
+    if "europepmc.org" in host or host.endswith("ebi.ac.uk"):
+        return 2
+    if host.endswith("osti.gov"):
+        return 3
+    if host.endswith("content.openalex.org"):
+        return 4
+    if any(host == publisher or host.endswith(f".{publisher}") for publisher in publisher_hosts):
+        return 30
+    repository_tokens = (
+        "repo",
+        "repository",
+        "dspace",
+        "eprints",
+        "escholarship",
+        "institutional",
+        "archive",
+        "zenodo",
+        "figshare",
+        "osf.io",
+        "hal.science",
+        "pubmedcentral",
+    )
+    if host.endswith(".edu") or host.endswith(".gov") or any(token in host or token in path for token in repository_tokens):
+        return 5
+    if "doaj.org" in host:
+        return 6
+    return 10
+
+
+def candidate_source_priority(candidate_source: str) -> int:
+    """Rank metadata sources by expected legal OA reliability."""
+    priorities = {
+        "arxiv_pdf": 0,
+        "pmc_direct": 1,
+        "europe_pmc_fullTextUrl": 2,
+        "openalex_content_api": 3,
+        "doaj_fulltext": 5,
+        "landing_page_meta": 8,
+        "unpaywall_url_for_pdf": 10,
+        "openalex_pdf_url": 10,
+        "openalex_landing": 11,
+        "unpaywall_landing": 11,
+        "publisher_rule": 12,
+    }
+    return priorities.get(candidate_source, 20)
+
+
+def prioritize_pdf_candidate_details(candidates: list[PdfCandidate]) -> list[PdfCandidate]:
+    """Prefer legal OA repositories before publisher direct links to reduce blocks."""
+    unique = unique_pdf_candidate_details(candidates)
+    indexed = list(enumerate(unique))
+    indexed.sort(
+        key=lambda item: (
+            candidate_host_priority(item[1].url),
+            candidate_source_priority(item[1].candidate_source),
+            item[0],
+        )
+    )
+    return [candidate for _index, candidate in indexed]
+
+
+def candidate_details_to_urls(candidates: list[PdfCandidate]) -> list[str]:
+    """Return the legacy URL-only candidate representation."""
+    return [candidate.url for candidate in candidates]
+
+
+def candidate_details_for_metadata(candidates: list[PdfCandidate]) -> list[dict[str, str]]:
+    """Return candidate provenance records suitable for metadata JSONL."""
+    return [
+        {"url": candidate.url, "candidate_source": candidate.candidate_source}
+        for candidate in candidates
+    ]
+
+
+def candidate_source_for_url(candidates: list[PdfCandidate], url: str | None) -> str | None:
+    """Return the candidate source matching a URL."""
+    normalized = normalize_candidate_url(url)
+    if not normalized:
+        return None
+    for candidate in candidates:
+        if normalize_candidate_url(candidate.url) == normalized:
+            return candidate.candidate_source
+    return None
+
+
+def candidate_details_for_urls(
+    urls: list[str],
+    known_candidates: list[PdfCandidate],
+    default_source: str = "landing_page_meta",
+) -> list[dict[str, str]]:
+    """Build metadata candidate details for a legacy URL list."""
+    details: list[PdfCandidate] = []
+    for url in urls:
+        normalized = normalize_candidate_url(url)
+        if not normalized:
+            continue
+        details.append(PdfCandidate(normalized, candidate_source_for_url(known_candidates, normalized) or default_source))
+    return candidate_details_for_metadata(unique_pdf_candidate_details(details))
+
+
+def add_unique_pdf_candidates(target: list[PdfCandidate], additions: list[PdfCandidate]) -> None:
+    """Append candidates that are not already present in a candidate queue."""
+    seen = {normalize_candidate_url(candidate.url) for candidate in target}
+    for candidate in additions:
+        normalized = normalize_candidate_url(candidate.url)
+        if not normalized or normalized in seen:
+            continue
+        if is_shadow_library_url(normalized) or not looks_like_pdf_url(normalized):
+            continue
+        target.append(PdfCandidate(normalized, candidate.candidate_source))
+        seen.add(normalized)
+    target[:] = prioritize_pdf_candidate_details(target)
+
+
+def add_semantic_candidates_by_priority(
+    candidate_details: list[PdfCandidate],
+    semantic_urls: list[str],
+) -> None:
+    """Insert Semantic Scholar enrichment after direct OA PDFs and before PMC/EPMC/DOAJ."""
+    additions = [
+        PdfCandidate(url, "semantic_scholar_openAccessPdf")
+        for url in semantic_urls
+    ]
+    additions = [
+        candidate
+        for candidate in unique_pdf_candidate_details(additions)
+        if candidate_source_for_url(candidate_details, candidate.url) is None
+    ]
+    if not additions:
+        return
+
+    later_sources = {
+        "pmc_direct",
+        "europe_pmc_fullTextUrl",
+        "doaj_fulltext",
+        "landing_page_meta",
+        "landing_page_anchor",
+        "publisher_rule",
+    }
+    insert_at = next(
+        (
+            index
+            for index, candidate in enumerate(candidate_details)
+            if candidate.candidate_source in later_sources
+        ),
+        len(candidate_details),
+    )
+    candidate_details[insert_at:insert_at] = additions
+
+
 def is_known_oa_record(record: dict[str, Any], unpaywall: dict[str, Any] | None = None) -> bool:
     """Return whether metadata marks a record as open access."""
     open_access = record.get("open_access") or {}
@@ -769,6 +1064,141 @@ def is_known_oa_record(record: dict[str, Any], unpaywall: dict[str, Any] | None 
         if isinstance(link, dict) and link.get("availabilityCode") == "OA":
             return True
     return False
+
+
+def openalex_record_allows_content_api(record: dict[str, Any]) -> bool:
+    """Return whether OpenAlex metadata says its legal content endpoint may have a PDF."""
+    has_content = record.get("has_content")
+    if isinstance(has_content, dict) and has_content.get("pdf"):
+        return True
+
+    content_urls = record.get("content_urls")
+    if isinstance(content_urls, dict) and content_urls.get("pdf"):
+        return True
+
+    open_access = record.get("open_access") or {}
+    if isinstance(open_access, dict) and open_access.get("is_oa"):
+        return True
+
+    best_oa_location = record.get("best_oa_location")
+    if isinstance(best_oa_location, dict) and (best_oa_location.get("is_oa") or best_oa_location):
+        return True
+
+    return any(
+        isinstance(location, dict) and location.get("is_oa")
+        for location in record.get("locations") or []
+    )
+
+
+def add_openalex_content_api_candidate(candidates: list[PdfCandidate], record: dict[str, Any]) -> None:
+    """Add OpenAlex's official per-work content endpoint when OA metadata allows it."""
+    work_id = extract_openalex_work_id(record.get("openalex_id") or record.get("id"))
+    if not work_id or not openalex_record_allows_content_api(record):
+        return
+    append_pdf_candidate(
+        candidates,
+        f"https://content.openalex.org/works/{work_id}.pdf",
+        "openalex_content_api",
+        include_publisher_rules=False,
+    )
+
+
+def add_openalex_location_candidate_details(candidates: list[PdfCandidate], location: Any) -> None:
+    """Collect OpenAlex direct PDF candidates from one location object."""
+    if not isinstance(location, dict):
+        return
+    append_pdf_candidate(candidates, location.get("pdf_url"), "openalex_pdf_url")
+    if location.get("is_oa"):
+        append_pdf_candidate(candidates, location.get("landing_page_url"), "openalex_landing")
+
+
+def add_unpaywall_location_candidate_details(candidates: list[PdfCandidate], location: Any) -> None:
+    """Collect Unpaywall PDF and landing-derived candidates from one location object."""
+    if not isinstance(location, dict):
+        return
+    append_pdf_candidate(candidates, location.get("url_for_pdf"), "unpaywall_url_for_pdf")
+    append_pdf_candidate(candidates, location.get("url"), "unpaywall_landing")
+
+
+def add_europe_pmc_candidate_details(candidates: list[PdfCandidate], record: dict[str, Any]) -> None:
+    """Collect Europe PMC OA PDF fullTextUrlList candidates."""
+    full_text_urls = (record.get("fullTextUrlList") or {}).get("fullTextUrl") or []
+    for link in full_text_urls:
+        if not isinstance(link, dict):
+            continue
+        if link.get("availabilityCode") != "OA":
+            continue
+        if str(link.get("documentStyle") or "").casefold() == "pdf":
+            append_pdf_candidate(candidates, link.get("url"), "europe_pmc_fullTextUrl")
+
+
+def add_doaj_candidate_details(candidates: list[PdfCandidate], record: dict[str, Any]) -> None:
+    """Collect DOAJ fulltext and PDF candidates from raw and normalized records."""
+    for url in record.get("doaj_fulltext_links") or []:
+        append_pdf_candidate(candidates, url, "doaj_fulltext")
+    bibjson = record.get("bibjson") or {}
+    for link in bibjson.get("link") or []:
+        if not isinstance(link, dict):
+            continue
+        link_type = str(link.get("type") or "").casefold()
+        content_type = str(link.get("content_type") or "").casefold()
+        if link_type == "fulltext" or "pdf" in content_type:
+            append_pdf_candidate(candidates, link.get("url"), "doaj_fulltext")
+
+
+def add_arxiv_candidate_details(candidates: list[PdfCandidate], record: dict[str, Any]) -> None:
+    """Collect arXiv direct PDF candidates from IDs and landing URLs."""
+    arxiv_id = extract_arxiv_id(record)
+    if arxiv_id:
+        append_pdf_candidate(candidates, f"https://arxiv.org/pdf/{arxiv_id}", "arxiv_pdf", include_publisher_rules=False)
+    for key in ("id", "source_record_id", "url", "pdf_url"):
+        normalized = normalize_candidate_url(record.get(key))
+        if normalized and urlparse(normalized).netloc.endswith("arxiv.org"):
+            append_pdf_candidate(candidates, normalized, "arxiv_pdf")
+
+
+def add_pmc_direct_candidate_details(candidates: list[PdfCandidate], record: dict[str, Any]) -> None:
+    """Collect direct PMC official PDF candidates."""
+    pmcid = extract_pmcid(record)
+    if pmcid:
+        append_pdf_candidate(
+            candidates,
+            f"https://pmc.ncbi.nlm.nih.gov/articles/{pmcid}/pdf/",
+            "pmc_direct",
+            include_publisher_rules=False,
+        )
+
+
+def record_direct_pdf_source(record: dict[str, Any]) -> str:
+    """Return candidate_source for direct PDF fields on a normalized source record."""
+    source = record.get("literature_source")
+    if source == SOURCE_ARXIV:
+        return "arxiv_pdf"
+    if source == SOURCE_EUROPE_PMC:
+        return "europe_pmc_fullTextUrl"
+    if source == SOURCE_DOAJ:
+        return "doaj_fulltext"
+    if source == SOURCE_CROSSREF:
+        return "publisher_rule"
+    return "openalex_pdf_url"
+
+
+def record_landing_source(record: dict[str, Any]) -> str:
+    """Return candidate_source for landing-page fields on a normalized source record."""
+    return "openalex_landing" if record.get("literature_source") in {None, SOURCE_OPENALEX} else "publisher_rule"
+
+
+def add_record_location_candidate_details(
+    candidates: list[PdfCandidate],
+    location: Any,
+    record: dict[str, Any],
+) -> None:
+    """Collect direct and landing-derived candidates from a source-normalized location."""
+    if not isinstance(location, dict):
+        return
+    append_pdf_candidate(candidates, location.get("pdf_url"), record_direct_pdf_source(record))
+    if location.get("is_oa") or record.get("literature_source") != SOURCE_OPENALEX:
+        append_pdf_candidate(candidates, location.get("landing_page_url"), record_landing_source(record))
 
 
 def add_openalex_location_candidates(urls: list[str | None], location: Any) -> None:
@@ -1224,7 +1654,14 @@ def search_europe_pmc(
             and str(link.get("documentStyle") or "").casefold() == "pdf"
             and link.get("url")
         ]
-        source_record_id = f"{item.get('source') or 'unknown'}:{item.get('id') or item.get('pmcid') or item.get('doi')}"
+        pmcid = item.get("pmcid")
+        if not pmcid and str(item.get("source") or "").casefold() == "pmc":
+            raw_id = str(item.get("id") or "")
+            if re.fullmatch(r"\d+", raw_id):
+                pmcid = f"PMC{raw_id}"
+            elif re.fullmatch(r"PMC\d+", raw_id, flags=re.IGNORECASE):
+                pmcid = raw_id.upper()
+        source_record_id = f"{item.get('source') or 'unknown'}:{item.get('id') or pmcid or item.get('doi')}"
         publication_date = (
             item.get("firstPublicationDate")
             or item.get("electronicPublicationDate")
@@ -1236,6 +1673,7 @@ def search_europe_pmc(
                 "id": f"europepmc:{source_record_id}",
                 "source_record_id": f"{SOURCE_EUROPE_PMC}:{source_record_id}",
                 "literature_source": SOURCE_EUROPE_PMC,
+                "pmcid": pmcid,
                 "doi": item.get("doi"),
                 "title": clean_markup_text(item.get("title")),
                 "publication_date": publication_date,
@@ -1420,14 +1858,23 @@ def normalize_crossref_item(item: dict[str, Any]) -> dict[str, Any]:
     licenses = item.get("license") or []
     license_urls = unique_urls([license_item.get("URL") for license_item in licenses if isinstance(license_item, dict)])
     links = item.get("link") or []
+    resource = item.get("resource") or {}
+    primary_resource = resource.get("primary") if isinstance(resource, dict) else {}
+    resource_url = primary_resource.get("URL") if isinstance(primary_resource, dict) else None
     pdf_urls = unique_candidate_urls([
-        link.get("URL")
-        for link in links
-        if isinstance(link, dict)
-        and "pdf" in str(link.get("content-type") or "").casefold()
-        and link.get("URL")
+        *[
+            link.get("URL")
+            for link in links
+            if isinstance(link, dict)
+            and (
+                "pdf" in str(link.get("content-type") or "").casefold()
+                or looks_like_pdf_url(link.get("URL"))
+            )
+            and link.get("URL")
+        ],
+        resource_url if looks_like_pdf_url(resource_url) else None,
     ])
-    landing_url = item.get("URL")
+    landing_url = item.get("URL") or resource_url
     oa_url = (pdf_urls or license_urls or [landing_url or None])[0]
 
     return {
@@ -2243,47 +2690,129 @@ class LandingPdfLinkParser(HTMLParser):
     def __init__(self, base_url: str) -> None:
         super().__init__(convert_charrefs=True)
         self.base_url = base_url
-        self.urls: list[str] = []
+        self.candidates: list[PdfCandidate] = []
+        self._anchor_href: str | None = None
+        self._anchor_text: list[str] = []
+        self._script_type: str | None = None
+        self._script_text: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         values = {name.casefold(): value or "" for name, value in attrs}
         tag_name = tag.casefold()
         name = values.get("name", "").casefold()
         prop = values.get("property", "").casefold()
+        rel = values.get("rel", "").casefold()
         content = values.get("content", "")
         href = values.get("href", "")
         link_type = values.get("type", "").casefold()
 
         if tag_name == "meta" and (name == "citation_pdf_url" or prop == "citation_pdf_url"):
-            self._append(content)
-        if tag_name in {"link", "a"} and ("pdf" in link_type or looks_like_pdf_url(href)):
-            self._append(href)
+            self._append(content, "landing_page_meta")
+        if tag_name == "meta" and name == "dc.identifier" and ".pdf" in content.casefold():
+            self._append(content, "landing_page_meta")
+        if tag_name == "link" and "alternate" in rel and "application/pdf" in link_type:
+            self._append(href, "landing_page_meta")
+        if tag_name == "link" and "pdf" in link_type:
+            self._append(href, "landing_page_meta")
+        if tag_name in {"iframe", "embed", "object"}:
+            embedded_url = values.get("src") or values.get("data")
+            embedded_absolute_url = urljoin(self.base_url, html.unescape(str(embedded_url or "").strip()))
+            if "pdf" in link_type or looks_like_pdf_url(embedded_absolute_url):
+                self._append(embedded_url, "landing_page_anchor")
+        if tag_name == "a":
+            self._anchor_href = href
+            self._anchor_text = [
+                values.get("title", ""),
+                values.get("aria-label", ""),
+            ]
+            if looks_like_pdf_url(href):
+                self._append(href, "landing_page_anchor")
+        if tag_name == "script":
+            self._script_type = link_type
+            self._script_text = []
 
-    def _append(self, value: str | None) -> None:
+    def handle_data(self, data: str) -> None:
+        if self._anchor_href is not None:
+            self._anchor_text.append(data)
+        if self._script_type and "ld+json" in self._script_type:
+            self._script_text.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        tag_name = tag.casefold()
+        if tag_name == "a" and self._anchor_href is not None:
+            text = " ".join(self._anchor_text).casefold()
+            if any(label in text for label in ("pdf", "download pdf", "full text pdf", "article pdf")):
+                self._append(self._anchor_href, "landing_page_anchor")
+            self._anchor_href = None
+            self._anchor_text = []
+        if tag_name == "script" and self._script_type and "ld+json" in self._script_type:
+            extract_jsonld_pdf_candidates(self.base_url, "\n".join(self._script_text), self.candidates)
+            self._script_type = None
+            self._script_text = []
+
+    def _append(self, value: str | None, candidate_source: str) -> None:
         if not value:
             return
-        self.urls.append(urljoin(self.base_url, html.unescape(str(value).strip())))
+        append_pdf_candidate(
+            self.candidates,
+            urljoin(self.base_url, html.unescape(str(value).strip())),
+            candidate_source,
+            include_publisher_rules=False,
+        )
 
 
-def extract_pdf_urls_from_landing_html(base_url: str, html_text: str) -> list[str]:
-    """Extract PDF-like URLs from landing-page metadata and links."""
+def extract_jsonld_pdf_candidates(base_url: str, json_text: str, candidates: list[PdfCandidate]) -> None:
+    """Extract JSON-LD contentUrl PDF references."""
+    try:
+        data = json.loads(html.unescape(json_text))
+    except (TypeError, ValueError):
+        return
+
+    def walk(value: Any) -> None:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key in {"contentUrl", "associatedMedia"}:
+                    if isinstance(child, str):
+                        append_pdf_candidate(candidates, urljoin(base_url, child), "landing_page_meta", include_publisher_rules=False)
+                    else:
+                        walk(child)
+                elif key == "encoding":
+                    walk(child)
+                else:
+                    walk(child)
+        elif isinstance(value, list):
+            for item in value:
+                walk(item)
+
+    walk(data)
+
+
+def extract_pdf_candidate_details_from_html(base_url: str, html_text: str) -> list[PdfCandidate]:
+    """Extract PDF-like URLs with provenance from landing-page metadata and links."""
     parser = LandingPdfLinkParser(base_url)
+    html_text = str(html_text or "")[:HTML_LANDING_PAGE_MAX_BYTES]
     try:
         parser.feed(html_text)
     except Exception:
         logging.debug("Landing page HTML parsing failed: %s", base_url, exc_info=True)
 
-    urls = parser.urls
-    for match in re.finditer(r'"(?:contentUrl|url)"\s*:\s*"([^"]+)"', html_text, flags=re.IGNORECASE):
-        urls.append(urljoin(base_url, html.unescape(match.group(1))))
+    candidates = list(parser.candidates)
+    for match in re.finditer(r'"(?:contentUrl)"\s*:\s*"([^"]+)"', html_text, flags=re.IGNORECASE):
+        append_pdf_candidate(candidates, urljoin(base_url, html.unescape(match.group(1))), "landing_page_meta", include_publisher_rules=False)
     for match in re.finditer(r"citation_pdf_url[^>]+content=['\"]([^'\"]+)['\"]", html_text, flags=re.IGNORECASE):
-        urls.append(urljoin(base_url, html.unescape(match.group(1))))
+        append_pdf_candidate(candidates, urljoin(base_url, html.unescape(match.group(1))), "landing_page_meta", include_publisher_rules=False)
 
-    return [
-        url
-        for url in unique_candidate_urls(urls)
-        if looks_like_pdf_url(url) and not is_shadow_library_url(url)
-    ]
+    return unique_pdf_candidate_details(candidates)
+
+
+def extract_pdf_candidates_from_html(base_url: str, html_text: str) -> list[str]:
+    """Extract legal PDF URLs from landing-page metadata and links."""
+    return candidate_details_to_urls(extract_pdf_candidate_details_from_html(base_url, html_text))
+
+
+def extract_pdf_urls_from_landing_html(base_url: str, html_text: str) -> list[str]:
+    """Backward-compatible alias for landing page PDF extraction."""
+    return extract_pdf_candidates_from_html(base_url, html_text)
 
 
 def landing_page_urls_for_record(record: dict[str, Any], unpaywall: dict[str, Any] | None) -> list[str]:
@@ -2302,6 +2831,9 @@ def landing_page_urls_for_record(record: dict[str, Any], unpaywall: dict[str, An
         record.get("source_url"),
         record.get("url"),
     ]
+    doi = normalize_doi(record.get("doi") or record.get("normalized_doi"))
+    if doi:
+        urls.append(f"https://doi.org/{doi}")
     if unpaywall:
         urls.append(unpaywall.get("landing_url"))
         urls.extend(unpaywall.get("landing_urls") or [])
@@ -2326,15 +2858,35 @@ def resolve_landing_page_pdf_candidates(
     config: CrawlConfig,
 ) -> list[str]:
     """Fetch OA landing pages and extract advertised PDF URLs."""
-    del config
+    return candidate_details_to_urls(resolve_landing_page_pdf_candidate_details(record, unpaywall, session, config))
+
+
+def resolve_landing_page_pdf_candidate_details(
+    record: dict[str, Any],
+    unpaywall: dict[str, Any] | None,
+    session: requests.Session,
+    config: CrawlConfig,
+    stats: CrawlStats | None = None,
+) -> list[PdfCandidate]:
+    """Fetch OA landing pages and extract advertised PDF candidates with provenance."""
     get = getattr(session, "get", None)
     if not callable(get):
         return []
 
-    candidates: list[str] = []
+    candidates: list[PdfCandidate] = []
     for landing_url in landing_page_urls_for_record(record, unpaywall)[:4]:
+        if stop_requested(config):
+            return unique_pdf_candidate_details(candidates)
+        emit_pdf_progress(
+            config,
+            stats,
+            "pdf_landing_page",
+            f"正在解析开放获取页面：{host_label(landing_url)}",
+            f"Resolving OA landing page: {host_label(landing_url)}",
+            detail=landing_url,
+        )
         try:
-            response = get(landing_url, timeout=(10, 30), allow_redirects=True)
+            response = get(landing_url, timeout=PDF_LANDING_TIMEOUT, allow_redirects=True)
         except (requests.RequestException, TypeError):
             logging.debug("Could not fetch OA landing page: %s", landing_url, exc_info=True)
             continue
@@ -2347,10 +2899,13 @@ def resolve_landing_page_pdf_candidates(
             continue
         text = getattr(response, "text", "")
         if not text and getattr(response, "content", None):
-            text = response.content.decode("utf-8", errors="ignore")
+            text = response.content[:HTML_LANDING_PAGE_MAX_BYTES].decode("utf-8", errors="ignore")
+        final_url = normalize_candidate_url(getattr(response, "url", None)) or landing_url
+        for derived_url in candidate_urls_from_landing_url(final_url):
+            append_pdf_candidate(candidates, derived_url, "publisher_rule", include_publisher_rules=False)
         if text:
-            candidates.extend(extract_pdf_urls_from_landing_html(landing_url, str(text)))
-    return unique_candidate_urls(candidates)
+            candidates.extend(extract_pdf_candidate_details_from_html(final_url, str(text)))
+    return unique_pdf_candidate_details(candidates)
 
 
 def semantic_scholar_lookup_id(record: dict[str, Any]) -> str | None:
@@ -2368,23 +2923,44 @@ def semantic_scholar_lookup_id(record: dict[str, Any]) -> str | None:
         return f"ARXIV:{arxiv_id}"
     return None
 
-
-def resolve_semantic_scholar_pdf_candidates(
-    record: dict[str, Any],
+def fetch_semantic_scholar_pdf_candidates(
     session: requests.Session,
+    record: dict[str, Any],
     config: CrawlConfig,
+    stats: CrawlStats | None = None,
 ) -> list[str]:
     """Resolve legal OA PDFs through Semantic Scholar openAccessPdf metadata."""
-    del config
     paper_id = semantic_scholar_lookup_id(record)
     get = getattr(session, "get", None)
     if not paper_id or not callable(get):
         return []
+    if stop_requested(config):
+        return []
+    headers: dict[str, str] = {}
+    api_key = os.environ.get("SEMANTIC_SCHOLAR_API_KEY")
+    if api_key:
+        headers["x-api-key"] = api_key
+    elif config.request_delay > 0:
+        if sleep_or_stop(min(config.request_delay, 1.0), config):
+            return []
+    emit_pdf_progress(
+        config,
+        stats,
+        "pdf_semantic_scholar",
+        "正在补查 Semantic Scholar 开放 PDF",
+        "Checking Semantic Scholar open PDF metadata",
+        detail=paper_id,
+    )
     try:
+        kwargs: dict[str, Any] = {
+            "params": {"fields": "paperId,title,isOpenAccess,openAccessPdf,externalIds,url"},
+            "timeout": PDF_API_TIMEOUT,
+        }
+        if headers:
+            kwargs["headers"] = headers
         response = get(
             f"{SEMANTIC_SCHOLAR_PAPER_URL}/{quote(paper_id, safe=':')}",
-            params={"fields": "isOpenAccess,openAccessPdf,externalIds"},
-            timeout=(10, 30),
+            **kwargs,
         )
     except (requests.RequestException, TypeError):
         logging.debug("Semantic Scholar OA lookup failed: %s", paper_id, exc_info=True)
@@ -2399,6 +2975,8 @@ def resolve_semantic_scholar_pdf_candidates(
         data = response.json()
     except Exception:
         return []
+    if not isinstance(data, dict) or data.get("isOpenAccess") is not True:
+        return []
     open_pdf = data.get("openAccessPdf") if isinstance(data, dict) else None
     url = open_pdf.get("url") if isinstance(open_pdf, dict) else None
     return [
@@ -2408,74 +2986,111 @@ def resolve_semantic_scholar_pdf_candidates(
     ]
 
 
+def resolve_semantic_scholar_pdf_candidates(
+    record: dict[str, Any],
+    session: requests.Session,
+    config: CrawlConfig,
+) -> list[str]:
+    """Backward-compatible Semantic Scholar OA PDF resolver."""
+    return fetch_semantic_scholar_pdf_candidates(session, record, config)
+
+
 def iter_pdf_candidates(
     item: dict[str, Any],
     unpaywall: dict[str, Any] | None,
 ) -> list[str]:
     """Return legal OA PDF candidates in stable priority order."""
+    return candidate_details_to_urls(iter_pdf_candidate_details(item, unpaywall))
+
+
+def iter_pdf_candidate_details(
+    item: dict[str, Any],
+    unpaywall: dict[str, Any] | None,
+) -> list[PdfCandidate]:
+    """Return legal OA PDF candidates with provenance in stable priority order."""
     open_access = item.get("open_access") or {}
     primary_location = item.get("primary_location") or {}
     best_oa_location = item.get("best_oa_location") or {}
     is_oa_record = is_known_oa_record(item, unpaywall)
-    urls: list[str | None] = []
+    direct_candidates: list[PdfCandidate] = []
+    candidates: list[PdfCandidate] = []
+    publisher_candidates: list[PdfCandidate] = []
 
-    extend_pdf_candidate_urls(urls, item.get("pdf_url"))
+    add_arxiv_candidate_details(candidates, item)
+    add_openalex_content_api_candidate(candidates, item)
+
+    append_pdf_candidate(direct_candidates, item.get("pdf_url"), record_direct_pdf_source(item), include_publisher_rules=False)
     for url in item.get("pdf_candidates") or []:
-        extend_pdf_candidate_urls(urls, url)
+        append_pdf_candidate(direct_candidates, url, record_direct_pdf_source(item), include_publisher_rules=False)
 
-    add_openalex_location_candidates(urls, primary_location)
-    add_openalex_location_candidates(urls, best_oa_location)
+    add_record_location_candidate_details(direct_candidates, primary_location, item)
+    add_record_location_candidate_details(direct_candidates, best_oa_location, item)
     for location in item.get("locations") or []:
-        add_openalex_location_candidates(urls, location)
+        add_record_location_candidate_details(direct_candidates, location, item)
 
     if is_oa_record:
-        extend_pdf_candidate_urls(urls, open_access.get("oa_url"))
+        append_pdf_candidate(direct_candidates, open_access.get("oa_url"), record_landing_source(item), include_publisher_rules=False)
 
     if unpaywall:
-        add_unpaywall_location_candidates(urls, unpaywall.get("best_oa_location"))
+        add_unpaywall_location_candidate_details(direct_candidates, unpaywall.get("best_oa_location"))
         for location in unpaywall.get("oa_locations") or []:
-            add_unpaywall_location_candidates(urls, location)
-        extend_pdf_candidate_urls(urls, unpaywall.get("pdf_url"))
+            add_unpaywall_location_candidate_details(direct_candidates, location)
+        append_pdf_candidate(direct_candidates, unpaywall.get("pdf_url"), "unpaywall_url_for_pdf", include_publisher_rules=False)
         for pdf_url in unpaywall.get("pdf_urls") or []:
-            extend_pdf_candidate_urls(urls, pdf_url)
-        for landing_url in unpaywall.get("landing_urls") or []:
-            urls.extend(candidate_urls_from_landing_url(landing_url))
+            append_pdf_candidate(direct_candidates, pdf_url, "unpaywall_url_for_pdf", include_publisher_rules=False)
 
-    add_europe_pmc_candidates(urls, item)
-    add_doaj_candidates(urls, item)
-    add_arxiv_candidates(urls, item)
+    candidates.extend(direct_candidates)
+    add_pmc_direct_candidate_details(candidates, item)
+    add_europe_pmc_candidate_details(candidates, item)
+    add_doaj_candidate_details(candidates, item)
 
     if is_oa_record:
-        urls.extend(candidate_urls_from_landing_url(primary_location.get("landing_page_url")))
-        urls.extend(candidate_urls_from_landing_url(best_oa_location.get("landing_page_url")))
+        for landing_url in (
+            primary_location.get("landing_page_url"),
+            best_oa_location.get("landing_page_url"),
+        ):
+            for derived_url in candidate_urls_from_landing_url(landing_url):
+                append_pdf_candidate(publisher_candidates, derived_url, "publisher_rule", include_publisher_rules=False)
         for key in ("source_url", "url", "landing_url", "download_source_url"):
-            urls.extend(candidate_urls_from_landing_url(item.get(key)))
+            for derived_url in candidate_urls_from_landing_url(item.get(key)):
+                append_pdf_candidate(publisher_candidates, derived_url, "publisher_rule", include_publisher_rules=False)
+    if unpaywall:
+        for landing_url in unpaywall.get("landing_urls") or []:
+            for derived_url in candidate_urls_from_landing_url(landing_url):
+                append_pdf_candidate(publisher_candidates, derived_url, "publisher_rule", include_publisher_rules=False)
 
-    return [
-        url
-        for url in unique_candidate_urls(urls)
-        if looks_like_pdf_url(url) and not is_shadow_library_url(url)
-    ]
+    candidates.extend(publisher_candidates)
+    return prioritize_pdf_candidate_details(candidates)
 
 
 def verify_pdf_url_with_head(
     session: requests.Session,
     url: str,
     config: CrawlConfig,
+    stats: CrawlStats | None = None,
 ) -> tuple[bool, str | None]:
     """Docstring."""
-    del config
     if is_shadow_library_url(url):
         return False, "shadow_library"
     if not looks_like_pdf_url(url):
         return False, "not_pdf"
+    if stop_requested(config):
+        return False, "stopped"
 
     head = getattr(session, "head", None)
     if not callable(head):
         return True, None
 
+    emit_pdf_progress(
+        config,
+        stats,
+        "pdf_head_check",
+        f"正在检查 PDF 候选：{host_label(url)}",
+        f"Checking PDF candidate: {host_label(url)}",
+        detail=url,
+    )
     try:
-        response = head(url, timeout=(10, 30), allow_redirects=True)
+        response = head(url, timeout=PDF_HEAD_TIMEOUT, allow_redirects=True)
     except requests.RequestException:
         # Some publishers reject HEAD while serving the PDF through GET. Let the
         # streamed download validate content type, bytes, and PDF structure.
@@ -2483,7 +3098,10 @@ def verify_pdf_url_with_head(
 
     status_code = getattr(response, "status_code", None)
     if status_code in {401, 402, 403}:
-        return False, "blocked_or_login"
+        # Some OA hosts block HEAD for bot/access-control reasons while serving
+        # the PDF through GET. Let the streamed GET classify real 401/403/login
+        # responses as blocked_or_login.
+        return True, "head_blocked_or_login"
     if status_code in {405, 429}:
         return True, None
     if status_code and (status_code < 200 or status_code >= 400):
@@ -2514,62 +3132,103 @@ def looks_like_blocked_or_login_content(content_type: str, first_chunk: bytes) -
         "access denied",
         "institutional access",
         "captcha",
+        "cloudflare",
+        "cf-browser-verification",
+        "checking your browser",
         "paywall",
     )
     return any(token in sample for token in blocked_tokens)
+
+
+def head_rejection_allows_get_sniff(reason: str | None) -> bool:
+    """Return whether a HEAD rejection is weak enough to verify with GET."""
+    return reason in {"not_pdf", "head_unavailable", "head_blocked_or_login"}
 
 
 def resolve_open_access_pdf(
     record: dict[str, Any],
     session: requests.Session,
     config: CrawlConfig,
+    stats: CrawlStats | None = None,
 ) -> PdfResolution:
     """Docstring."""
     unpaywall = record.get("unpaywall")
     unpaywall_data = unpaywall if isinstance(unpaywall, dict) else None
-    candidates = iter_pdf_candidates(record, unpaywall_data)
+    candidate_details = iter_pdf_candidate_details(record, unpaywall_data)
+    if not candidate_details:
+        candidate_details = [
+            PdfCandidate(url, "semantic_scholar_openAccessPdf")
+            for url in fetch_semantic_scholar_pdf_candidates(session, record, config, stats)
+        ]
+    if not candidate_details:
+        candidate_details = resolve_landing_page_pdf_candidate_details(record, unpaywall_data, session, config, stats)
+    candidates = candidate_details_to_urls(candidate_details)
+    metadata_details = candidate_details_for_metadata(candidate_details)
     if not candidates:
-        candidates = resolve_semantic_scholar_pdf_candidates(record, session, config)
-    if not candidates:
-        candidates = resolve_landing_page_pdf_candidates(record, unpaywall_data, session, config)
-    if not candidates:
-        return PdfResolution(None, [], "no_oa_pdf" if config.oa_only else "no_candidate")
+        return PdfResolution(None, [], "no_oa_pdf" if config.oa_only else "no_candidate", [])
 
+    emit_pdf_progress(
+        config,
+        stats,
+        "pdf_candidates",
+        f"找到 {len(candidates)} 个合法 OA PDF 候选，开始校验",
+        f"Found {len(candidates)} legal OA PDF candidate(s); verifying",
+        detail=str(len(candidates)),
+    )
     last_reason: str | None = None
+    rejection_reasons: dict[str, str] = {}
     for url in candidates:
-        ok, reason = verify_pdf_url_with_head(session, url, config)
+        if stop_requested(config):
+            return PdfResolution(None, candidates, "stopped", metadata_details, rejection_reasons)
+        ok, reason = verify_pdf_url_with_head(session, url, config, stats)
         if ok:
-            return PdfResolution(url, candidates, None)
+            return PdfResolution(url, candidates, None, metadata_details, rejection_reasons)
         last_reason = reason
+        if reason:
+            rejection_reasons[url] = reason
         logging.debug("Rejected OA PDF candidate before download: %s | %s", reason, url)
 
-    api_candidates = [
-        url
-        for url in resolve_semantic_scholar_pdf_candidates(record, session, config)
+    api_candidate_details = [
+        PdfCandidate(url, "semantic_scholar_openAccessPdf")
+        for url in fetch_semantic_scholar_pdf_candidates(session, record, config, stats)
         if url not in candidates
     ]
-    for url in api_candidates:
-        candidates.append(url)
-        ok, reason = verify_pdf_url_with_head(session, url, config)
+    for candidate in api_candidate_details:
+        candidate_details.append(candidate)
+        candidates.append(candidate.url)
+        metadata_details = candidate_details_for_metadata(candidate_details)
+        url = candidate.url
+        if stop_requested(config):
+            return PdfResolution(None, candidates, "stopped", metadata_details, rejection_reasons)
+        ok, reason = verify_pdf_url_with_head(session, url, config, stats)
         if ok:
-            return PdfResolution(url, candidates, None)
+            return PdfResolution(url, candidates, None, metadata_details, rejection_reasons)
         last_reason = reason
+        if reason:
+            rejection_reasons[url] = reason
         logging.debug("Rejected Semantic Scholar PDF candidate before download: %s | %s", reason, url)
 
-    landing_candidates = [
-        url
-        for url in resolve_landing_page_pdf_candidates(record, unpaywall_data, session, config)
-        if url not in candidates
+    landing_candidate_details = [
+        candidate
+        for candidate in resolve_landing_page_pdf_candidate_details(record, unpaywall_data, session, config, stats)
+        if candidate.url not in candidates
     ]
-    for url in landing_candidates:
-        candidates.append(url)
-        ok, reason = verify_pdf_url_with_head(session, url, config)
+    for candidate in landing_candidate_details:
+        candidate_details.append(candidate)
+        candidates.append(candidate.url)
+        metadata_details = candidate_details_for_metadata(candidate_details)
+        url = candidate.url
+        if stop_requested(config):
+            return PdfResolution(None, candidates, "stopped", metadata_details, rejection_reasons)
+        ok, reason = verify_pdf_url_with_head(session, url, config, stats)
         if ok:
-            return PdfResolution(url, candidates, None)
+            return PdfResolution(url, candidates, None, metadata_details, rejection_reasons)
         last_reason = reason
+        if reason:
+            rejection_reasons[url] = reason
         logging.debug("Rejected landing-page PDF candidate before download: %s | %s", reason, url)
 
-    return PdfResolution(None, candidates, last_reason or "not_pdf")
+    return PdfResolution(None, candidates, last_reason or "not_pdf", metadata_details, rejection_reasons)
 
 
 def validate_existing_pdf(path: Path, min_pdf_bytes: int) -> bool:
@@ -2578,7 +3237,7 @@ def validate_existing_pdf(path: Path, min_pdf_bytes: int) -> bool:
         if not path.exists() or path.stat().st_size < min_pdf_bytes:
             return False
         with path.open("rb") as fin:
-            if fin.read(4) != b"%PDF":
+            if b"%PDF-" not in fin.read(4096):
                 return False
             fin.seek(max(0, path.stat().st_size - 4096))
             if b"%%EOF" not in fin.read():
@@ -2593,18 +3252,75 @@ def validate_existing_pdf(path: Path, min_pdf_bytes: int) -> bool:
         return False
 
 
+def is_arxiv_pdf_url(url: str | None) -> bool:
+    """Return whether a URL targets arXiv's PDF endpoint."""
+    normalized = normalize_candidate_url(url)
+    if not normalized:
+        return False
+    parsed = urlparse(normalized)
+    return parsed.netloc.endswith("arxiv.org") and parsed.path.startswith("/pdf/")
+
+
+def enforce_arxiv_download_delay(config: CrawlConfig) -> bool:
+    """Keep arXiv PDF downloads single-paced with at least three seconds between GETs."""
+    now = time.monotonic()
+    last = getattr(enforce_arxiv_download_delay, "_last_download_at", None)
+    if last is not None:
+        remaining = ARXIV_MIN_DOWNLOAD_INTERVAL - (now - float(last))
+        if remaining > 0 and sleep_or_stop(remaining, config):
+            return True
+    setattr(enforce_arxiv_download_delay, "_last_download_at", time.monotonic())
+    return stop_requested(config)
+
+
+def response_content_type(response: Any) -> str:
+    """Return a response content type independent of header casing."""
+    headers = getattr(response, "headers", {}) or {}
+    return str(headers.get("content-type") or headers.get("Content-Type") or "").lower()
+
+
+def response_content_disposition(response: Any) -> str:
+    """Return a response content disposition independent of header casing."""
+    headers = getattr(response, "headers", {}) or {}
+    return str(headers.get("content-disposition") or headers.get("Content-Disposition") or "").lower()
+
+
+def content_disposition_names_pdf(content_disposition: str) -> bool:
+    """Return whether Content-Disposition explicitly names a PDF attachment."""
+    return bool(re.search(r"filename\*?=[^;]*\.pdf(?:[\"']|\s|;|$)", content_disposition.casefold()))
+
+
+def limited_html_from_response(first_chunk: bytes, chunks: Any) -> str:
+    """Read up to the landing-page HTML cap from a streamed response."""
+    body = bytearray(first_chunk[:HTML_LANDING_PAGE_MAX_BYTES])
+    for chunk in chunks:
+        if not chunk:
+            continue
+        remaining = HTML_LANDING_PAGE_MAX_BYTES - len(body)
+        if remaining <= 0:
+            break
+        body.extend(chunk[:remaining])
+        if len(body) >= HTML_LANDING_PAGE_MAX_BYTES:
+            break
+    return bytes(body).decode("utf-8", errors="ignore")
+
+
 def download_pdf(
     session: requests.Session,
     pdf_url: str,
     doi_or_url: str,
     config: CrawlConfig,
     out_dir: Path | None = None,
+    candidate_source: str | None = None,
+    stats: CrawlStats | None = None,
 ) -> DownloadResult:
     """Docstring."""
     if stop_requested(config):
-        return DownloadResult(None, "stopped", pdf_url)
+        return DownloadResult(None, "stopped", pdf_url, candidate_source=candidate_source)
     if is_shadow_library_url(pdf_url):
-        return DownloadResult(None, "failed", pdf_url, "shadow_library")
+        return DownloadResult(None, "failed", pdf_url, "shadow_library", candidate_source=candidate_source, failure_reason="shadow_library")
+    if is_arxiv_pdf_url(pdf_url) and enforce_arxiv_download_delay(config):
+        return DownloadResult(None, "stopped", pdf_url, candidate_source=candidate_source)
 
     target_dir = out_dir or config.out_dir
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -2615,54 +3331,130 @@ def download_pdf(
             status="already_exists",
             source_url=pdf_url,
             size_bytes=path.stat().st_size,
+            candidate_source=candidate_source,
         )
 
     tmp_path = path.with_suffix(".part")
     try:
-        with session.get(
-            pdf_url,
-            timeout=(15, 45),
-            stream=True,
-            allow_redirects=True,
-        ) as response:
-            if response.status_code in {401, 402, 403}:
-                return DownloadResult(None, "blocked_or_login", pdf_url, f"http_{response.status_code}")
-            if response.status_code != 200:
-                return DownloadResult(None, "request_error", pdf_url, f"http_{response.status_code}")
+        last_result: DownloadResult | None = None
+        for attempt in range(3):
+            if stop_requested(config):
+                return DownloadResult(None, "stopped", pdf_url, candidate_source=candidate_source)
+            emit_pdf_progress(
+                config,
+                stats,
+                "pdf_get",
+                f"正在下载 PDF 候选：{host_label(pdf_url)}（第 {attempt + 1} 次）",
+                f"Downloading PDF candidate from {host_label(pdf_url)} (attempt {attempt + 1})",
+                detail=pdf_url,
+            )
+            with session.get(
+                pdf_url,
+                timeout=PDF_DOWNLOAD_TIMEOUT,
+                stream=True,
+                allow_redirects=True,
+            ) as response:
+                status_code = getattr(response, "status_code", None)
+                content_type = response_content_type(response)
+                content_disposition = response_content_disposition(response)
+                final_url = normalize_candidate_url(getattr(response, "url", None)) or pdf_url
+                if status_code in {401, 402, 403}:
+                    return DownloadResult(None, "blocked_or_login", pdf_url, f"http_{status_code}", candidate_source=candidate_source, http_status=status_code, content_type=content_type, final_url=final_url, failure_reason="blocked_or_login")
+                if status_code == 429:
+                    retry_after = getattr(response, "headers", {}).get("Retry-After") if getattr(response, "headers", None) else None
+                    try:
+                        delay = float(retry_after) if retry_after else 2 ** attempt
+                    except (TypeError, ValueError):
+                        delay = 2 ** attempt
+                    last_result = DownloadResult(None, "request_error", pdf_url, f"http_{status_code}", candidate_source=candidate_source, http_status=status_code, content_type=content_type, final_url=final_url, failure_reason="rate_limited")
+                    emit_pdf_progress(
+                        config,
+                        stats,
+                        "pdf_rate_limited",
+                        f"PDF 来源限流，稍后重试：{host_label(pdf_url)}",
+                        f"PDF host rate-limited the request; retrying: {host_label(pdf_url)}",
+                        detail=pdf_url,
+                    )
+                    if attempt < 2 and not sleep_or_stop(delay, config):
+                        continue
+                    return last_result
+                if status_code not in {200, 206}:
+                    return DownloadResult(None, "request_error", pdf_url, f"http_{status_code}", candidate_source=candidate_source, http_status=status_code, content_type=content_type, final_url=final_url, failure_reason=f"http_{status_code}")
 
-            content_type = response.headers.get("content-type", "").lower()
-            chunks = response.iter_content(chunk_size=PDF_CHUNK_SIZE)
-            first_chunk = next(chunks, b"")
-            if not first_chunk.startswith(b"%PDF") and "pdf" not in content_type:
-                if looks_like_blocked_or_login_content(content_type, first_chunk):
-                    return DownloadResult(None, "blocked_or_login", pdf_url, content_type or "html_login")
-                return DownloadResult(None, "not_pdf", pdf_url, content_type or "missing_content_type")
+                chunks = response.iter_content(chunk_size=PDF_CHUNK_SIZE)
+                first_chunk = next(chunks, b"")
+                first_4kb = first_chunk[:4096]
+                looks_like_html_body = (
+                    first_chunk.lstrip().lower().startswith(b"<!doctype html")
+                    or first_chunk.lstrip().lower().startswith(b"<html")
+                )
+                if looks_like_html_body:
+                    if looks_like_blocked_or_login_content(content_type or "text/html", first_chunk):
+                        return DownloadResult(None, "blocked_or_login", pdf_url, content_type or "html_login", candidate_source=candidate_source, http_status=status_code, content_type=content_type, final_url=final_url, failure_reason="blocked_or_login")
+                    html_text = limited_html_from_response(first_chunk, chunks)
+                    discovered = extract_pdf_candidates_from_html(final_url, html_text)
+                    if discovered:
+                        emit_pdf_progress(
+                            config,
+                            stats,
+                            "pdf_discovered",
+                            f"页面中发现新的 PDF 链接：{len(discovered)} 个",
+                            f"Discovered {len(discovered)} PDF link(s) in the landing page",
+                            detail=final_url,
+                        )
+                    return DownloadResult(None, "not_pdf", pdf_url, content_type or "html", candidate_source=candidate_source, http_status=status_code, content_type=content_type, final_url=final_url, failure_reason="html_landing_page", discovered_candidates=discovered)
+                is_pdf_response = (
+                    b"%PDF-" in first_4kb
+                    or "pdf" in content_type
+                    or content_type.startswith("application/octet-stream")
+                    or content_disposition_names_pdf(content_disposition)
+                )
+                if not is_pdf_response:
+                    if looks_like_blocked_or_login_content(content_type, first_chunk):
+                        return DownloadResult(None, "blocked_or_login", pdf_url, content_type or "html_login", candidate_source=candidate_source, http_status=status_code, content_type=content_type, final_url=final_url, failure_reason="blocked_or_login")
+                    if "text/html" in content_type or "application/xhtml" in content_type:
+                        html_text = limited_html_from_response(first_chunk, chunks)
+                        discovered = extract_pdf_candidates_from_html(final_url, html_text)
+                        if discovered:
+                            emit_pdf_progress(
+                                config,
+                                stats,
+                                "pdf_discovered",
+                                f"页面中发现新的 PDF 链接：{len(discovered)} 个",
+                                f"Discovered {len(discovered)} PDF link(s) in the landing page",
+                                detail=final_url,
+                            )
+                        return DownloadResult(None, "not_pdf", pdf_url, content_type or "html", candidate_source=candidate_source, http_status=status_code, content_type=content_type, final_url=final_url, failure_reason="html_landing_page", discovered_candidates=discovered)
+                    return DownloadResult(None, "not_pdf", pdf_url, content_type or "missing_content_type", candidate_source=candidate_source, http_status=status_code, content_type=content_type, final_url=final_url, failure_reason="not_pdf")
 
-            with tmp_path.open("wb") as fout:
-                if first_chunk:
-                    fout.write(first_chunk)
-                for chunk in chunks:
-                    if stop_requested(config):
-                        return DownloadResult(None, "stopped", pdf_url)
-                    if chunk:
-                        fout.write(chunk)
+                with tmp_path.open("wb") as fout:
+                    if first_chunk:
+                        fout.write(first_chunk)
+                    for chunk in chunks:
+                        if stop_requested(config):
+                            return DownloadResult(None, "stopped", pdf_url, candidate_source=candidate_source, http_status=status_code, content_type=content_type, final_url=final_url, failure_reason="stopped")
+                        if chunk:
+                            fout.write(chunk)
+                break
+        else:
+            return last_result or DownloadResult(None, "request_error", pdf_url, candidate_source=candidate_source, failure_reason="request_error")
 
         size = tmp_path.stat().st_size
         if size < config.min_pdf_bytes:
             tmp_path.unlink(missing_ok=True)
-            return DownloadResult(None, "too_small", pdf_url, f"{size}_bytes")
+            return DownloadResult(None, "too_small", pdf_url, f"{size}_bytes", candidate_source=candidate_source, failure_reason="too_small")
 
         if not validate_existing_pdf(tmp_path, config.min_pdf_bytes):
             tmp_path.unlink(missing_ok=True)
-            return DownloadResult(None, "invalid_pdf", pdf_url)
+            return DownloadResult(None, "invalid_pdf", pdf_url, candidate_source=candidate_source, failure_reason="invalid_pdf")
 
         tmp_path.replace(path)
-        return DownloadResult(str(path), "downloaded", pdf_url, size_bytes=size)
+        return DownloadResult(str(path), "downloaded", pdf_url, size_bytes=size, candidate_source=candidate_source)
 
     except requests.RequestException as exc:
-        return DownloadResult(None, "request_error", pdf_url, str(exc))
+        return DownloadResult(None, "request_error", pdf_url, str(exc), candidate_source=candidate_source, failure_reason="request_error")
     except OSError as exc:
-        return DownloadResult(None, "file_error", pdf_url, str(exc))
+        return DownloadResult(None, "file_error", pdf_url, str(exc), candidate_source=candidate_source, failure_reason="file_error")
     finally:
         if tmp_path.exists():
             tmp_path.unlink(missing_ok=True)
@@ -2681,29 +3473,125 @@ def download_first_available_pdf(
     record = dict(item)
     if unpaywall:
         record["unpaywall"] = unpaywall
-    resolution = resolve_open_access_pdf(record, session, config)
-    candidates = resolution.candidates
+    resolution = resolve_open_access_pdf(record, session, config, stats)
+    candidate_details = [
+        PdfCandidate(detail["url"], detail["candidate_source"])
+        for detail in resolution.candidate_details
+        if detail.get("url") and detail.get("candidate_source")
+    ]
+    if not candidate_details:
+        candidate_details = [PdfCandidate(url, "publisher_rule") for url in resolution.candidates]
+    candidates = candidate_details_to_urls(candidate_details)
     allow_get_sniff = bool(candidates and resolution.reason == "not_pdf")
     if not resolution.url and not allow_get_sniff:
         return DownloadResult(None, "failed", reason=resolution.reason), candidates
 
     start_index = candidates.index(resolution.url) if resolution.url else 0
+    if resolution.url:
+        resolved_index = candidates.index(resolution.url)
+        if any(
+            head_rejection_allows_get_sniff(resolution.candidate_rejection_reasons.get(url))
+            for url in candidates[:resolved_index]
+        ):
+            start_index = 0
+            allow_get_sniff = True
     last_result = DownloadResult(None, "failed", reason=resolution.reason)
-    for pdf_url in candidates[start_index:]:
-        if stop_requested(config):
-            return DownloadResult(None, "stopped"), candidates
-        if pdf_url != resolution.url and not allow_get_sniff:
-            ok, reason = verify_pdf_url_with_head(session, pdf_url, config)
-            if not ok:
-                last_result = DownloadResult(None, "failed", pdf_url, reason)
+    index = start_index
+    tried_urls: set[str] = set()
+    semantic_expanded = False
+    landing_expanded = False
+    while True:
+        while index < len(candidates):
+            pdf_url = candidates[index]
+            candidate_source = candidate_source_for_url(candidate_details, pdf_url)
+            index += 1
+            normalized_pdf_url = normalize_candidate_url(pdf_url) or pdf_url
+            if normalized_pdf_url in tried_urls:
                 continue
-        if stats is not None:
-            stats.pdf_download_attempted += 1
-        result = download_pdf(session, pdf_url, doi_or_url, config, out_dir)
-        if result.path:
-            return result, candidates
-        last_result = result
-        logging.debug("PDF candidate failed: %s | %s | %s", result.status, result.reason, pdf_url)
+            tried_urls.add(normalized_pdf_url)
+            if stop_requested(config):
+                return DownloadResult(None, "stopped"), candidates
+            head_rejection_reason = resolution.candidate_rejection_reasons.get(pdf_url)
+            should_sniff_after_head = head_rejection_allows_get_sniff(head_rejection_reason)
+            if pdf_url != resolution.url and not allow_get_sniff and not should_sniff_after_head:
+                ok, reason = verify_pdf_url_with_head(session, pdf_url, config, stats)
+                if not ok:
+                    if head_rejection_allows_get_sniff(reason):
+                        should_sniff_after_head = True
+                    else:
+                        last_result = DownloadResult(None, "failed", pdf_url, reason, candidate_source=candidate_source, failure_reason=reason)
+                        emit_pdf_progress(
+                            config,
+                            stats,
+                            "pdf_candidate_rejected",
+                            f"跳过不可用 PDF 候选：{reason or 'unknown'}",
+                            f"Skipped unusable PDF candidate: {reason or 'unknown'}",
+                            detail=pdf_url,
+                        )
+                        continue
+            if stats is not None:
+                stats.pdf_download_attempted += 1
+            emit_pdf_progress(
+                config,
+                stats,
+                "pdf_candidate_download",
+                f"尝试 PDF 候选 {index}/{len(candidates)}：{host_label(pdf_url)}",
+                f"Trying PDF candidate {index}/{len(candidates)}: {host_label(pdf_url)}",
+                detail=pdf_url,
+            )
+            result = download_pdf(session, pdf_url, doi_or_url, config, out_dir, candidate_source, stats)
+            if result.path:
+                return result, candidates
+            for discovered_url in result.discovered_candidates:
+                normalized = normalize_candidate_url(discovered_url)
+                if not normalized or normalized in candidates or is_shadow_library_url(normalized) or not looks_like_pdf_url(normalized):
+                    continue
+                candidate_details.append(PdfCandidate(normalized, "landing_page_meta"))
+            candidate_details = prioritize_pdf_candidate_details(candidate_details)
+            candidates = candidate_details_to_urls(candidate_details)
+            index = 0
+            allow_get_sniff = allow_get_sniff or bool(result.discovered_candidates)
+            last_result = result
+            emit_pdf_progress(
+                config,
+                stats,
+                "pdf_candidate_failed",
+                f"PDF 候选失败，继续尝试下一个：{result.reason or result.status}",
+                f"PDF candidate failed; trying the next one: {result.reason or result.status}",
+                detail=pdf_url,
+            )
+            logging.debug("PDF candidate failed: %s | %s | %s", result.status, result.reason, pdf_url)
+
+        if not semantic_expanded:
+            semantic_expanded = True
+            before = len(candidate_details)
+            add_unique_pdf_candidates(
+                candidate_details,
+                [
+                    PdfCandidate(url, "semantic_scholar_openAccessPdf")
+                    for url in fetch_semantic_scholar_pdf_candidates(session, record, config, stats)
+                ],
+            )
+            candidates = candidate_details_to_urls(candidate_details)
+            if len(candidate_details) > before:
+                allow_get_sniff = True
+                index = 0
+                continue
+
+        if not landing_expanded:
+            landing_expanded = True
+            before = len(candidate_details)
+            add_unique_pdf_candidates(
+                candidate_details,
+                resolve_landing_page_pdf_candidate_details(record, unpaywall, session, config, stats),
+            )
+            candidates = candidate_details_to_urls(candidate_details)
+            if len(candidate_details) > before:
+                allow_get_sniff = True
+                index = 0
+                continue
+
+        break
 
     return last_result, candidates
 
@@ -2819,10 +3707,20 @@ def append_backfill_record(
     """Append a metadata-compatible status update without rewriting older records."""
     updated = dict(record)
     updated["pdf_candidates"] = candidates
+    updated["pdf_candidate_details"] = candidate_details_for_urls(
+        candidates,
+        iter_pdf_candidate_details(record, record.get("unpaywall") if isinstance(record.get("unpaywall"), dict) else None),
+    )
     updated["download_status"] = status
     updated["download_reason"] = None if result.path else result.reason or status
     updated["download_source_url"] = result.source_url
     updated["resolver_version"] = PDF_RESOLVER_VERSION
+    updated["last_candidate_url"] = None if result.path else result.source_url
+    updated["candidate_source"] = result.candidate_source
+    updated["http_status"] = result.http_status
+    updated["content_type"] = result.content_type
+    updated["final_url"] = result.final_url
+    updated["failure_reason"] = None if result.path else result.failure_reason or result.reason or status
     updated["pdf_retry_attempts"] = next_pdf_retry_attempt(record)
     updated["last_pdf_retry_at"] = datetime.now().isoformat(timespec="seconds")
     updated["last_pdf_failure_reason"] = None if result.path else result.reason or status
@@ -3081,9 +3979,16 @@ def build_record(
         "open_access": item.get("open_access"),
         "unpaywall": unpaywall,
         "pdf_candidates": pdf_candidates,
+        "pdf_candidate_details": candidate_details_for_urls(pdf_candidates, iter_pdf_candidate_details(item, unpaywall)),
         "download_status": download.status,
         "download_reason": download.reason,
         "download_source_url": download.source_url,
+        "last_candidate_url": None if download.path else download.source_url,
+        "candidate_source": download.candidate_source,
+        "http_status": download.http_status,
+        "content_type": download.content_type,
+        "final_url": download.final_url,
+        "failure_reason": None if download.path else download.failure_reason or download.reason or download.status,
         "local_pdf_path": local_pdf_path,
         "local_pdf_size_bytes": download.size_bytes,
         "pdf_retry_attempts": retry_attempts,

@@ -231,6 +231,26 @@ class PdfBackfillTests(unittest.TestCase):
         self.assertTrue(core.record_needs_pdf_retry(old_record, now=core.datetime(2026, 6, 5, 1, 0, 0)))
         self.assertFalse(core.record_needs_pdf_retry(current_record, now=core.datetime(2026, 6, 5, 1, 0, 0)))
 
+    def test_retry_needed_when_resolver_version_changes_to_v3(self) -> None:
+        old_record = {
+            "doi": "10.1/old-v2",
+            "download_status": "not_open_access",
+            "resolver_version": "oa_pdf_resolver_v2",
+            "pdf_retry_attempts": 99,
+            "last_pdf_retry_at": "2026-06-05T00:00:00",
+        }
+        current_record = {
+            "doi": "10.1/current-v3",
+            "download_status": "not_open_access",
+            "resolver_version": "oa_pdf_resolver_v3",
+            "pdf_retry_attempts": core.MAX_PERMANENT_PDF_RETRY_ATTEMPTS,
+            "last_pdf_retry_at": "2026-06-05T00:00:00",
+        }
+
+        self.assertEqual(core.PDF_RESOLVER_VERSION, "oa_pdf_resolver_v3")
+        self.assertTrue(core.record_needs_pdf_retry(old_record, now=core.datetime(2026, 6, 5, 1, 0, 0)))
+        self.assertFalse(core.record_needs_pdf_retry(current_record, now=core.datetime(2026, 6, 5, 1, 0, 0)))
+
     def test_retry_policy_keeps_transient_failures_eligible_without_bypassing_permanent_blocks(self) -> None:
         now = core.datetime(2026, 6, 26, 12, 0, 0)
         transient = {

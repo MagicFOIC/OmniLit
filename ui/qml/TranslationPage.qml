@@ -7,6 +7,8 @@ Item {
     property var tourHost: null
     property var selectedGlossaries: []
     property bool restoringSettings: true
+    property bool modelKeySettingsOpen: false
+    property bool advancedTranslationSettingsOpen: false
     readonly property int resultPaneMinimumHeight: metrics.compact ? 135 : 170
     readonly property int progressPaneHeight: metrics.compact ? 58 : 66
     readonly property real translationFormPaneHeight: Math.max(metrics.compact ? 320 : 380, form.implicitHeight + metrics.cardPadding * 2)
@@ -207,6 +209,50 @@ Item {
                         ]
                         onActivated: root.scheduleSave()
                     }
+                    Text { text: "API"; color: theme.textMuted }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Label {
+                            text: root.apiConfigured() ? "API 已配置" : "需要配置 API Key"
+                            color: root.apiConfigured() ? theme.success : theme.warning
+                            background: Rectangle { color: theme.surfaceSoft; radius: 5 }
+                            padding: 6
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            text: "使用默认设置即可开始翻译"
+                            color: theme.textMuted
+                            elide: Text.ElideRight
+                        }
+                        PillButton {
+                            text: root.modelKeySettingsOpen ? "收起" : "配置 API Key"
+                            onClicked: root.modelKeySettingsOpen = !root.modelKeySettingsOpen
+                        }
+                    }
+                    Item { Layout.columnSpan: 2; Layout.fillWidth: true; height: 1 }
+                    RowLayout {
+                        Layout.columnSpan: 2
+                        Layout.fillWidth: true
+                        Item { Layout.fillWidth: true }
+                        PillButton { text: translationController.running ? i18n.text("running") : i18n.text("start_translate"); primary: true; busy: translationController.running; onClicked: translationController.start(config()) }
+                        PillButton { text: i18n.text("stop"); visible: translationController.running; enabled: translationController.running; onClicked: translationController.stop() }
+                    }
+                    ColumnLayout {
+                        Layout.columnSpan: 2
+                        Layout.fillWidth: true
+                        spacing: 8
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Text { text: "模型与 Key 设置"; color: theme.text; font.weight: Font.Bold }
+                            Text { Layout.fillWidth: true; text: root.apiConfigured() ? "API 已配置" : "需要配置 API Key"; color: theme.textMuted; elide: Text.ElideRight }
+                            PillButton { text: root.modelKeySettingsOpen ? "收起" : "展开"; onClicked: root.modelKeySettingsOpen = !root.modelKeySettingsOpen }
+                        }
+                        GridLayout {
+                            Layout.fillWidth: true
+                            visible: root.modelKeySettingsOpen
+                            columns: 2
+                            columnSpacing: 8
+                            rowSpacing: 6
                     Text { text: i18n.text("model_profile"); color: theme.textMuted }
                     ComboBox {
                         id: profile; Layout.fillWidth: true; model: translationController.modelProfiles; textRole: "label"
@@ -224,8 +270,11 @@ Item {
                         TextField { id: apiKey; Layout.fillWidth: true; echoMode: showKey.checked ? TextInput.Normal : TextInput.Password }
                         ModernCheckBox { id: showKey; text: i18n.text("show") }
                     }
+                        }
+                    }
                 }
                 RowLayout {
+                    visible: root.modelKeySettingsOpen
                     Item { Layout.fillWidth: true }
                     PillButton { text: i18n.text("remember_key"); enabled: !!apiKey.text; onClicked: rememberDialog.open() }
                     PillButton { text: i18n.text("unlock"); enabled: translationController.rememberedKeyExists; onClicked: unlockDialog.open() }
@@ -233,6 +282,16 @@ Item {
                     PillButton { text: translationController.defaultKeyLoaded ? i18n.text("unlocked") : "默认 API Key"; onClicked: translationController.unlockBundledDefaultKey() }
                 }
                 RowLayout {
+                    Layout.fillWidth: true
+                    Text { text: "高级翻译设置"; color: theme.text; font.weight: Font.Bold }
+                    Text { Layout.fillWidth: true; text: "批大小、缓存、摘要页、参考文献、术语表"; color: theme.textMuted; elide: Text.ElideRight }
+                    PillButton { text: root.advancedTranslationSettingsOpen ? "收起" : "展开"; onClicked: root.advancedTranslationSettingsOpen = !root.advancedTranslationSettingsOpen }
+                }
+                Flow {
+                    Layout.fillWidth: true
+                    visible: root.advancedTranslationSettingsOpen
+                    spacing: 8
+                    width: parent.width
                     Text { text: i18n.text("batch_size"); color: theme.textMuted }
                     SpinBox { id: batchSize; from: 1; to: 32; value: 3; editable: true; onValueChanged: root.scheduleSave() }
                     Text { text: i18n.text("batch_chars"); color: theme.textMuted }
@@ -244,15 +303,15 @@ Item {
                     ModernCheckBox { id: summary; text: i18n.text("summary_page"); checked: true; onToggled: root.scheduleSave() }
                     ModernCheckBox { id: references; text: i18n.text("translate_refs"); onToggled: root.scheduleSave() }
                     ModernCheckBox { id: headerFooter; text: i18n.text("translate_headers"); onToggled: root.scheduleSave() }
-                    Item { Layout.fillWidth: true }
                 }
                 RowLayout {
+                    visible: root.advancedTranslationSettingsOpen
                     Text { text: i18n.text("glossary"); color: theme.textMuted }
                     Text { text: i18n.formatText("selected_count", { count: selectedGlossaries.length }); color: theme.text }
                     PillButton { text: i18n.text("select_glossary"); onClicked: glossaryDialog.open() }
                     Item { Layout.fillWidth: true }
-                    PillButton { text: translationController.running ? i18n.text("running") : i18n.text("start_translate"); primary: true; busy: translationController.running; onClicked: translationController.start(config()) }
-                    PillButton { text: i18n.text("stop"); enabled: translationController.running; onClicked: translationController.stop() }
+                    PillButton { visible: false; text: translationController.running ? i18n.text("running") : i18n.text("start_translate"); primary: true; busy: translationController.running; onClicked: translationController.start(config()) }
+                    PillButton { visible: false; text: i18n.text("stop"); enabled: translationController.running; onClicked: translationController.stop() }
                 }
                 StatusBanner { Layout.fillWidth: true; text: translationController.statusText; busy: translationController.running }
                 }
@@ -363,6 +422,9 @@ Item {
     }
     function targetLangIndex(value) {
         return value === "en" ? 1 : 0
+    }
+    function apiConfigured() {
+        return translationController.defaultKeyLoaded || translationController.rememberedKeyExists || apiKey.text.length > 0
     }
     function config() {
         return { translationDir:translationDir.text, model:modelId.text, baseUrl:baseUrl.text, apiKey:apiKey.text,

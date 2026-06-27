@@ -82,6 +82,34 @@ class DownloadSourceTests(unittest.TestCase):
         self.assertEqual(item["primary_location"]["source"]["issn"], ["2470-1343"])
         self.assertTrue(item["open_access"]["is_oa"])
 
+    def test_crossref_pdf_link_without_content_type_is_kept(self) -> None:
+        item = core.normalize_crossref_item({
+            "DOI": "10.1234/crossref-pdf",
+            "URL": "https://doi.org/10.1234/crossref-pdf",
+            "title": ["Crossref PDF by URL"],
+            "license": [{"URL": "https://creativecommons.org/licenses/by/4.0/"}],
+            "link": [
+                {"URL": "https://publisher.test/download?format=pdf"},
+                {"URL": "https://publisher.test/supplement", "content-type": "text/html"},
+            ],
+        })
+
+        self.assertEqual(item["primary_location"]["pdf_url"], "https://publisher.test/download?format=pdf")
+        self.assertEqual(core.iter_pdf_candidates(item, None), ["https://publisher.test/download?format=pdf"])
+        self.assertEqual(core.iter_pdf_candidate_details(item, None)[0].candidate_source, "publisher_rule")
+
+    def test_crossref_resource_primary_pdf_is_kept(self) -> None:
+        item = core.normalize_crossref_item({
+            "DOI": "10.1234/resource-pdf",
+            "URL": "https://doi.org/10.1234/resource-pdf",
+            "title": ["Crossref resource PDF"],
+            "license": [{"URL": "https://creativecommons.org/licenses/by/4.0/"}],
+            "resource": {"primary": {"URL": "https://publisher.test/article.pdf"}},
+        })
+
+        self.assertEqual(item["primary_location"]["pdf_url"], "https://publisher.test/article.pdf")
+        self.assertEqual(core.iter_pdf_candidates(item, None), ["https://publisher.test/article.pdf"])
+
     def test_doaj_search_normalizes_metadata(self) -> None:
         class Response:
             @staticmethod
@@ -189,12 +217,69 @@ class DownloadSourceTests(unittest.TestCase):
         self.assertEqual(item["primary_location"]["pdf_url"], "europepmc.test/article.pdf")
         self.assertEqual(
             core.iter_pdf_candidates(item, None),
-            ["https://europepmc.test/article.pdf"],
+            [
+                "https://pmc.ncbi.nlm.nih.gov/articles/PMC123/pdf/",
+                "https://europepmc.test/article.pdf",
+            ],
         )
         self.assertEqual(
             item["fullTextUrlList"]["fullTextUrl"][0]["url"],
             "europepmc.test/article.pdf",
         )
+
+    def test_europe_pmc_pmcid_adds_official_pmc_pdf_candidate(self) -> None:
+        class Response:
+            @staticmethod
+            def raise_for_status() -> None:
+                return None
+
+            @staticmethod
+            def json() -> dict:
+                return {
+                    "nextCursorMark": "next",
+                    "resultList": {
+                        "result": [{
+                            "source": "PMC",
+                            "id": "1234567",
+                            "title": "PMC open article",
+                            "pubYear": "2024",
+                            "isOpenAccess": "Y",
+                            "fullTextUrlList": {
+                                "fullTextUrl": [{
+                                    "availabilityCode": "OA",
+                                    "documentStyle": "html",
+                                    "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC1234567/",
+                                }]
+                            },
+                        }]
+                    },
+                }
+
+        class Session:
+            def get(self, *_args, **_kwargs):
+                return Response()
+
+        data = core.search_europe_pmc(Session(), "battery", core.CrawlConfig(), "*")
+        item = data["results"][0]
+
+        self.assertEqual(item["pmcid"], "PMC1234567")
+        self.assertIn(
+            "https://pmc.ncbi.nlm.nih.gov/articles/PMC1234567/pdf/",
+            core.iter_pdf_candidates(item, None),
+        )
+
+    def test_extract_pmcid_from_fulltext_url(self) -> None:
+        record = {
+            "fullTextUrlList": {
+                "fullTextUrl": [{
+                    "availabilityCode": "OA",
+                    "documentStyle": "html",
+                    "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC7654321/",
+                }]
+            }
+        }
+
+        self.assertEqual(core.extract_pmcid(record), "PMC7654321")
 
 
 if __name__ == "__main__":

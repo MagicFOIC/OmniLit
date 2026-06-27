@@ -30,17 +30,20 @@ class LiteratureLibraryQmlTests(unittest.TestCase):
         self.assertIn("literatureLibraryController.ensureLoaded()", qml)
         self.assertIn("onClicked: literatureLibraryController.refresh()", qml)
 
-    def test_library_toolbar_scrolls_horizontally_when_narrow(self) -> None:
+    def test_library_toolbar_defaults_to_simple_controls_with_collapsed_filters(self) -> None:
         qml = (ROOT / "ui" / "qml" / "LiteratureLibraryPage.qml").read_text(encoding="utf-8")
 
-        self.assertIn("id: libraryToolbarFlick", qml)
-        self.assertIn("flickableDirection: Flickable.HorizontalFlick", qml)
-        self.assertIn("contentWidth: libraryToolbarRow.implicitWidth", qml)
-        self.assertIn("WheelHandler {", qml)
-        self.assertIn("libraryToolbarFlick.contentX", qml)
-        self.assertIn("ScrollBar.horizontal: ScrollBar", qml)
-        self.assertIn("policy: ScrollBar.AlwaysOn", qml)
-        self.assertIn("id: libraryToolbarRow", qml)
+        self.assertIn("property bool libraryFiltersOpen: false", qml)
+        self.assertIn("property bool libraryToolsOpen: false", qml)
+        self.assertIn('text: root.libraryFiltersOpen ? "收起筛选" : "筛选"', qml)
+        self.assertIn('text: "已筛选 " + literatureLibraryController.filteredCount + " / " + literatureLibraryController.totalCount', qml)
+        self.assertIn('text: root.libraryToolsOpen ? "收起更多" : "更多"', qml)
+        self.assertIn("visible: root.libraryFiltersOpen", qml)
+        self.assertIn("visible: root.libraryToolsOpen", qml)
+        self.assertIn("cleanupPopup.open()", qml)
+        self.assertIn("literatureLibraryController.previewCleanup()", qml)
+        self.assertNotIn("id: libraryToolbarFlick", qml)
+        self.assertNotIn("flickableDirection: Flickable.HorizontalFlick", qml)
 
     def test_qml_exposes_pdf_extraction_reader_entry(self) -> None:
         qml_dir = ROOT / "ui" / "qml"
@@ -120,6 +123,11 @@ class LiteratureLibraryQmlTests(unittest.TestCase):
         self.assertLess(downloaded, journal_type)
         self.assertLess(favorite, compare)
         self.assertLess(compare, reader)
+        self.assertIn("id: recordMoreMenu", qml)
+        self.assertIn("onTriggered: literatureLibraryController.toggleCompare(recordDelegate.record.recordId)", qml)
+        self.assertIn("onTriggered: root.openKnowledgeGraph(index, recordDelegate.record)", qml)
+        self.assertIn("onTriggered: root.openWordCloud(index, recordDelegate.record, false)", qml)
+        self.assertIn('visible: false\n                                        enabled: !!modelData.localPdfPath && !knowledgeGraphController.loading', qml)
         self.assertNotIn("modelData.keywordsText || modelData.contentSummary", qml)
 
     def test_reader_keeps_feedback_and_export_state_per_element(self) -> None:

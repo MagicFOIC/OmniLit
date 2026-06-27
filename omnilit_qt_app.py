@@ -44,7 +44,6 @@ if __name__ == "__main__":
     raise SystemExit(run())
 
 
-# TODO: 简化界面
 # TODO: 文献提取改进
 # TODO:所有知识图谱的节点都可以做个动态效果，
 # 1可以有图例，图例选择可以高亮选中的图例，

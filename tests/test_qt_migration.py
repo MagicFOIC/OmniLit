@@ -1602,12 +1602,19 @@ class QtOnlyTests(unittest.TestCase):
         self.assertNotIn("text: translationController.previewText", translation)
         controls_row = translation[
             translation.index('Text { text: i18n.text("batch_size")') : translation.index(
-                "PillButton { text: translationController.running"
+                "StatusBanner { Layout.fillWidth: true"
             )
         ]
         for control_id in ("layoutOnly", "useCache", "summary", "references", "headerFooter"):
             self.assertIn(f"id: {control_id}", controls_row)
             self.assertLess(controls_row.index("id: maxPages"), controls_row.index(f"id: {control_id}"))
+        self.assertIn("property bool modelKeySettingsOpen: false", translation)
+        self.assertIn("property bool advancedTranslationSettingsOpen: false", translation)
+        self.assertIn('text: root.apiConfigured() ? "API 已配置" : "需要配置 API Key"', translation)
+        self.assertIn('text: "模型与 Key 设置"', translation)
+        self.assertIn('text: "高级翻译设置"', translation)
+        self.assertIn("visible: root.modelKeySettingsOpen", translation)
+        self.assertIn("visible: root.advancedTranslationSettingsOpen", translation)
         start_row = translation[
             translation.index('Text { text: i18n.text("glossary")') : translation.index(
                 "StatusBanner { Layout.fillWidth: true"
@@ -1615,7 +1622,8 @@ class QtOnlyTests(unittest.TestCase):
         ]
         self.assertIn('i18n.formatText("selected_count"', start_row)
         self.assertIn('i18n.text("select_glossary")', start_row)
-        self.assertIn("PillButton { text: translationController.running", start_row)
+        self.assertIn("PillButton { text: translationController.running", translation)
+        self.assertIn("PillButton { visible: false; text: translationController.running", start_row)
 
     def test_workspace_uses_drawer_pages_for_account_controls_and_active_task_tooltips(self) -> None:
         workspace = (ROOT / "ui" / "qml" / "Workspace.qml").read_text(encoding="utf-8")

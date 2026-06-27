@@ -37,6 +37,8 @@ Item {
     property string wordCloudScope: "record"
     property var wordCloudRecord: ({})
     property var wordCloudRecords: []
+    property bool libraryFiltersOpen: false
+    property bool libraryToolsOpen: false
     property string pendingGraphKeyword: ""
     property string pendingGraphNodeId: ""
 
@@ -116,60 +118,60 @@ Item {
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 86
+            Layout.preferredHeight: libraryToolbarContent.implicitHeight + 20
             radius: theme.radiusMedium
             color: theme.surface
             border.color: theme.border
             clip: true
 
-            Flickable {
-                id: libraryToolbarFlick
+            ColumnLayout {
+                id: libraryToolbarContent
                 anchors.fill: parent
-                anchors.leftMargin: 10
-                anchors.rightMargin: 10
-                anchors.topMargin: 10
-                anchors.bottomMargin: 18
-                clip: true
-                boundsBehavior: Flickable.StopAtBounds
-                flickableDirection: Flickable.HorizontalFlick
-                contentWidth: libraryToolbarRow.implicitWidth
-                contentHeight: libraryToolbarRow.implicitHeight
+                anchors.margins: 10
+                spacing: 8
 
-                WheelHandler {
-                    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
-                    onWheel: function(event) {
-                        var delta = event.angleDelta.y !== 0 ? event.angleDelta.y : event.angleDelta.x
-                        var maxX = Math.max(0, libraryToolbarFlick.contentWidth - libraryToolbarFlick.width)
-                        libraryToolbarFlick.contentX = Math.max(0, Math.min(maxX, libraryToolbarFlick.contentX - delta))
-                        event.accepted = true
-                    }
-                }
-
-                ScrollBar.horizontal: ScrollBar {
-                    parent: libraryToolbarFlick.parent
-                    anchors.left: libraryToolbarFlick.left
-                    anchors.right: libraryToolbarFlick.right
-                    anchors.bottom: parent.bottom
-                    anchors.bottomMargin: 4
-                    policy: ScrollBar.AlwaysOn
-                }
-
-                RowLayout {
-                    id: libraryToolbarRow
-                    spacing: 10
-
+                Flow {
+                    Layout.fillWidth: true
+                    spacing: 8
+                    width: parent.width
                     TextField {
                         id: query
-                        Layout.preferredWidth: 320
-                        Layout.minimumWidth: 320
-                        Layout.maximumWidth: 320
+                        width: Math.min(360, Math.max(220, parent.width - 380))
                         placeholderText: "搜索标题、摘要、作者或 DOI"
                         selectByMouse: true
                         onTextChanged: root.applyFilters()
                     }
+                    PillButton {
+                        text: root.libraryFiltersOpen ? "收起筛选" : "筛选"
+                        enabled: !literatureLibraryController.loading
+                        onClicked: root.libraryFiltersOpen = !root.libraryFiltersOpen
+                    }
+                    Text {
+                        text: "已筛选 " + literatureLibraryController.filteredCount + " / " + literatureLibraryController.totalCount
+                        color: theme.textMuted
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    PillButton {
+                        text: literatureLibraryController.loading && literatureLibraryController.busyAction === "refresh" ? "刷新中..." : i18n.text("refresh")
+                        enabled: !literatureLibraryController.loading
+                        onClicked: literatureLibraryController.refresh()
+                    }
+                    PillButton {
+                        text: root.libraryToolsOpen ? "收起更多" : "更多"
+                        enabled: !literatureLibraryController.loading
+                        onClicked: root.libraryToolsOpen = !root.libraryToolsOpen
+                    }
+                }
+
+                GridLayout {
+                    Layout.fillWidth: true
+                    visible: root.libraryFiltersOpen
+                    columns: metrics.narrow ? 1 : 3
+                    columnSpacing: 8
+                    rowSpacing: 8
                     ComboBox {
                         id: relevanceFilter
-                        Layout.preferredWidth: 170
+                        Layout.fillWidth: true
                         model: root.relevanceLabels
                         currentIndex: 0
                         enabled: !literatureLibraryController.loading
@@ -177,7 +179,7 @@ Item {
                     }
                     ComboBox {
                         id: pdfStatusFilter
-                        Layout.preferredWidth: 150
+                        Layout.fillWidth: true
                         model: root.statusLabels
                         currentIndex: 0
                         enabled: !literatureLibraryController.loading
@@ -185,7 +187,7 @@ Item {
                     }
                     ComboBox {
                         id: sortFilter
-                        Layout.preferredWidth: 150
+                        Layout.fillWidth: true
                         model: root.sortLabels
                         currentIndex: 0
                         enabled: !literatureLibraryController.loading
@@ -193,7 +195,7 @@ Item {
                     }
                     ComboBox {
                         id: journalTypeFilter
-                        Layout.preferredWidth: 150
+                        Layout.fillWidth: true
                         model: root.journalTypeLabels
                         currentIndex: 0
                         enabled: !literatureLibraryController.loading
@@ -201,16 +203,11 @@ Item {
                     }
                     ComboBox {
                         id: projectFilter
-                        Layout.preferredWidth: 150
+                        Layout.fillWidth: true
                         model: root.favoriteProjectFilterLabels()
                         currentIndex: 0
                         enabled: !literatureLibraryController.loading
                         onCurrentIndexChanged: root.applyFilters()
-                    }
-                    PillButton {
-                        text: "新建收藏分类"
-                        enabled: !literatureLibraryController.loading
-                        onClicked: createProjectPopup.open()
                     }
                     PillButton {
                         id: keywordGroupButton
@@ -224,8 +221,21 @@ Item {
                             text: i18n.text("no_keyword_groups")
                         }
                     }
+                }
+
+                Flow {
+                    Layout.fillWidth: true
+                    visible: root.libraryToolsOpen
+                    spacing: 8
+                    width: parent.width
+                    PillButton {
+                        text: "新建收藏分类"
+                        enabled: !literatureLibraryController.loading
+                        onClicked: createProjectPopup.open()
+                    }
                     PillButton {
                         text: literatureLibraryController.loading && literatureLibraryController.busyAction === "refresh" ? "刷新中..." : i18n.text("refresh")
+                        visible: false
                         enabled: !literatureLibraryController.loading
                         onClicked: literatureLibraryController.refresh()
                     }
@@ -349,7 +359,7 @@ Item {
                             id: recordDelegate
                             property var record: modelData
                             width: literatureList.width
-                            height: 164
+                            height: 148
                             radius: 8
                             color: ListView.isCurrentItem ? theme.navSelected : mouse.containsMouse ? theme.navHover : "transparent"
                             border.color: ListView.isCurrentItem ? theme.borderStrong : "transparent"
@@ -397,6 +407,7 @@ Item {
                                     }
                                     Label {
                                         text: "分数 " + String(modelData.relevance_score || 0)
+                                        visible: false
                                         color: theme.textSecondary
                                         background: Rectangle { color: theme.surfaceSoft; radius: 5 }
                                         padding: 5
@@ -409,13 +420,37 @@ Item {
                                     }
                                     Label {
                                         text: modelData.journalTypeLabel || "未识别"
+                                        visible: false
                                         color: theme.textSecondary
+                                        background: Rectangle { color: theme.surfaceSoft; radius: 5 }
+                                        padding: 5
+                                    }
+                                    Label {
+                                        property bool generated: {
+                                            knowledgeGraphController.statusText
+                                            return knowledgeGraphController.hasGraph(String(modelData.recordId || ""))
+                                        }
+                                        text: "图谱"
+                                        visible: generated
+                                        color: theme.success
+                                        background: Rectangle { color: theme.surfaceSoft; radius: 5 }
+                                        padding: 5
+                                    }
+                                    Label {
+                                        property bool generated: {
+                                            wordCloudController.statusText
+                                            return wordCloudController.hasCloud(String(modelData.recordId || ""))
+                                        }
+                                        text: "词云"
+                                        visible: generated
+                                        color: theme.success
                                         background: Rectangle { color: theme.surfaceSoft; radius: 5 }
                                         padding: 5
                                     }
                                     Item { Layout.fillWidth: true }
                                     Text {
                                         text: modelData.source || ""
+                                        visible: false
                                         color: theme.textMuted
                                         elide: Text.ElideRight
                                     }
@@ -430,6 +465,7 @@ Item {
                                     }
                                     PillButton {
                                         text: modelData.inCompare ? "移出对比" : "加入对比"
+                                        visible: false
                                         onClicked: literatureLibraryController.toggleCompare(modelData.recordId)
                                     }
                                     PillButton {
@@ -446,7 +482,7 @@ Item {
                                         text: knowledgeGraphController.loading
                                               && knowledgeGraphController.currentRecordId === String(modelData.recordId || "")
                                               ? "生成中..." : generated ? "知识图谱 ✓" : "知识图谱"
-                                        visible: !!modelData.localPdfPath
+                                        visible: false
                                         enabled: !!modelData.localPdfPath && !knowledgeGraphController.loading
                                         success: generated
                                         onClicked: root.openKnowledgeGraph(index, modelData)
@@ -457,10 +493,14 @@ Item {
                                             return wordCloudController.hasCloud(String(modelData.recordId || ""))
                                         }
                                         text: wordCloudController.loading && wordCloudController.currentScope === "record" && wordCloudController.currentKey === String(modelData.recordId || "") ? "生成中..." : generated ? "词云 ✓" : "词云"
-                                        visible: !!modelData.localPdfPath
+                                        visible: false
                                         enabled: !!modelData.localPdfPath && !wordCloudController.loading
                                         success: generated
                                         onClicked: root.openWordCloud(index, modelData, false)
+                                    }
+                                    PillButton {
+                                        text: "更多"
+                                        onClicked: recordMoreMenu.open()
                                     }
                                     Text {
                                         Layout.fillWidth: true
@@ -479,6 +519,23 @@ Item {
                                                 checked: root.containsValue(recordDelegate.record.favoriteProjectIds, modelData.id)
                                                 onTriggered: literatureLibraryController.toggleFavorite(recordDelegate.record.recordId, modelData.id)
                                             }
+                                        }
+                                    }
+                                    Menu {
+                                        id: recordMoreMenu
+                                        MenuItem {
+                                            text: recordDelegate.record.inCompare ? "移出对比" : "加入对比"
+                                            onTriggered: literatureLibraryController.toggleCompare(recordDelegate.record.recordId)
+                                        }
+                                        MenuItem {
+                                            text: knowledgeGraphController.hasGraph(String(recordDelegate.record.recordId || "")) ? "打开知识图谱" : "生成知识图谱"
+                                            enabled: !!recordDelegate.record.localPdfPath && !knowledgeGraphController.loading
+                                            onTriggered: root.openKnowledgeGraph(index, recordDelegate.record)
+                                        }
+                                        MenuItem {
+                                            text: wordCloudController.hasCloud(String(recordDelegate.record.recordId || "")) ? "打开词云" : "生成词云"
+                                            enabled: !!recordDelegate.record.localPdfPath && !wordCloudController.loading
+                                            onTriggered: root.openWordCloud(index, recordDelegate.record, false)
                                         }
                                     }
                                 }

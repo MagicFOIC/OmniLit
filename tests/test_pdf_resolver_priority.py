@@ -21,7 +21,7 @@ class PdfResolverPriorityTests(unittest.TestCase):
             status, content_type = self.responses[url]
             return PdfResolverPriorityTests.Response(status, content_type)
 
-    def test_priority_primary_then_oa_url_then_unpaywall_then_doaj(self) -> None:
+    def test_priority_repositories_then_doaj_then_known_publishers(self) -> None:
         record = {
             "primary_location": {"pdf_url": "https://publisher.test/primary.pdf"},
             "open_access": {"is_oa": True, "oa_url": "https://publisher.test/oa.pdf"},
@@ -41,7 +41,7 @@ class PdfResolverPriorityTests(unittest.TestCase):
                 }),
                 config,
             ).url,
-            "https://publisher.test/primary.pdf",
+            "https://repo.test/unpaywall.pdf",
         )
         self.assertEqual(
             core.resolve_open_access_pdf(
@@ -54,7 +54,7 @@ class PdfResolverPriorityTests(unittest.TestCase):
                 }),
                 config,
             ).url,
-            "https://publisher.test/oa.pdf",
+            "https://repo.test/unpaywall.pdf",
         )
         self.assertEqual(
             core.resolve_open_access_pdf(
@@ -80,7 +80,7 @@ class PdfResolverPriorityTests(unittest.TestCase):
                 }),
                 config,
             ).url,
-            "https://doaj.test/fulltext.pdf",
+            "https://repo.test/unpaywall.pdf",
         )
 
     def test_candidate_dedup_preserves_priority(self) -> None:
@@ -107,14 +107,31 @@ class PdfResolverPriorityTests(unittest.TestCase):
             [
                 "https://repo.test/record.pdf",
                 "https://repo.test/existing.pdf",
+                "https://repo.test/unpaywall.pdf",
+                "https://doaj.test/fulltext.pdf",
                 "https://publisher.test/primary.pdf",
                 "https://publisher.test/best.pdf",
                 "https://publisher.test/location.pdf",
                 "https://publisher.test/oa.pdf",
-                "https://repo.test/unpaywall.pdf",
-                "https://doaj.test/fulltext.pdf",
             ],
         )
+
+    def test_known_publisher_direct_link_falls_back_after_repository_failure(self) -> None:
+        record = {
+            "primary_location": {"pdf_url": "https://publisher.test/primary.pdf"},
+            "open_access": {"is_oa": True},
+            "unpaywall": {"is_oa": True, "pdf_url": "https://repo.test/unpaywall.pdf"},
+        }
+        resolved = core.resolve_open_access_pdf(
+            record,
+            self.Session({
+                "https://repo.test/unpaywall.pdf": (500, "text/plain"),
+                "https://publisher.test/primary.pdf": (200, "application/pdf"),
+            }),
+            core.CrawlConfig(oa_only=True),
+        )
+
+        self.assertEqual(resolved.url, "https://publisher.test/primary.pdf")
 
     def test_shadow_library_candidate_is_skipped(self) -> None:
         record = {
