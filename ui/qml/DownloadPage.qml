@@ -10,6 +10,7 @@ Item {
     property var keywordTerms: []
     property int editingKeywordIndex: -1
     property bool addingKeyword: false
+    property bool apiSettingsExpanded: false
     property var qualityValues: ["keyword", "relaxed", "balanced", "strict", "very_strict"]
     property var qualityLabelKeys: ["quality_keyword", "quality_relaxed", "quality_balanced", "quality_strict", "quality_very_strict"]
     property var qualityTipKeys: ["quality_keyword_tip", "quality_relaxed_tip", "quality_balanced_tip", "quality_strict_tip", "quality_very_strict_tip"]
@@ -33,6 +34,7 @@ Item {
 
     Component.onCompleted: {
         restoreSavedConfig()
+        restoreApiSettings()
         restoringSettings = false
         root.registerTourTargets()
     }
@@ -287,6 +289,134 @@ Item {
                             }
                         }
 
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: i18n.text("source_api_settings")
+                                    color: theme.text
+                                    font.weight: Font.Bold
+                                }
+                                PillButton {
+                                    text: root.apiSettingsExpanded ? i18n.text("source_api_collapse") : i18n.text("source_api_expand")
+                                    onClicked: root.apiSettingsExpanded = !root.apiSettingsExpanded
+                                    ModernToolTip {
+                                        placement: "bottom"
+                                        delay: 250
+                                        timeout: 7000
+                                        shown: parent.hovered
+                                        text: i18n.text("source_api_settings_tip")
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                implicitHeight: root.apiSettingsExpanded ? apiSettingsColumn.implicitHeight + 16 : 0
+                                opacity: root.apiSettingsExpanded ? 1 : 0
+                                radius: 8
+                                color: theme.surface
+                                border.color: theme.border
+                                clip: true
+                                Behavior on opacity { NumberAnimation { duration: motion.fast } }
+                                Behavior on implicitHeight { NumberAnimation { duration: motion.fast; easing.type: Easing.OutCubic } }
+
+                                ColumnLayout {
+                                    id: apiSettingsColumn
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.top: parent.top
+                                    anchors.margins: 8
+                                    spacing: 8
+
+                                    GridLayout {
+                                        Layout.fillWidth: true
+                                        columns: metrics.narrow ? 1 : 2
+                                        columnSpacing: 10
+                                        rowSpacing: 8
+
+                                        TextField {
+                                            id: openalexApiKey
+                                            Layout.fillWidth: true
+                                            echoMode: TextInput.Password
+                                            placeholderText: sourceHasKey("openalex") ? i18n.text("api_key_saved_placeholder") : i18n.text("openalex_api_key")
+                                        }
+                                        TextField {
+                                            id: crossrefMailto
+                                            Layout.fillWidth: true
+                                            placeholderText: i18n.text("crossref_mailto")
+                                        }
+                                        TextField {
+                                            id: europePmcEmail
+                                            Layout.fillWidth: true
+                                            placeholderText: i18n.text("europe_pmc_email")
+                                        }
+                                        TextField {
+                                            id: doajApiKey
+                                            Layout.fillWidth: true
+                                            echoMode: TextInput.Password
+                                            placeholderText: sourceHasKey("doaj") ? i18n.text("api_key_saved_placeholder") : i18n.text("doaj_api_key")
+                                        }
+                                        TextField {
+                                            id: semanticScholarApiKey
+                                            Layout.fillWidth: true
+                                            echoMode: TextInput.Password
+                                            placeholderText: sourceHasKey("semantic_scholar") ? i18n.text("api_key_saved_placeholder") : i18n.text("semantic_scholar_api_key")
+                                        }
+                                    }
+
+                                    Flow {
+                                        Layout.fillWidth: true
+                                        spacing: 8
+                                        Repeater {
+                                            model: downloadController.availableSourceApiStatuses
+                                            Row {
+                                                spacing: 6
+                                                height: 30
+                                                Text {
+                                                    anchors.verticalCenter: parent.verticalCenter
+                                                    text: modelData.label + ": " + root.sourceApiStatusText(modelData)
+                                                    color: modelData.status === "test_failed" ? theme.danger : (modelData.configured ? theme.text : theme.textMuted)
+                                                    font.pixelSize: Math.max(11, theme.baseFontSize - 1)
+                                                }
+                                                PillButton {
+                                                    text: i18n.text("test_connection")
+                                                    enabled: !downloadController.running
+                                                    onClicked: downloadController.testSourceApi(modelData.source)
+                                                }
+                                                PillButton {
+                                                    visible: modelData.hasKey
+                                                    text: i18n.text("clear_key")
+                                                    enabled: !downloadController.running
+                                                    onClicked: downloadController.clearSourceApiKey(modelData.source)
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        Item { Layout.fillWidth: true }
+                                        PillButton {
+                                            text: i18n.text("save_api_settings")
+                                            primary: true
+                                            enabled: !downloadController.running
+                                            onClicked: {
+                                                downloadController.saveSourceApiSettings(root.apiSettings())
+                                                openalexApiKey.text = ""
+                                                doajApiKey.text = ""
+                                                semanticScholarApiKey.text = ""
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         Text {
                             Layout.fillWidth: true
                             text: i18n.text("settings_group_filter_quality")
@@ -458,6 +588,42 @@ Item {
         }
         root.toDateAuto = false
         return savedToDate
+    }
+
+    function sourceHasKey(source) {
+        let statuses = downloadController.availableSourceApiStatuses || []
+        for(let i = 0; i < statuses.length; i++) {
+            if(statuses[i].source === source)
+                return !!statuses[i].hasKey
+        }
+        return false
+    }
+
+    function sourceApiStatusText(status) {
+        if(status.status === "test_success")
+            return i18n.text("source_api_test_success_short")
+        if(status.status === "test_failed")
+            return i18n.text("source_api_test_failed_short")
+        return status.configured ? i18n.text("source_api_configured") : i18n.text("source_api_not_configured")
+    }
+
+    function apiSettings() {
+        return {
+            openalexApiKey: openalexApiKey.text,
+            crossrefMailto: crossrefMailto.text,
+            europePmcEmail: europePmcEmail.text,
+            doajApiKey: doajApiKey.text,
+            semanticScholarApiKey: semanticScholarApiKey.text
+        }
+    }
+
+    function restoreApiSettings() {
+        let settings = downloadController.sourceApiSettings || {}
+        crossrefMailto.text = savedValue(settings, "crossrefMailto", downloadController.contactEmail)
+        europePmcEmail.text = savedValue(settings, "europePmcEmail", downloadController.contactEmail)
+        openalexApiKey.text = ""
+        doajApiKey.text = ""
+        semanticScholarApiKey.text = ""
     }
 
     function splitKeywords(value) {

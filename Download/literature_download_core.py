@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
@@ -21,6 +22,13 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 try:
+    from .api_config import (
+        SOURCE_SEMANTIC_SCHOLAR,
+        PROXY_PATHS,
+        LiteratureApiSettings,
+        SourceApiConfig,
+        default_literature_api_settings,
+    )
     from .journal_registry import is_whitelisted_journal
     from .journal_metrics import (
         JournalMetricResolver,
@@ -31,6 +39,13 @@ try:
     from .pack_builder import journal_pack_match_score, resolve_journal_pack, resolve_topic_pack
     from .topic_packs import score_topic_relevance
 except ImportError:  # pragma: no cover - supports direct script execution.
+    from api_config import (  # type: ignore
+        SOURCE_SEMANTIC_SCHOLAR,
+        PROXY_PATHS,
+        LiteratureApiSettings,
+        SourceApiConfig,
+        default_literature_api_settings,
+    )
     from journal_registry import is_whitelisted_journal
     from journal_metrics import (
         JournalMetricResolver,
@@ -115,7 +130,7 @@ SHADOW_LIBRARY_DOMAINS = (
 PDF_CHUNK_SIZE = 1024 * 64
 HTML_LANDING_PAGE_MAX_BYTES = 1024 * 1024
 ARXIV_MIN_DOWNLOAD_INTERVAL = 3.0
-PDF_HEAD_TIMEOUT = (8, 12)
+PDF_HEAD_TIMEOUT = (3, 5)
 PDF_LANDING_TIMEOUT = (8, 15)
 PDF_API_TIMEOUT = (8, 15)
 PDF_DOWNLOAD_TIMEOUT = (12, 30)
@@ -170,6 +185,7 @@ class CrawlConfig:
     language: str = "zh"
     stop_callback: Callable[[], bool] | None = None
     progress_callback: Callable[[Any, str], None] | None = None
+    api_settings: LiteratureApiSettings | None = None
 
     @property
     def effective_keywords(self) -> list[str]:
@@ -357,6 +373,18 @@ def host_label(url: str | None) -> str:
     return parsed.netloc or "unknown host"
 
 
+def is_openalex_content_url(url: str | None) -> bool:
+    """Return True for OpenAlex hosted full-text content API URLs."""
+    normalized = normalize_candidate_url(url)
+    if not normalized:
+        return False
+
+    parsed = urlparse(normalized)
+    host = parsed.netloc.casefold()
+
+    return host == "content.openalex.org" or host.endswith(".content.openalex.org")
+
+
 def increment_counter(mapping: dict[str, int], key: str | None) -> None:
     """Increment a reason/source counter with a stable fallback key."""
     normalized_key = str(key or "unknown").strip() or "unknown"
@@ -399,6 +427,166 @@ def sleep_or_stop(seconds: float, config: CrawlConfig) -> bool:
             return True
         time.sleep(min(0.25, max(0, end_time - time.monotonic())))
     return stop_requested(config)
+
+
+SECRET_VALUE_PATTERN = re.compile(r"(?i)(api[_-]?key|x-api-key|token|authorization|password|secret)([=:\s]+)([^&\s,;]+)")
+QUERY_SECRET_PATTERN = re.compile(r"(?i)([?&](?:api_key|apikey|key|token)=)([^&\s]+)")
+_SOURCE_RATE_LIMIT_LOCKS: dict[str, threading.Lock] = {}
+_SOURCE_RATE_LIMIT_LAST: dict[str, float] = {}
+
+
+def redact_sensitive_text(value: Any) -> str:
+    """Return text safe for logs and user-visible status messages."""
+    text = str(value or "")
+    text = SECRET_VALUE_PATTERN.sub(lambda match: f"{match.group(1)}{match.group(2)}***", text)
+    return QUERY_SECRET_PATTERN.sub(lambda match: f"{match.group(1)}***", text)
+
+
+def api_settings_for(config: CrawlConfig) -> LiteratureApiSettings:
+    if config.api_settings is None:
+        config.api_settings = default_literature_api_settings(config.email)
+    return config.api_settings
+
+
+def source_api_config(config: CrawlConfig, source: str) -> SourceApiConfig:
+    return api_settings_for(config).source(source)
+
+
+def source_contact_email(config: CrawlConfig, source: str) -> str:
+    return api_settings_for(config).contact_for(source, config.email)
+
+
+def source_api_key(config: CrawlConfig, source: str) -> str:
+    return api_settings_for(config).api_key_for(source)
+
+
+def source_url(config: CrawlConfig, source: str, default_url: str, suffix: str = "") -> str:
+    base_url = source_api_config(config, source).base_url.strip().rstrip("/")
+    if not base_url:
+        base_url = default_url.rstrip("/")
+    return f"{base_url}{suffix}"
+
+
+def is_source_proxy_url(source: str, url: str) -> bool:
+    path = urlparse(str(url or "")).path.rstrip("/")
+    proxy_path = PROXY_PATHS.get(source, "").rstrip("/")
+    return bool(proxy_path and (path == proxy_path or path.endswith(proxy_path) or f"{proxy_path}/" in path))
+
+
+def enforce_source_rate_limit(source: str, config: CrawlConfig) -> bool:
+    api_config = source_api_config(config, source)
+    delay = api_config.effective_rate_limit(source)
+    if delay <= 0:
+        return stop_requested(config)
+    lock = _SOURCE_RATE_LIMIT_LOCKS.setdefault(source, threading.Lock())
+    with lock:
+        last = _SOURCE_RATE_LIMIT_LAST.get(source)
+        if last is not None:
+            remaining = delay - (time.monotonic() - last)
+            if remaining > 0 and sleep_or_stop(remaining, config):
+                return True
+        _SOURCE_RATE_LIMIT_LAST[source] = time.monotonic()
+    return stop_requested(config)
+
+
+def retry_after_seconds(value: Any, fallback: float) -> float:
+    try:
+        return max(0.0, float(value))
+    except (TypeError, ValueError):
+        return fallback
+
+
+def user_agent_with_contact(session: requests.Session, contact_email: str) -> str:
+    session_headers = getattr(session, "headers", {}) or {}
+    base = str(session_headers.get("User-Agent") or "OmniLit/1.0 LiteratureDownloader (+https://github.com/MagicFOIC/OmniLit)")
+    if contact_email and f"mailto:{contact_email}" not in base:
+        if base.endswith(")"):
+            return f"{base[:-1]}; mailto:{contact_email})"
+        return f"{base}; mailto:{contact_email}"
+    return base
+
+
+def source_api_get(
+    session: requests.Session,
+    source: str,
+    url: str,
+    config: CrawlConfig,
+    *,
+    params: dict[str, Any] | None = None,
+    headers: dict[str, str] | None = None,
+    timeout: Any = None,
+    allow_redirects: bool = True,
+) -> requests.Response:
+    """GET a literature API endpoint with credentials, retry, timeout, and rate limiting."""
+    api_config = source_api_config(config, source)
+    if not api_config.enabled:
+        raise ValueError(f"Literature source is disabled: {source}")
+
+    request_params = dict(params or {})
+    request_headers = dict(headers or {})
+    contact_email = source_contact_email(config, source)
+    api_key = source_api_key(config, source)
+    uses_proxy = is_source_proxy_url(source, url)
+    if source == SOURCE_OPENALEX:
+        if contact_email:
+            request_params.setdefault("mailto", contact_email)
+        if api_key and not uses_proxy:
+            request_params.setdefault("api_key", api_key)
+    elif source == SOURCE_CROSSREF:
+        if contact_email:
+            request_params.setdefault("mailto", contact_email)
+            request_headers.setdefault("From", contact_email)
+            request_headers.setdefault("User-Agent", user_agent_with_contact(session, contact_email))
+    elif source == SOURCE_EUROPE_PMC:
+        if contact_email:
+            request_headers.setdefault("From", contact_email)
+            request_headers.setdefault("User-Agent", user_agent_with_contact(session, contact_email))
+    elif source == SOURCE_DOAJ:
+        if api_key and not uses_proxy:
+            request_params.setdefault("api_key", api_key)
+    elif source == SOURCE_SEMANTIC_SCHOLAR and api_key and not uses_proxy:
+        request_headers.setdefault("x-api-key", api_key)
+
+    effective_timeout = timeout if timeout is not None else api_config.effective_timeout()
+    max_retries = api_config.effective_max_retries()
+    last_error: requests.RequestException | None = None
+    for attempt in range(max_retries + 1):
+        if enforce_source_rate_limit(source, config):
+            raise requests.RequestException("stopped")
+        try:
+            response = session.get(
+                url,
+                params=request_params or None,
+                headers=request_headers or None,
+                timeout=effective_timeout,
+                allow_redirects=allow_redirects,
+            )
+        except requests.RequestException as exc:
+            last_error = exc
+            if attempt >= max_retries:
+                raise requests.RequestException(redact_sensitive_text(exc)) from exc
+            if sleep_or_stop(min(30.0, 2.0 ** attempt), config):
+                raise requests.RequestException("stopped") from exc
+            continue
+
+        status_code = getattr(response, "status_code", None)
+        should_retry = status_code == 429 or (status_code is not None and 500 <= status_code < 600)
+        if should_retry and attempt < max_retries:
+            retry_after = getattr(response, "headers", {}).get("Retry-After") if getattr(response, "headers", None) else None
+            delay = retry_after_seconds(retry_after, min(30.0, 2.0 ** attempt))
+            if sleep_or_stop(delay, config):
+                raise requests.RequestException("stopped")
+            continue
+        return response
+
+    raise requests.RequestException(redact_sensitive_text(last_error or "request failed"))
+
+
+def raise_source_for_status(response: requests.Response) -> None:
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as exc:
+        raise requests.HTTPError(redact_sensitive_text(exc), response=getattr(exc, "response", response)) from exc
 
 
 def state_key(keyword: str, config: CrawlConfig, source: str = SOURCE_OPENALEX) -> str:
@@ -509,7 +697,7 @@ def build_session(email: str) -> requests.Session:
         read=1,
         backoff_factor=0.8,
         status_forcelist=(429, 500, 502, 503, 504),
-        allowed_methods=("GET", "HEAD"),
+        allowed_methods=("GET",),
         respect_retry_after_header=True,
     )
     adapter = HTTPAdapter(max_retries=retry, pool_connections=10, pool_maxsize=10)
@@ -1159,6 +1347,17 @@ def add_arxiv_candidate_details(candidates: list[PdfCandidate], record: dict[str
 
 def add_pmc_direct_candidate_details(candidates: list[PdfCandidate], record: dict[str, Any]) -> None:
     """Collect direct PMC official PDF candidates."""
+    if record.get("literature_source") == SOURCE_EUROPE_PMC:
+        raw_id = str(record.get("europe_pmc_id") or record.get("id") or "")
+        has_source_pdf = any(
+            isinstance(link, dict)
+            and link.get("availabilityCode") == "OA"
+            and str(link.get("documentStyle") or "").casefold() == "pdf"
+            and link.get("url")
+            for link in ((record.get("fullTextUrlList") or {}).get("fullTextUrl") or [])
+        )
+        if raw_id.upper().startswith("PMC") and has_source_pdf:
+            return
     pmcid = extract_pmcid(record)
     if pmcid:
         append_pdf_candidate(
@@ -1597,13 +1796,11 @@ def search_openalex(
         "cursor": cursor,
         "select": OPENALEX_SELECT,
     }
-    if config.email:
-        params["mailto"] = config.email
     if config.sort:
         params["sort"] = config.sort
 
-    response = session.get(OPENALEX_URL, params=params, timeout=(15, 45))
-    response.raise_for_status()
+    response = source_api_get(session, SOURCE_OPENALEX, source_url(config, SOURCE_OPENALEX, OPENALEX_URL), config, params=params)
+    raise_source_for_status(response)
     data = response.json()
     for item in data.get("results", []):
         item["literature_source"] = SOURCE_OPENALEX
@@ -1626,8 +1823,11 @@ def search_europe_pmc(
     query = f"({keyword}) AND FIRST_PDATE:[{config.from_date} TO {config.to_date}]"
     if config.oa_only:
         query = f"OPEN_ACCESS:Y AND {query}"
-    response = session.get(
-        EUROPE_PMC_URL,
+    response = source_api_get(
+        session,
+        SOURCE_EUROPE_PMC,
+        source_url(config, SOURCE_EUROPE_PMC, EUROPE_PMC_URL),
+        config,
         params={
             "query": query,
             "format": "json",
@@ -1635,9 +1835,8 @@ def search_europe_pmc(
             "pageSize": config.per_page,
             "cursorMark": cursor,
         },
-        timeout=(15, 45),
     )
-    response.raise_for_status()
+    raise_source_for_status(response)
     data = response.json()
     normalized: list[dict[str, Any]] = []
     for item in (data.get("resultList") or {}).get("result", []):
@@ -1673,6 +1872,7 @@ def search_europe_pmc(
                 "id": f"europepmc:{source_record_id}",
                 "source_record_id": f"{SOURCE_EUROPE_PMC}:{source_record_id}",
                 "literature_source": SOURCE_EUROPE_PMC,
+                "europe_pmc_id": item.get("id"),
                 "pmcid": pmcid,
                 "doi": item.get("doi"),
                 "title": clean_markup_text(item.get("title")),
@@ -1716,8 +1916,11 @@ def search_arxiv(
 ) -> dict[str, Any]:
     """Docstring."""
     start = int(cursor or 0)
-    response = session.get(
-        ARXIV_URL,
+    response = source_api_get(
+        session,
+        SOURCE_ARXIV,
+        source_url(config, SOURCE_ARXIV, ARXIV_URL),
+        config,
         params={
             "search_query": arxiv_query(keyword),
             "start": start,
@@ -1725,9 +1928,8 @@ def search_arxiv(
             "sortBy": "relevance",
             "sortOrder": "descending",
         },
-        timeout=(15, 45),
     )
-    response.raise_for_status()
+    raise_source_for_status(response)
     root = ET.fromstring(response.text)
     namespaces = {
         "atom": "http://www.w3.org/2005/Atom",
@@ -1935,14 +2137,12 @@ def search_crossref(
         "rows": min(config.per_page, 1000),
         "cursor": cursor or "*",
     }
-    if config.email:
-        params["mailto"] = config.email
     if config.sort == "publication_date:desc":
         params["sort"] = "published"
         params["order"] = "desc"
 
-    response = session.get(CROSSREF_URL, params=params, timeout=(15, 45))
-    response.raise_for_status()
+    response = source_api_get(session, SOURCE_CROSSREF, source_url(config, SOURCE_CROSSREF, CROSSREF_URL), config, params=params)
+    raise_source_for_status(response)
     message = response.json().get("message") or {}
     normalized = [
         normalize_crossref_item(item)
@@ -2067,12 +2267,14 @@ def search_doaj(
     except ValueError:
         page = 1
     page_size = min(config.per_page, 100)
-    response = session.get(
-        f"{DOAJ_URL}/{quote(keyword)}",
+    response = source_api_get(
+        session,
+        SOURCE_DOAJ,
+        source_url(config, SOURCE_DOAJ, DOAJ_URL, f"/{quote(keyword)}"),
+        config,
         params={"page": page, "pageSize": page_size},
-        timeout=(15, 45),
     )
-    response.raise_for_status()
+    raise_source_for_status(response)
     data = response.json()
     normalized = [
         normalized_item
@@ -2665,19 +2867,17 @@ def query_openalex_work(
     work_id = extract_openalex_work_id(record.get("openalex_id") or record.get("id"))
     doi = normalize_doi(record.get("doi") or record.get("normalized_doi"))
     if work_id:
-        url = f"{OPENALEX_URL}/{work_id}"
+        url = source_url(config, SOURCE_OPENALEX, OPENALEX_URL, f"/{work_id}")
     elif doi:
-        url = f"{OPENALEX_URL}/doi:{quote(doi)}"
+        url = source_url(config, SOURCE_OPENALEX, OPENALEX_URL, f"/doi:{quote(doi)}")
     else:
         return None
 
     params = {"select": OPENALEX_SELECT}
-    if config.email:
-        params["mailto"] = config.email
-    response = session.get(url, params=params, timeout=(15, 45))
+    response = source_api_get(session, SOURCE_OPENALEX, url, config, params=params)
     if response.status_code == 404:
         return None
-    response.raise_for_status()
+    raise_source_for_status(response)
     data = response.json()
     data["literature_source"] = SOURCE_OPENALEX
     data["source_record_id"] = data.get("id")
@@ -2936,11 +3136,8 @@ def fetch_semantic_scholar_pdf_candidates(
         return []
     if stop_requested(config):
         return []
-    headers: dict[str, str] = {}
-    api_key = os.environ.get("SEMANTIC_SCHOLAR_API_KEY")
-    if api_key:
-        headers["x-api-key"] = api_key
-    elif config.request_delay > 0:
+    api_key = source_api_key(config, SOURCE_SEMANTIC_SCHOLAR)
+    if not api_key and config.request_delay > 0:
         if sleep_or_stop(min(config.request_delay, 1.0), config):
             return []
     emit_pdf_progress(
@@ -2952,15 +3149,13 @@ def fetch_semantic_scholar_pdf_candidates(
         detail=paper_id,
     )
     try:
-        kwargs: dict[str, Any] = {
-            "params": {"fields": "paperId,title,isOpenAccess,openAccessPdf,externalIds,url"},
-            "timeout": PDF_API_TIMEOUT,
-        }
-        if headers:
-            kwargs["headers"] = headers
-        response = get(
-            f"{SEMANTIC_SCHOLAR_PAPER_URL}/{quote(paper_id, safe=':')}",
-            **kwargs,
+        response = source_api_get(
+            session,
+            SOURCE_SEMANTIC_SCHOLAR,
+            source_url(config, SOURCE_SEMANTIC_SCHOLAR, SEMANTIC_SCHOLAR_PAPER_URL, f"/{quote(paper_id, safe=':')}"),
+            config,
+            params={"fields": "paperId,title,isOpenAccess,openAccessPdf,externalIds,url"},
+            timeout=PDF_API_TIMEOUT,
         )
     except (requests.RequestException, TypeError):
         logging.debug("Semantic Scholar OA lookup failed: %s", paper_id, exc_info=True)
@@ -3017,7 +3212,6 @@ def iter_pdf_candidate_details(
     publisher_candidates: list[PdfCandidate] = []
 
     add_arxiv_candidate_details(candidates, item)
-    add_openalex_content_api_candidate(candidates, item)
 
     append_pdf_candidate(direct_candidates, item.get("pdf_url"), record_direct_pdf_source(item), include_publisher_rules=False)
     for url in item.get("pdf_candidates") or []:
@@ -3038,6 +3232,9 @@ def iter_pdf_candidate_details(
         append_pdf_candidate(direct_candidates, unpaywall.get("pdf_url"), "unpaywall_url_for_pdf", include_publisher_rules=False)
         for pdf_url in unpaywall.get("pdf_urls") or []:
             append_pdf_candidate(direct_candidates, pdf_url, "unpaywall_url_for_pdf", include_publisher_rules=False)
+
+    if not direct_candidates:
+        add_openalex_content_api_candidate(candidates, item)
 
     candidates.extend(direct_candidates)
     add_pmc_direct_candidate_details(candidates, item)
@@ -3064,18 +3261,33 @@ def iter_pdf_candidate_details(
 
 
 def verify_pdf_url_with_head(
-    session: requests.Session,
-    url: str,
-    config: CrawlConfig,
-    stats: CrawlStats | None = None,
+        session: requests.Session,
+        url: str,
+        config: CrawlConfig,
+        stats: CrawlStats | None = None,
 ) -> tuple[bool, str | None]:
-    """Docstring."""
+    """Validate a PDF URL with HEAD when safe, but never block OpenAlex content URLs."""
     if is_shadow_library_url(url):
         return False, "shadow_library"
+
     if not looks_like_pdf_url(url):
         return False, "not_pdf"
+
     if stop_requested(config):
         return False, "stopped"
+
+    # OpenAlex content API 在 HEAD 上容易慢/卡住。
+    # 这里不要做 HEAD，直接交给后面的 GET 下载逻辑验证 status、content-type、文件头和大小。
+    if is_openalex_content_url(url):
+        emit_pdf_progress(
+            config,
+            stats,
+            "pdf_head_skip",
+            f"跳过 OpenAlex HEAD 校验，直接尝试下载校验：{host_label(url)}",
+            f"Skipping OpenAlex HEAD check and trying streamed download: {host_label(url)}",
+            detail=url,
+        )
+        return True, "openalex_skip_head"
 
     head = getattr(session, "head", None)
     if not callable(head):
@@ -3089,30 +3301,31 @@ def verify_pdf_url_with_head(
         f"Checking PDF candidate: {host_label(url)}",
         detail=url,
     )
+
     try:
         response = head(url, timeout=PDF_HEAD_TIMEOUT, allow_redirects=True)
     except requests.RequestException:
-        # Some publishers reject HEAD while serving the PDF through GET. Let the
-        # streamed download validate content type, bytes, and PDF structure.
+        # Some publishers reject HEAD while serving the PDF through GET.
+        # Let the streamed download validate content type, bytes, and PDF structure.
         return True, "head_unavailable"
 
     status_code = getattr(response, "status_code", None)
+
     if status_code in {401, 402, 403}:
         # Some OA hosts block HEAD for bot/access-control reasons while serving
         # the PDF through GET. Let the streamed GET classify real 401/403/login
         # responses as blocked_or_login.
-        return True, "head_blocked_or_login"
-    if status_code in {405, 429}:
-        return True, None
-    if status_code and (status_code < 200 or status_code >= 400):
-        return False, "request_failed"
+        return True, "head_auth_or_payment_required"
+
+    if status_code and status_code >= 400:
+        return False, f"head_http_{status_code}"
 
     headers = getattr(response, "headers", {}) or {}
     content_type = str(headers.get("content-type") or headers.get("Content-Type") or "").casefold()
-    if "application/pdf" in content_type or content_type.startswith("application/octet-stream"):
-        return True, None
-    if any(token in content_type for token in ("text/html", "image/", "application/xml", "text/xml")):
-        return False, "not_pdf"
+
+    if content_type and "pdf" not in content_type and "octet-stream" not in content_type:
+        return False, "head_not_pdf_content"
+
     return True, None
 
 
@@ -3142,7 +3355,7 @@ def looks_like_blocked_or_login_content(content_type: str, first_chunk: bytes) -
 
 def head_rejection_allows_get_sniff(reason: str | None) -> bool:
     """Return whether a HEAD rejection is weak enough to verify with GET."""
-    return reason in {"not_pdf", "head_unavailable", "head_blocked_or_login"}
+    return reason in {"not_pdf", "head_unavailable", "head_blocked_or_login", "head_auth_or_payment_required", "head_not_pdf_content"}
 
 
 def resolve_open_access_pdf(
@@ -3263,14 +3476,14 @@ def is_arxiv_pdf_url(url: str | None) -> bool:
 
 def enforce_arxiv_download_delay(config: CrawlConfig) -> bool:
     """Keep arXiv PDF downloads single-paced with at least three seconds between GETs."""
-    now = time.monotonic()
-    last = getattr(enforce_arxiv_download_delay, "_last_download_at", None)
-    if last is not None:
-        remaining = ARXIV_MIN_DOWNLOAD_INTERVAL - (now - float(last))
-        if remaining > 0 and sleep_or_stop(remaining, config):
-            return True
-    setattr(enforce_arxiv_download_delay, "_last_download_at", time.monotonic())
-    return stop_requested(config)
+    legacy_last = getattr(enforce_arxiv_download_delay, "_last_download_at", None)
+    if legacy_last is not None:
+        _SOURCE_RATE_LIMIT_LAST[SOURCE_ARXIV] = float(legacy_last)
+        delattr(enforce_arxiv_download_delay, "_last_download_at")
+    stopped = enforce_source_rate_limit(SOURCE_ARXIV, config)
+    if SOURCE_ARXIV in _SOURCE_RATE_LIMIT_LAST:
+        setattr(enforce_arxiv_download_delay, "_last_download_at", _SOURCE_RATE_LIMIT_LAST[SOURCE_ARXIV])
+    return stopped
 
 
 def response_content_type(response: Any) -> str:
@@ -3482,7 +3695,7 @@ def download_first_available_pdf(
     if not candidate_details:
         candidate_details = [PdfCandidate(url, "publisher_rule") for url in resolution.candidates]
     candidates = candidate_details_to_urls(candidate_details)
-    allow_get_sniff = bool(candidates and resolution.reason == "not_pdf")
+    allow_get_sniff = bool(candidates and (resolution.reason == "not_pdf" or head_rejection_allows_get_sniff(resolution.reason)))
     if not resolution.url and not allow_get_sniff:
         return DownloadResult(None, "failed", reason=resolution.reason), candidates
 
@@ -4113,6 +4326,18 @@ def crawl_keyword(
         f"Preparing {source_label}: {keyword}",
         f"Preparing {source_label}: {keyword}",
     )
+    if source == SOURCE_OPENALEX and not source_api_key(config, SOURCE_OPENALEX):
+        logging.info("OpenAlex API key is not configured; small-scale anonymous calls are allowed, production use should configure a key.")
+        emit_source_progress(
+            config,
+            stats,
+            source,
+            keyword,
+            "api_hint",
+            "OpenAlex API Key 未配置；可进行小规模测试，生产/规模化调用建议配置 Key。",
+            "OpenAlex API Key is not configured; small tests are allowed, production use should configure a key.",
+            "OpenAlex API Key is not configured; small tests are allowed, production use should configure a key.",
+        )
 
     for page in range(config.max_pages_per_keyword):
         if should_stop(stats, config):

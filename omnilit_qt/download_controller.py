@@ -22,6 +22,13 @@ from .services import (
     normalize_download_form_config,
     parse_download_keywords,
 )
+from .source_api_config import (
+    clear_source_api_key,
+    load_source_api_settings,
+    public_source_api_settings,
+    save_source_api_settings,
+    source_api_statuses,
+)
 
 DOWNLOAD_FORM_SETTING = "download_form_config"
 DOWNLOAD_FORM_FIELDS = (
@@ -84,6 +91,7 @@ class DownloadController(QObject):
         self._active_source_label = ""
         self._active_source_text = ""
         self._logs: list[str] = []
+        self._source_api_tests: dict[str, dict[str, str]] = {}
         self._stop = threading.Event()
         self._worker: ManagedWorker | None = None
         self.progress.connect(self._on_progress)
@@ -309,6 +317,96 @@ class DownloadController(QObject):
         """Return literature database choices for the download form."""
         return import_resource_module(self.paths, "Download", "literature_download_core").source_maps()
 
+    @Property("QVariantList", notify=changed)
+    def availableSourceApiStatuses(self) -> list[dict[str, Any]]:
+        """Return safe per-source API configuration statuses for QML."""
+        statuses = source_api_statuses(self.paths, self.store, self.contactEmail)
+        for status in statuses:
+            source = str(status.get("source") or "")
+            if source in self._source_api_tests:
+                status.update(self._source_api_tests[source])
+        return statuses
+
+    @Property("QVariantMap", notify=changed)
+    def sourceApiSettings(self) -> dict[str, Any]:
+        """Return non-sensitive source API settings and masked key state."""
+        return public_source_api_settings(self.paths, self.store, self.contactEmail)
+
+    @Slot("QVariantMap", result=bool)
+    def saveSourceApiSettings(self, settings: dict[str, Any]) -> bool:
+        """Persist source API settings; sensitive keys are encrypted outside savedConfig."""
+        try:
+            save_source_api_settings(self.paths, self.store, dict(settings or {}), self.contactEmail)
+        except Exception as exc:
+            self._status = tr(self.locale.language, "source_api_settings_failed", error=exc)
+            self.changed.emit()
+            return False
+        self._source_api_tests.clear()
+        self._status = self.locale.textf("source_api_settings_saved")
+        self.changed.emit()
+        return True
+
+    @Slot(str, result=bool)
+    def clearSourceApiKey(self, source: str) -> bool:
+        """Clear an encrypted source API key."""
+        ok = clear_source_api_key(self.paths, self.store, str(source or "").strip())
+        self._source_api_tests.pop(str(source or "").strip(), None)
+        self._status = self.locale.textf("source_api_key_cleared" if ok else "source_api_key_clear_failed")
+        self.changed.emit()
+        return ok
+
+    @Slot(str, result=bool)
+    def testSourceApi(self, source: str) -> bool:
+        """Run a lightweight source API check without exposing credentials."""
+        source_key = str(source or "").strip()
+        language = self.locale.language
+        try:
+            core = import_resource_module(self.paths, "Download", "literature_download_core")
+            settings = load_source_api_settings(self.paths, self.store, self.contactEmail)
+            config = core.CrawlConfig(
+                email=self.contactEmail,
+                keywords=["test"],
+                per_page=1,
+                max_pages_per_keyword=1,
+                request_delay=0,
+                page_delay=0,
+                language=language,
+                api_settings=settings,
+            )
+            session = core.build_session(self.contactEmail)
+            self._test_source_api_request(core, session, source_key, config)
+        except Exception:
+            self._source_api_tests[source_key] = {
+                "status": "test_failed",
+                "message": self.locale.textf("source_api_test_failed"),
+            }
+            self._status = self.locale.textf("source_api_test_failed")
+            self.changed.emit()
+            return False
+        self._source_api_tests[source_key] = {
+            "status": "test_success",
+            "message": self.locale.textf("source_api_test_success"),
+        }
+        self._status = self.locale.textf("source_api_test_success")
+        self.changed.emit()
+        return True
+
+    @staticmethod
+    def _test_source_api_request(core: Any, session: Any, source: str, config: Any) -> None:
+        if source == core.SOURCE_OPENALEX:
+            response = core.source_api_get(session, source, core.source_url(config, source, core.OPENALEX_URL), config, params={"per-page": 1, "select": "id"})
+        elif source == core.SOURCE_EUROPE_PMC:
+            response = core.source_api_get(session, source, core.source_url(config, source, core.EUROPE_PMC_URL), config, params={"query": "OPEN_ACCESS:Y", "format": "json", "pageSize": 1})
+        elif source == core.SOURCE_ARXIV:
+            response = core.source_api_get(session, source, core.source_url(config, source, core.ARXIV_URL), config, params={"search_query": "all:test", "start": 0, "max_results": 1})
+        elif source == core.SOURCE_CROSSREF:
+            response = core.source_api_get(session, source, core.source_url(config, source, core.CROSSREF_URL), config, params={"query.bibliographic": "test", "rows": 1})
+        elif source == core.SOURCE_DOAJ:
+            response = core.source_api_get(session, source, core.source_url(config, source, core.DOAJ_URL, "/test"), config, params={"page": 1, "pageSize": 1})
+        else:
+            response = core.source_api_get(session, "semantic_scholar", core.source_url(config, "semantic_scholar", core.SEMANTIC_SCHOLAR_PAPER_URL, "/search"), config, params={"query": "test", "limit": 1, "fields": "paperId"})
+        core.raise_source_for_status(response)
+
     @Property(str, constant=True)
     def defaultFromDate(self) -> str:
         """返回默认开始日期。参数：无。返回值：ISO 日期。"""
@@ -339,7 +437,8 @@ class DownloadController(QObject):
         try:
             raw = dict(config_map or {})
             raw["email"] = str(raw.get("email") or self.contactEmail).strip()
-            core, config = build_download_config(self.paths, raw, lambda: self._stop.is_set(), lambda stats, message: self.progress.emit(stats, str(message)), language)
+            api_settings = load_source_api_settings(self.paths, self.store, raw["email"])
+            core, config = build_download_config(self.paths, raw, lambda: self._stop.is_set(), lambda stats, message: self.progress.emit(stats, str(message)), language, api_settings=api_settings)
             core.validate_config(config)
             self.saveConfig(raw)
         except Exception as exc:
@@ -395,12 +494,14 @@ class DownloadController(QObject):
         try:
             raw = dict(config_map or {})
             raw["email"] = str(raw.get("email") or self.contactEmail).strip()
+            api_settings = load_source_api_settings(self.paths, self.store, raw["email"])
             core, config = build_download_config(
                 self.paths,
                 raw,
                 lambda: self._stop.is_set(),
                 lambda stats, message: self.progress.emit(stats, str(message)),
                 language,
+                api_settings=api_settings,
             )
             core.validate_config(config)
             self.saveConfig(raw)

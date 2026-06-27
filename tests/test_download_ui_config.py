@@ -177,6 +177,14 @@ class DownloadUiConfigTests(unittest.TestCase):
 
         self.assertIn("activePulse: downloadController.running && downloadController.activeSourceKey === modelData.key", qml)
         self.assertIn("downloadController.activeSourceText", qml)
+        self.assertIn('text: i18n.text("source_api_settings")', qml)
+        self.assertIn("downloadController.availableSourceApiStatuses", qml)
+        self.assertIn("downloadController.saveSourceApiSettings(root.apiSettings())", qml)
+        self.assertIn("downloadController.testSourceApi(modelData.source)", qml)
+        self.assertIn("downloadController.clearSourceApiKey(modelData.source)", qml)
+        self.assertIn("id: openalexApiKey", qml)
+        self.assertIn("id: doajApiKey", qml)
+        self.assertIn("id: semanticScholarApiKey", qml)
         self.assertIn("property bool activePulse: false", checkbox)
         self.assertIn("SequentialAnimation on opacity", checkbox)
 

@@ -28,6 +28,63 @@ DEFAULT_GLOSSARY_FILENAMES = (
 )
 GLOSSARY_FILE_EXTENSIONS = {".csv", ".tsv", ".txt", ".json", ".md"}
 
+GLOSSARY_DISPLAY_METADATA: dict[str, dict[str, object]] = {
+    "00_general_academic.csv": {
+        "titleZh": "通用学术术语",
+        "titleEn": "General academic",
+        "descriptionZh": "论文结构、研究方法、统计评价和常见学术表达，默认启用。",
+        "descriptionEn": "Paper structure, research methods, statistics, and common academic phrasing. Enabled by default.",
+    },
+    "01_ai_ml_data_science.csv": {
+        "titleZh": "AI / 机器学习 / 数据科学",
+        "titleEn": "AI / ML / Data science",
+        "descriptionZh": "覆盖大语言模型、RAG、智能体、知识图谱、机器学习和数据科学评价指标。",
+        "descriptionEn": "LLMs, RAG, agents, knowledge graphs, machine learning, and data science metrics.",
+    },
+    "02_catalysis_chemistry_materials.csv": {
+        "titleZh": "化学材料",
+        "titleEn": "Chemistry and materials",
+        "descriptionZh": "催化剂、合成步骤、表征方法、材料结构与性能术语。",
+        "descriptionEn": "Catalysts, synthesis steps, characterization methods, structures, and materials properties.",
+    },
+    "03_biology_medicine_pharmaceuticals.csv": {
+        "titleZh": "生物医药",
+        "titleEn": "Biomedicine and pharmaceuticals",
+        "descriptionZh": "基因组、蛋白、临床试验、药代药效和安全性评价术语。",
+        "descriptionEn": "Genomics, proteins, clinical trials, pharmacokinetics, efficacy, and safety terms.",
+    },
+    "04_energy_environment_chemical_engineering.csv": {
+        "titleZh": "能源环境",
+        "titleEn": "Energy and environment",
+        "descriptionZh": "储能、碳中和、电催化、反应器、传质传热和过程工程术语。",
+        "descriptionEn": "Energy storage, carbon neutrality, electrocatalysis, reactors, transport, and process engineering.",
+    },
+    "05_physics_electronics_mechanical_engineering.csv": {
+        "titleZh": "物理电子机械",
+        "titleEn": "Physics, electronics, and mechanical engineering",
+        "descriptionZh": "半导体、光电、力学、有限元、流体和热工工程术语。",
+        "descriptionEn": "Semiconductors, optoelectronics, mechanics, finite elements, fluids, and thermal engineering.",
+    },
+    "06_computer_science_software.csv": {
+        "titleZh": "计算机",
+        "titleEn": "Computer science",
+        "descriptionZh": "算法、数据库、软件工程、部署、测试、网络与安全术语。",
+        "descriptionEn": "Algorithms, databases, software engineering, deployment, testing, networking, and security.",
+    },
+    "07_economics_management_finance.csv": {
+        "titleZh": "经管金融",
+        "titleEn": "Economics, management, and finance",
+        "descriptionZh": "宏微观经济、管理、供应链、风险、估值和金融市场术语。",
+        "descriptionEn": "Economics, management, supply chains, risk, valuation, and financial markets.",
+    },
+    "08_social_science_education_psychology.csv": {
+        "titleZh": "社科教育心理",
+        "titleEn": "Social science, education, and psychology",
+        "descriptionZh": "问卷、访谈、教育评价、心理变量和社会科学研究方法术语。",
+        "descriptionEn": "Surveys, interviews, education assessment, psychological variables, and social research methods.",
+    },
+}
+
 
 @dataclass(frozen=True)
 class ModelProfile:
@@ -172,11 +229,31 @@ def glossary_catalog(glossary_dir: Path) -> list[dict[str, object]]:
     ) if glossary_dir.exists() else []
     for path in paths:
         filename = path.name
-        count = 0
+        rows: list[tuple[str, str]] = []
         if path.exists():
             with path.open("r", encoding="utf-8-sig", errors="ignore", newline="") as handle:
-                count = sum(1 for row in csv.reader(handle) if row and any(cell.strip() for cell in row))
-        items.append({"name": filename, "path": str(path), "terms": count, "selected": filename == DEFAULT_GLOSSARY_FILENAMES[0]})
+                for row in csv.reader(handle):
+                    if len(row) < 2:
+                        continue
+                    source, target = row[0].strip(), row[1].strip()
+                    if not source or not target or source.lower() in {"source", "english", "en", "term"}:
+                        continue
+                    rows.append((source, target))
+        metadata = GLOSSARY_DISPLAY_METADATA.get(filename, {})
+        title_en = str(metadata.get("titleEn") or path.stem)
+        items.append(
+            {
+                "name": filename,
+                "path": str(path),
+                "terms": len(rows),
+                "selected": filename == DEFAULT_GLOSSARY_FILENAMES[0],
+                "titleZh": str(metadata.get("titleZh") or path.stem),
+                "titleEn": title_en,
+                "descriptionZh": str(metadata.get("descriptionZh") or "用户自定义术语表"),
+                "descriptionEn": str(metadata.get("descriptionEn") or "Custom glossary"),
+                "preview": [{"source": source, "target": target} for source, target in rows[:5]],
+            }
+        )
     return items
 
 

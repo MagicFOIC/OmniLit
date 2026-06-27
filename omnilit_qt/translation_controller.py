@@ -37,11 +37,12 @@ TRANSLATION_FORM_FIELDS = (
     "model",
     "baseUrl",
     "profileIndex",
+    "customService",
     "targetLang",
     "glossaryPaths",
-    "batchSize",
-    "maxBatchChars",
     "maxPages",
+    "rangeMode",
+    "customMaxPages",
     "layoutOnly",
     "useCache",
     "summaryPage",
@@ -163,6 +164,8 @@ class TranslationController(QObject):
         self.document.connect(self._on_document)
         self.preview.connect(self._on_preview)
         self.finished.connect(self._on_finished)
+        self._ensure_default_glossaries()
+        self._auto_load_default_key()
 
     @Property("QVariantList", constant=True)
     def modelProfiles(self) -> list[dict[str, object]]:
@@ -290,6 +293,34 @@ class TranslationController(QObject):
         self._logs.extend(line.strip() for line in str(message).splitlines() if line.strip())
         self._logs = self._logs[-1000:]
         self.changed.emit()
+
+    def _ensure_default_glossaries(self) -> None:
+        """Append missing bundled glossary rows without replacing user edits."""
+        try:
+            core = import_resource_module(self.paths, "Translate", "literature_translate_core")
+            ensure = getattr(core, "ensure_default_glossaries", None)
+            if ensure is not None:
+                ensure(self.paths.glossary_dir)
+        except Exception:
+            # Glossaries are helpful defaults; translation should still open if
+            # the resource module is unavailable or a user file is malformed.
+            return
+
+    def _auto_load_default_key(self) -> None:
+        """Try to make the bundled service available without user interaction."""
+        try:
+            self._default_key, self._default_key_source = load_bundled_default_key(
+                self.paths.data("Translate"),
+                self.paths.resource("Translate"),
+            )
+        except Exception as exc:
+            self._default_key = self._default_key_source = ""
+            self._status = self.locale.textf("default_service_unavailable", error=exc)
+            return
+        if self._default_key:
+            self._status = self.locale.textf("default_service_ready")
+        else:
+            self._status = self.locale.textf("default_service_unavailable", error=self.locale.textf("default_key_unconfigured"))
 
     def _on_document(self, document: str) -> None:
         """切换当前文档。参数：文档文本。返回值：无。"""
@@ -633,10 +664,14 @@ class TranslationController(QObject):
         target_lang = str(raw.get("targetLang") or "zh").strip().lower()
         target_lang = "en" if target_lang == "en" else "zh"
         suffix = "_Full_Translation" if target_lang == "en" else "_全文翻译"
-        api_key = str(raw.get("apiKey") or "").strip() or self._user_key or self._default_key
+        use_custom_service = as_bool(raw.get("customService"), True)
+        current_key = str(raw.get("apiKey") or "").strip() if use_custom_service else ""
+        api_key = current_key or self._user_key or self._default_key
         if not layout_only and not api_key:
             raise ValueError(tr(language, "api_key_required"))
-        args = argparse.Namespace(input=str(translation_dir), output=str(translation_dir), suffix=suffix, translator="copy" if layout_only else "deepseek", target_lang=target_lang, api_key=api_key or None, base_url=str(raw.get("baseUrl") or "https://api.deepseek.com").strip(), model=str(raw.get("model") or "deepseek-v4-flash").strip(), temperature=0.15, max_retries=4, disable_json_mode=False, glossary=self._glossary_paths(raw.get("glossaryPaths")), batch_size=as_int(raw.get("batchSize"), 3), max_batch_chars=as_int(raw.get("maxBatchChars"), 3500), render_scale=2.0, whiteout_padding_x=1.4, whiteout_padding_y=0.9, font=None, bold_font=None, translate_references=as_bool(raw.get("translateReferences")), translate_header_footer=as_bool(raw.get("translateHeaderFooter")), summary_page=as_bool(raw.get("summaryPage"), True), max_pages=int(raw["maxPages"]) if str(raw.get("maxPages") or "").strip() else None, no_cache=not as_bool(raw.get("useCache"), True), progress_callback=None, language=language)
+        base_url = str(raw.get("baseUrl") or "https://api.deepseek.com").strip() if use_custom_service else "https://api.deepseek.com"
+        model = str(raw.get("model") or "deepseek-v4-flash").strip() if use_custom_service else "deepseek-v4-flash"
+        args = argparse.Namespace(input=str(translation_dir), output=str(translation_dir), suffix=suffix, translator="copy" if layout_only else "deepseek", target_lang=target_lang, api_key=api_key or None, base_url=base_url, model=model, temperature=0.15, max_retries=4, disable_json_mode=False, glossary=self._glossary_paths(raw.get("glossaryPaths")), batch_size=as_int(raw.get("batchSize"), 3), max_batch_chars=as_int(raw.get("maxBatchChars"), 3500), render_scale=2.0, whiteout_padding_x=1.4, whiteout_padding_y=0.9, font=None, bold_font=None, translate_references=as_bool(raw.get("translateReferences")), translate_header_footer=as_bool(raw.get("translateHeaderFooter")), summary_page=as_bool(raw.get("summaryPage"), True), max_pages=int(raw["maxPages"]) if str(raw.get("maxPages") or "").strip() else None, no_cache=not as_bool(raw.get("useCache"), True), progress_callback=None, language=language)
         pdfs = core.find_pdf_files(translation_dir)
         if not pdfs:
             raise ValueError(tr(language, "pdf_missing"))

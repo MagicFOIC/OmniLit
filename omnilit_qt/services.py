@@ -359,7 +359,7 @@ class AccountStore:
         return True
 
 
-def build_download_config(paths: AppPaths, raw: dict[str, Any], stop_callback, progress_callback, language: str = "zh"):
+def build_download_config(paths: AppPaths, raw: dict[str, Any], stop_callback, progress_callback, language: str = "zh", api_settings: Any | None = None):
     """构建下载核心配置。参数：路径、界面配置、回调和语言。返回值：核心模块与配置。"""
     core = import_resource_module(paths, "Download", "literature_download_core")
     output_root = Path(str(raw.get("outputDir") or paths.data("Download"))).expanduser()
@@ -437,4 +437,5 @@ def build_download_config(paths: AppPaths, raw: dict[str, Any], stop_callback, p
         language=language,
         stop_callback=stop_callback,
         progress_callback=progress_callback,
+        api_settings=api_settings,
     )

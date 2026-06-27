@@ -142,9 +142,15 @@ class AppPathsTests(unittest.TestCase):
             custom = paths.glossary_dir / "custom.csv"
             custom.write_text("source,target\nalpha,阿尔法\n", encoding="utf-8")
             paths.ensure_data_dirs()
-            names = {item["name"] for item in glossary_catalog(paths.glossary_dir)}
+            catalog = glossary_catalog(paths.glossary_dir)
+            names = {item["name"] for item in catalog}
             self.assertIn("00_general_academic.csv", names)
             self.assertIn("custom.csv", names)
+            general = next(item for item in catalog if item["name"] == "00_general_academic.csv")
+            self.assertEqual(general["titleZh"], "通用学术术语")
+            self.assertEqual(general["titleEn"], "General academic")
+            self.assertEqual(general["terms"], 1)
+            self.assertEqual(general["preview"][0], {"source": "paper", "target": "论文"})
 
 
 class AccountStoreTests(unittest.TestCase):
@@ -683,6 +689,8 @@ class FormPersistenceTests(unittest.TestCase):
                     "profileIndex": 2,
                     "targetLang": "en",
                     "glossaryPaths": ["glossary.csv"],
+                    "batchSize": 12,
+                    "maxBatchChars": 9000,
                     "apiKey": "sk-must-not-be-saved",
                 }
             )
@@ -696,6 +704,8 @@ class FormPersistenceTests(unittest.TestCase):
             self.assertEqual(restored["model"], "deepseek-test")
             self.assertEqual(restored["profileIndex"], 2)
             self.assertEqual(restored["targetLang"], "en")
+            self.assertNotIn("batchSize", restored)
+            self.assertNotIn("maxBatchChars", restored)
             self.assertNotIn("apiKey", restored)
             self.assertNotIn("sk-must-not-be-saved", stored_json)
 
@@ -1591,29 +1601,38 @@ class QtOnlyTests(unittest.TestCase):
         self.assertIn("id: translationDir", translation)
         self.assertNotIn("id: outputDir", translation)
         self.assertNotIn("choose_translation_dir", translation)
-        self.assertIn("translationDir.text=settings.translationDir || settings.inputDir || translationController.defaultInputDir", translation)
+        self.assertIn("translationDir.text = settings.translationDir || settings.inputDir || translationController.defaultInputDir", translation)
         self.assertIn("translationController.pendingDocuments", translation)
         self.assertNotIn("translationController.addDocuments(translationDir.text)", translation)
         self.assertIn("id: pendingDocumentsScroll", translation)
         self.assertIn("Math.min(pendingDocumentsList.implicitHeight", translation)
         self.assertIn("function onChanged() { root.syncPreview() }", translation)
-        self.assertIn("let oldY=flick.contentY", translation)
-        self.assertIn("let wasAtBottom=oldY >= maxY - 12", translation)
+        self.assertIn("let oldY = flick.contentY", translation)
+        self.assertIn("let wasAtBottom = oldY >= maxY - 12", translation)
         self.assertNotIn("text: translationController.previewText", translation)
         controls_row = translation[
-            translation.index('Text { text: i18n.text("batch_size")') : translation.index(
+            translation.index('Text { text: i18n.text("more_options")') : translation.index(
                 "StatusBanner { Layout.fillWidth: true"
             )
         ]
         for control_id in ("layoutOnly", "useCache", "summary", "references", "headerFooter"):
             self.assertIn(f"id: {control_id}", controls_row)
-            self.assertLess(controls_row.index("id: maxPages"), controls_row.index(f"id: {control_id}"))
-        self.assertIn("property bool modelKeySettingsOpen: false", translation)
+        self.assertNotIn("batchSize", translation)
+        self.assertNotIn("batchChars", translation)
+        self.assertNotIn('i18n.text("batch_size")', translation)
+        self.assertNotIn('i18n.text("batch_chars")', translation)
+        self.assertNotIn('i18n.text("test_pages")', translation)
+        self.assertIn("id: rangeMode", translation)
+        self.assertIn('i18n.text("range_full")', translation)
+        self.assertIn('i18n.text("range_quick")', translation)
+        self.assertIn('i18n.text("range_custom")', translation)
+        self.assertNotIn("property bool modelKeySettingsOpen", translation)
         self.assertIn("property bool advancedTranslationSettingsOpen: false", translation)
-        self.assertIn('text: root.apiConfigured() ? "API 已配置" : "需要配置 API Key"', translation)
-        self.assertIn('text: "模型与 Key 设置"', translation)
-        self.assertIn('text: "高级翻译设置"', translation)
-        self.assertIn("visible: root.modelKeySettingsOpen", translation)
+        self.assertIn('i18n.text("omnilit_default_service")', translation)
+        self.assertIn('i18n.text("recommended_model")', translation)
+        self.assertIn("id: customService", translation)
+        self.assertIn("visible: customService.checked", translation)
+        self.assertIn('apiKey: customService.checked ? apiKey.text : ""', translation)
         self.assertIn("visible: root.advancedTranslationSettingsOpen", translation)
         start_row = translation[
             translation.index('Text { text: i18n.text("glossary")') : translation.index(
@@ -1622,8 +1641,13 @@ class QtOnlyTests(unittest.TestCase):
         ]
         self.assertIn('i18n.formatText("selected_count"', start_row)
         self.assertIn('i18n.text("select_glossary")', start_row)
-        self.assertIn("PillButton { text: translationController.running", translation)
-        self.assertIn("PillButton { visible: false; text: translationController.running", start_row)
+        self.assertIn("modelData.titleZh", translation)
+        self.assertIn("modelData.titleEn", translation)
+        self.assertIn("modelData.descriptionZh", translation)
+        self.assertIn("modelData.descriptionEn", translation)
+        self.assertIn("modelData.preview", translation)
+        self.assertIn("text: modelData.source + \" => \" + modelData.target", translation)
+        self.assertIn('text: translationController.running ? i18n.text("running") : i18n.text("start_translate")', translation)
 
     def test_workspace_uses_drawer_pages_for_account_controls_and_active_task_tooltips(self) -> None:
         workspace = (ROOT / "ui" / "qml" / "Workspace.qml").read_text(encoding="utf-8")
@@ -1727,7 +1751,7 @@ class QtOnlyTests(unittest.TestCase):
         self.assertIn("readonly property real resultPanePreferredHeight: Math.max(", translation)
         self.assertIn("root.height - metrics.pageMargin * 2 - heading.implicitHeight - translationFormPaneHeight - progressPaneHeight", translation)
         self.assertIn("form.implicitHeight + metrics.cardPadding * 2", translation)
-        self.assertIn("Layout.minimumHeight: metrics.compact ? 320 : 380", translation)
+        self.assertIn("Layout.minimumHeight: metrics.compact ? 390 : 450", translation)
         self.assertIn("Layout.preferredHeight: root.resultPanePreferredHeight", translation)
         self.assertIn("Layout.minimumHeight: root.resultPaneMinimumHeight", translation)
         self.assertTrue((qml_dir / "Theme.qml").exists())
@@ -1812,7 +1836,9 @@ class QtOnlyTests(unittest.TestCase):
         self.assertNotIn("KeyPage", workspace)
         self.assertFalse((qml_dir / "KeyPage.qml").exists())
         self.assertNotIn("keyController", app)
-        self.assertIn("translationController.unlockBundledDefaultKey()", translation)
+        self.assertNotIn("translationController.unlockBundledDefaultKey()", translation)
+        self.assertNotIn("默认 API Key", translation)
+        self.assertNotIn("配置 API Key", translation)
         self.assertNotIn("id: defaultKeyDialog", translation)
         self.assertNotIn("id: defaultApiKeyInput", translation)
         self.assertNotIn("translationController.saveDefaultKey(apiKey.text", translation)

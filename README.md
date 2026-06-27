@@ -131,8 +131,71 @@ build_omnilit_exe.bat --check-env
 
 ```bat
 conda run -n OmniLit python -m unittest discover -s tests -v
-conda run -n OmniLit python -m compileall -q omnilit_qt_app.py omnilit_qt Download Translate Update
+conda run -n OmniLit python -m compileall -q omnilit_qt_app.py omnilit_qt Download SourceProxy Translate Update
 ```
+
+## 文献数据源 API 配置
+
+下载页的“数据源 API 设置”用于管理 OpenAlex、arXiv、Europe PMC、Crossref、DOAJ 以及 Semantic Scholar PDF 补查的访问配置。敏感 Key 不会写入普通下载表单配置；用户界面保存的 Key 使用 PBKDF2 + Fernet 加密，默认位于：
+
+```text
+Workspace\Download\APIKeys\openalex.enc
+Workspace\Download\APIKeys\doaj.enc
+Workspace\Download\APIKeys\semantic_scholar.enc
+```
+
+- OpenAlex：小规模匿名测试可用；生产或规模化调用推荐配置 API Key，实际请求会附加 `api_key`。
+- Crossref：主要依赖 `mailto` 和带 `mailto:` 的 User-Agent 做礼貌访问；默认复用系统联系邮箱。
+- arXiv：不需要 API Key；OmniLit 对 arXiv 搜索和 PDF 请求强制 3 秒/次的全局限流，并按单连接节奏访问。
+- Europe PMC：公共 REST 搜索通常不需要 Key；OmniLit 会使用 User-Agent/From/contact email。
+- DOAJ：公共搜索可匿名；Premium metadata 或未来接口可选配置 `api_key`。
+- Semantic Scholar：仅作为合法 OA PDF 元数据补查的可选 Key 来源。
+
+环境变量可作为兜底配置，优先级低于界面中已保存的加密 Key：
+
+```text
+OMNILIT_OPENALEX_API_KEY
+OMNILIT_DOAJ_API_KEY
+OMNILIT_SEMANTIC_SCHOLAR_API_KEY
+OMNILIT_CONTACT_EMAIL
+```
+
+### 预置代理发布
+
+公开或半公开分发时，不建议把第三方 API Key 打进桌面软件。推荐部署 OmniLit Source API Proxy，让桌面端零配置使用代理：
+
+```bat
+conda run -n OmniLit python -m SourceProxy.source_api_proxy --host 0.0.0.0 --port 8765
+```
+
+代理服务端环境变量：
+
+```text
+OPENALEX_API_KEY
+SEMANTIC_SCHOLAR_API_KEY
+DOAJ_API_KEY
+OMNILIT_SOURCE_PROXY_CACHE_TTL=300
+OMNILIT_SOURCE_PROXY_PORT=8765
+```
+
+桌面端/打包环境变量：
+
+```text
+OMNILIT_SOURCE_API_PROXY_URL=https://your-proxy.example.com
+OMNILIT_CONTACT_EMAIL=support@your-domain.com
+OMNILIT_DOAJ_PREMIUM_VIA_PROXY=1
+```
+
+代理端点：
+
+```text
+/search/openalex
+/lookup/semantic-scholar
+/search/doaj-premium
+/health
+```
+
+设置 `OMNILIT_SOURCE_API_PROXY_URL` 后，OpenAlex 和 Semantic Scholar 默认走代理；DOAJ 只有在 `OMNILIT_DOAJ_PREMIUM_VIA_PROXY=1` 时走代理。Crossref、Europe PMC、arXiv 继续直连公共 API，并使用 `OMNILIT_CONTACT_EMAIL` 作为礼貌联系邮箱。客户端识别代理路径后不会把本机保存的 `api_key` 或 `x-api-key` 转发给代理。
 
 ## 默认 API Key
 
