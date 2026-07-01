@@ -29,6 +29,19 @@ except Exception:  # pragma: no cover - direct module smoke tests
     def apply_quality(element: dict[str, Any]) -> dict[str, Any]:
         return element
 
+try:
+    from .pdf_extraction_quality import quality_summary, write_quality_report
+except Exception:  # pragma: no cover - direct module smoke tests
+    def quality_summary(elements: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
+        return {
+            "tables": {"count": 0, "needsReview": 0},
+            "figures": {"count": 0, "needsReview": 0},
+            "formulas": {"count": 0, "needsReview": 0},
+        }
+
+    def write_quality_report(output_dir: str | Path, index: dict[str, Any]) -> Path:
+        return Path(output_dir) / "quality_report.json"
+
 
 MATH_PATTERN = re.compile(
     r"(=|≈|≠|≤|≥|∑|∫|√|π|α|β|γ|Δ|λ|μ|σ|θ|×|÷|\^|\\frac|[A-Za-z]\s*[=+\-*/]\s*)"
@@ -128,6 +141,9 @@ def analyze_pdf(pdf_path: str | Path, output_dir: str | Path) -> dict[str, Any]:
             elements.extend(extract_figures_pymupdf_enhanced(page, table_rects, page_index, page_size, target))
             elements.extend(extract_formula_candidates_pymupdf(page, text_blocks, page_index, page_size, target))
 
+    completed_elements = _sort_elements(_dedupe_elements(_complete_element_schema(elements)))
+    _rewrite_completed_table_jsons(completed_elements)
+    markdown_path = _write_parsed_markdown(target, source, pages, completed_elements)
     index = {
         "version": 3,
         "sourcePath": str(source),
@@ -137,14 +153,151 @@ def analyze_pdf(pdf_path: str | Path, output_dir: str | Path) -> dict[str, Any]:
         "engineChain": ["pymupdf"],
         "pageCount": len(pages),
         "pages": pages,
-        "elements": _sort_elements(_dedupe_elements(_complete_element_schema(elements))),
-        "markdownPath": "",
+        "elements": completed_elements,
+        "markdownPath": str(markdown_path),
         "rawOutputs": {"pymupdf": str(target), "paddleocr_vl": "", "mineru": ""},
+        "qualitySummary": quality_summary(completed_elements),
+        "debugFiles": {"mineruLayoutPdf": "", "fusionReportJson": "", "qualityReportJson": ""},
     }
+    report_path = write_quality_report(target, index)
+    index["debugFiles"]["qualityReportJson"] = str(report_path)
     index_path = target / "extraction_index.json"
     with index_path.open("w", encoding="utf-8") as handle:
         json.dump(index, handle, ensure_ascii=False, indent=2)
     return index
+
+
+def _rewrite_completed_table_jsons(elements: list[dict[str, Any]]) -> None:
+    for element in elements or []:
+        if str(element.get("type") or "") != "table":
+            continue
+        json_path = str(element.get("jsonPath") or "").strip()
+        if not json_path:
+            continue
+        try:
+            _write_table_json(Path(json_path), element)
+        except Exception:
+            continue
+
+
+def _write_parsed_markdown(output_dir: Path, source: Path, pages: list[dict[str, Any]], elements: list[dict[str, Any]]) -> Path:
+    markdown_path = output_dir / "parsed.md"
+    parts: list[str] = [f"# {_markdown_escape_heading(source.stem)}", ""]
+    elements_by_page: dict[int, list[dict[str, Any]]] = {}
+    for element in elements or []:
+        elements_by_page.setdefault(int(element.get("page") or 0), []).append(element)
+
+    for page in pages or []:
+        page_index = int(page.get("page") or 0)
+        parts.append(f"## Page {page_index + 1}")
+        parts.append("")
+        page_entries: list[dict[str, Any]] = []
+        page_elements = _sort_elements(elements_by_page.get(page_index, []))
+        occupied = []
+        for element in page_elements:
+            occupied.append(element.get("bbox") or [])
+            if element.get("captionBBox"):
+                occupied.append(element.get("captionBBox") or [])
+            page_entries.append({"kind": "element", "bbox": element.get("bbox") or [], "element": element})
+        for block in page.get("textBlocks") or []:
+            bbox = _bbox_from_any(block.get("bbox"))
+            text = str(block.get("text") or "").strip()
+            if not text or len(bbox) < 4 or _text_block_overlaps_artifact(bbox, occupied):
+                continue
+            page_entries.append({"kind": "text", "bbox": bbox, "text": text})
+        page_entries.sort(key=lambda item: (float((item.get("bbox") or [0, 0, 0, 0])[1]), float((item.get("bbox") or [0, 0, 0, 0])[0])))
+        for entry in page_entries:
+            if entry["kind"] == "text":
+                parts.extend([_markdown_clean_text(str(entry.get("text") or "")), ""])
+            else:
+                parts.extend(_markdown_for_element(entry.get("element") or {}, output_dir))
+                parts.append("")
+    markdown_path.write_text("\n".join(parts).rstrip() + "\n", encoding="utf-8")
+    return markdown_path
+
+
+def _markdown_for_element(element: dict[str, Any], output_dir: Path) -> list[str]:
+    kind = str(element.get("type") or "")
+    if kind == "table":
+        return _markdown_for_table(element)
+    if kind == "formula":
+        return _markdown_for_formula(element)
+    if kind in {"figure", "chart"}:
+        return _markdown_for_figure(element, output_dir)
+    text = str(element.get("text") or element.get("caption") or "").strip()
+    return [_markdown_clean_text(text)] if text else []
+
+
+def _markdown_for_table(element: dict[str, Any]) -> list[str]:
+    rows = [[str(cell or "") for cell in row] for row in element.get("table") or []]
+    parts: list[str] = []
+    caption = str(element.get("caption") or "").strip()
+    if caption:
+        parts.append(f"**{_markdown_clean_text(caption)}**")
+        parts.append("")
+    if rows:
+        widths = [max((len(row[column]) if column < len(row) else 0 for row in rows), default=0) for column in range(max(len(row) for row in rows))]
+        header = rows[0]
+        parts.append(_markdown_table_row(header, widths))
+        parts.append("| " + " | ".join("-" * max(3, width) for width in widths) + " |")
+        for row in rows[1:]:
+            parts.append(_markdown_table_row(row, widths))
+    elif element.get("text"):
+        parts.append(_markdown_clean_text(str(element.get("text") or "")))
+    return parts
+
+
+def _markdown_for_formula(element: dict[str, Any]) -> list[str]:
+    latex = str(element.get("latex") or element.get("text") or "").strip()
+    number = str((element.get("metadata") or {}).get("formulaNumber") or "").strip()
+    if number and latex:
+        latex = f"{latex} \\tag{{{number}}}"
+    return ["$$", latex, "$$"] if latex else []
+
+
+def _markdown_for_figure(element: dict[str, Any], output_dir: Path) -> list[str]:
+    caption = str(element.get("caption") or element.get("text") or "").strip()
+    png_path = str(element.get("pngPath") or "").strip()
+    if png_path:
+        try:
+            image_ref = Path(png_path).resolve().relative_to(output_dir.resolve()).as_posix()
+        except Exception:
+            image_ref = png_path
+        alt = _markdown_clean_text(caption or str(element.get("label") or "Figure"))
+        return [f"![{alt}]({image_ref})", "", _markdown_clean_text(caption)] if caption else [f"![{alt}]({image_ref})"]
+    return [_markdown_clean_text(caption)] if caption else []
+
+
+def _markdown_table_row(row: list[str], widths: list[int]) -> str:
+    cells = []
+    for index, width in enumerate(widths):
+        value = row[index] if index < len(row) else ""
+        cells.append(_markdown_escape_cell(value).ljust(width))
+    return "| " + " | ".join(cells) + " |"
+
+
+def _markdown_escape_cell(value: str) -> str:
+    return re.sub(r"\s+", " ", str(value or "").replace("|", "\\|")).strip()
+
+
+def _markdown_clean_text(value: str) -> str:
+    return re.sub(r"\s+", " ", str(value or "").replace("\n", " ")).strip()
+
+
+def _markdown_escape_heading(value: str) -> str:
+    return _markdown_clean_text(value).replace("#", "").strip() or "Parsed PDF"
+
+
+def _text_block_overlaps_artifact(bbox: list[float], artifact_bboxes: list[list[float]]) -> bool:
+    for artifact_bbox in artifact_bboxes or []:
+        artifact = _bbox_from_any(artifact_bbox)
+        if len(artifact) < 4:
+            continue
+        if _bbox_intersection_area(bbox, artifact) <= 0:
+            continue
+        if _overlap_ratio(_rect_from_bbox(bbox), _rect_from_bbox(artifact)) >= 0.55:
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -332,6 +485,9 @@ def extract_tables_pymupdf_multi_strategy(
                 continue
             raw_rows = _safe_table_extract(table)
             rows, normalization = _normalize_table_rows(raw_rows)
+            rows, text_repairs = _repair_table_rows_from_text_blocks(rows, bbox, text_blocks, page_size)
+            if text_repairs:
+                normalization.extend(text_repairs)
             if not rows:
                 continue
             caption_info = caption_hint or _table_caption_for_bbox(bbox, text_blocks, page_size)
@@ -371,19 +527,27 @@ def extract_tables_pymupdf_multi_strategy(
             )
 
     deduped = dedupe_tables_by_iou(tables)
+    used_element_ids: set[str] = set()
     for next_index, table in enumerate(deduped, start=1):
         rows = table.get("table") or []
         label = _safe_file_label(str(table.get("label") or f"table_{next_index}")).lower()
         element_id = f"p{page_index + 1}_table_{next_index}"
         if label and label != f"table_{next_index}":
             element_id = f"p{page_index + 1}_{label}"
+        if element_id in used_element_ids:
+            base_id = element_id
+            suffix = 2
+            while f"{base_id}_{suffix}" in used_element_ids:
+                suffix += 1
+            element_id = f"{base_id}_{suffix}"
+        used_element_ids.add(element_id)
         csv_path = output_dir / "tables" / f"{element_id}.csv"
         json_path = output_dir / "tables" / f"{element_id}.json"
         png_path = output_dir / "clips" / f"{element_id}.png"
-        _write_table_csv(csv_path, rows)
-        _write_table_json(json_path, rows)
-        crop_element_png(page, table.get("bbox") or [], png_path, zoom=2.5, padding=6)
         table.update({"id": element_id, "csvPath": str(csv_path), "jsonPath": str(json_path), "pngPath": str(png_path)})
+        _write_table_csv(csv_path, rows)
+        crop_element_png(page, table.get("bbox") or [], png_path, zoom=2.5, padding=6)
+        _write_table_json(json_path, table)
     return deduped
 
 
@@ -396,7 +560,10 @@ def dedupe_tables_by_iou(tables: list[dict[str, Any]], iou_threshold: float = 0.
     for table in sorted(tables, key=_table_quality_key, reverse=True):
         if any(
             int(existing.get("page") or 0) == int(table.get("page") or 0)
-            and _bbox_iou(existing.get("bbox") or [], table.get("bbox") or []) >= iou_threshold
+            and (
+                _bbox_iou(existing.get("bbox") or [], table.get("bbox") or []) >= iou_threshold
+                or _bbox_overlap_ratio(existing.get("bbox") or [], table.get("bbox") or []) >= 0.92
+            )
             for existing in result
         ):
             continue
@@ -451,6 +618,116 @@ def _normalize_table_rows(rows: list[list[str]]) -> tuple[list[list[str]], list[
         del cleaned[1]
         actions.append("merge_wrapped_header")
     return cleaned, actions
+
+
+def _repair_table_rows_from_text_blocks(
+    rows: list[list[str]],
+    bbox: list[float],
+    text_blocks: list[dict[str, Any]],
+    page_size: list[float],
+) -> tuple[list[list[str]], list[str]]:
+    if not rows or len(bbox or []) < 4 or not text_blocks:
+        return rows, []
+    current_width = max((len(row) for row in rows), default=0)
+    if current_width < 2:
+        return rows, []
+    reconstructed = _table_rows_from_positioned_text(bbox, text_blocks, page_size, current_width)
+    if not reconstructed:
+        return rows, []
+    if not _positioned_table_rows_better(rows, reconstructed):
+        return rows, []
+    return reconstructed, ["reconstruct_from_positioned_text"]
+
+
+def _table_rows_from_positioned_text(
+    bbox: list[float],
+    text_blocks: list[dict[str, Any]],
+    page_size: list[float],
+    min_columns: int,
+) -> list[list[str]]:
+    page_width, page_height = _page_dimensions(page_size)
+    if page_width <= 0 or page_height <= 0:
+        return []
+    x0 = max(0.0, float(bbox[0]) - 8.0)
+    x1 = min(page_width, float(bbox[2]) + 8.0)
+    y0 = max(0.0, float(bbox[1]) - 28.0)
+    y1 = min(page_height, float(bbox[3]) + 6.0)
+    cells: list[dict[str, Any]] = []
+    for block in text_blocks or []:
+        block_bbox = _bbox_from_any(block.get("bbox"))
+        text = re.sub(r"\s+", " ", str(block.get("text") or "")).strip()
+        if len(block_bbox) < 4 or not text or TABLE_CAPTION_PATTERN.search(text):
+            continue
+        cx = (block_bbox[0] + block_bbox[2]) / 2.0
+        cy = (block_bbox[1] + block_bbox[3]) / 2.0
+        if cx < x0 or cx > x1 or cy < y0 or cy > y1:
+            continue
+        cells.append({"text": text, "bbox": block_bbox, "cx": cx, "cy": cy})
+    if len(cells) < min_columns * 2:
+        return []
+
+    line_groups: list[list[dict[str, Any]]] = []
+    for cell in sorted(cells, key=lambda item: (float(item["cy"]), float(item["cx"]))):
+        placed = False
+        for group in line_groups:
+            group_cy = sum(float(item["cy"]) for item in group) / len(group)
+            if abs(float(cell["cy"]) - group_cy) <= 4.8:
+                group.append(cell)
+                placed = True
+                break
+        if not placed:
+            line_groups.append([cell])
+
+    line_groups = [sorted(group, key=lambda item: float(item["cx"])) for group in line_groups if len(group) >= 2]
+    if len(line_groups) < 2:
+        return []
+    target_columns = max(min_columns, max(len(group) for group in line_groups))
+    if target_columns < 2:
+        return []
+    full_rows = [group for group in line_groups if len(group) == target_columns]
+    if not full_rows:
+        return []
+    column_centers: list[float] = []
+    for column in range(target_columns):
+        values = sorted(float(group[column]["cx"]) for group in full_rows)
+        mid = len(values) // 2
+        column_centers.append(values[mid] if len(values) % 2 else (values[mid - 1] + values[mid]) / 2.0)
+
+    max_distance = max(24.0, (x1 - x0) / max(1, target_columns) * 0.52)
+    rebuilt: list[list[str]] = []
+    for group in line_groups:
+        row = [""] * target_columns
+        for cell in group:
+            distances = [abs(float(cell["cx"]) - center) for center in column_centers]
+            column = min(range(len(distances)), key=distances.__getitem__)
+            if distances[column] > max_distance:
+                continue
+            row[column] = " ".join(part for part in (row[column], str(cell["text"])) if part).strip()
+        if any(row):
+            rebuilt.append(row)
+    return rebuilt
+
+
+def _positioned_table_rows_better(current: list[list[str]], rebuilt: list[list[str]]) -> bool:
+    if not rebuilt:
+        return False
+    current_width = max((len(row) for row in current), default=0)
+    rebuilt_width = max((len(row) for row in rebuilt), default=0)
+    if rebuilt_width < current_width or len(rebuilt) < len(current):
+        return False
+    current_first = current[0] if current else []
+    rebuilt_first = rebuilt[0]
+    current_first_numeric = _row_numeric_ratio(current_first)
+    rebuilt_first_numeric = _row_numeric_ratio(rebuilt_first)
+    current_first_text = " ".join(str(cell or "") for cell in current_first).strip()
+    rebuilt_first_text = " ".join(str(cell or "") for cell in rebuilt_first).strip()
+    if rebuilt_first_numeric <= 0.25 and current_first_numeric > 0.25:
+        return True
+    if len(rebuilt) > len(current) and rebuilt_first_numeric <= 0.25:
+        return True
+    if len(rebuilt_first_text) > len(current_first_text) + 2 and rebuilt_first_numeric <= current_first_numeric:
+        return True
+    return False
 
 
 def _looks_like_split_text_column(rows: list[list[str]], column: int) -> bool:
@@ -569,10 +846,103 @@ def _write_table_csv(path: Path, rows: list[list[str]]) -> None:
         writer.writerows(rows or [])
 
 
-def _write_table_json(path: Path, rows: list[list[str]]) -> None:
+def _write_table_json(path: Path, table: dict[str, Any] | list[list[str]]) -> None:
+    if isinstance(table, dict):
+        rows = [[str(cell or "") for cell in row] for row in table.get("table") or []]
+        metadata = dict(table.get("metadata") or {})
+        payload = {
+            "version": 2,
+            "id": str(table.get("id") or ""),
+            "page": int(table.get("page") or 0),
+            "bbox": _bbox_from_any(table.get("bbox")),
+            "pageSize": list(table.get("pageSize") or []),
+            "caption": str(table.get("caption") or ""),
+            "captionBBox": _bbox_from_any(table.get("captionBBox")),
+            "rows": rows,
+            "shape": {"rows": len(rows), "columns": max((len(row) for row in rows), default=0)},
+            "cells": _table_cells(rows),
+            "headerRows": _header_row_indexes(rows),
+            "unitRows": _unit_row_indexes(rows),
+            "footnoteRows": _footnote_row_indexes(rows),
+            "spansPreserved": False,
+            "metadata": metadata,
+            "quality": {
+                "confidence": float(table.get("confidence") or 0.0),
+                "needsReview": bool(table.get("needsReview")),
+                "qualityFlags": [str(flag) for flag in table.get("qualityFlags") or [] if str(flag or "").strip()],
+            },
+            "source": {
+                "engine": str(table.get("engine") or "pymupdf"),
+                "sourceEngines": [str(item) for item in table.get("sourceEngines") or [] if str(item or "").strip()],
+                "sourceElementIds": [str(item) for item in table.get("sourceElementIds") or [] if str(item or "").strip()],
+            },
+            "artifacts": {
+                "csvPath": str(table.get("csvPath") or ""),
+                "jsonPath": str(table.get("jsonPath") or path),
+                "pngPath": str(table.get("pngPath") or ""),
+            },
+        }
+    else:
+        rows = [[str(cell or "") for cell in row] for row in table or []]
+        payload = {"version": 2, "rows": rows, "shape": {"rows": len(rows), "columns": max((len(row) for row in rows), default=0)}, "cells": _table_cells(rows)}
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
-        json.dump({"rows": rows or []}, handle, ensure_ascii=False, indent=2)
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
+
+
+def _table_cells(rows: list[list[str]]) -> list[dict[str, Any]]:
+    cells: list[dict[str, Any]] = []
+    for row_index, row in enumerate(rows or []):
+        for column_index, value in enumerate(row or []):
+            cells.append(
+                {
+                    "row": row_index,
+                    "column": column_index,
+                    "text": str(value or ""),
+                    "rowspan": 1,
+                    "colspan": 1,
+                    "isHeader": row_index in _header_row_indexes(rows),
+                }
+            )
+    return cells
+
+
+def _header_row_indexes(rows: list[list[str]]) -> list[int]:
+    if not rows:
+        return []
+    if len(rows) == 1:
+        return [0]
+    first = rows[0]
+    second = rows[1] if len(rows) > 1 else []
+    first_numeric = _row_numeric_ratio(first)
+    second_numeric = _row_numeric_ratio(second)
+    if first_numeric <= 0.25 and second_numeric > first_numeric:
+        return [0]
+    return [0] if any(str(cell or "").strip() for cell in first) else []
+
+
+def _unit_row_indexes(rows: list[list[str]]) -> list[int]:
+    units = re.compile(
+        r"^(?:%|(?:mAh|Ah|Wh|mg|g|kg|mm|cm|m|mol|V|A|K|Pa|Hz|s|min|h|°C)"
+        r"(?:(?:\s+(?:/|-|·|\*)?\s*[A-Za-z0-9%°-]+)|(?:(?:/|-|·|\*)\s*[A-Za-z0-9%°-]+))*)$",
+        re.IGNORECASE,
+    )
+    result: list[int] = []
+    for index, row in enumerate(rows or []):
+        values = [str(cell or "").strip() for cell in row if str(cell or "").strip()]
+        if values and sum(1 for value in values if units.search(value)) / len(values) >= 0.5:
+            result.append(index)
+    return result
+
+
+def _footnote_row_indexes(rows: list[list[str]]) -> list[int]:
+    result: list[int] = []
+    pattern = re.compile(r"^(?:note|notes|注|备注|[*†‡§]|\([a-z]\))", re.IGNORECASE)
+    for index, row in enumerate(rows or []):
+        values = [str(cell or "").strip() for cell in row if str(cell or "").strip()]
+        if len(values) == 1 and pattern.search(values[0]):
+            result.append(index)
+    return result
 
 
 def _table_caption_blocks(text_blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1334,6 +1704,9 @@ def extract_formula_candidates_pymupdf(
         padded = _pad_bbox(bbox, page.rect, 4)
         png_path = output_dir / "clips" / f"{element_id}.png"
         image_meta = crop_element_png(page, padded, png_path, zoom=3.0, padding=4)
+        formula_text, formula_number = _split_formula_number(text)
+        if not formula_text:
+            formula_text = text
         formulas.append(
             {
                 "id": element_id,
@@ -1345,11 +1718,12 @@ def extract_formula_candidates_pymupdf(
                 "caption": "",
                 "captionBBox": [],
                 "text": text,
+                "latex": formula_text,
                 "table": [],
                 "csvPath": "",
                 "jsonPath": "",
                 "pngPath": str(png_path) if image_meta else "",
-                "metadata": {"lineIndex": line_index, **image_meta},
+                "metadata": {"lineIndex": line_index, "formulaNumber": formula_number, **image_meta},
             }
         )
     return formulas
@@ -1373,6 +1747,7 @@ def _merge_formula_lines(lines: list[dict[str, Any]], page_width: float) -> list
             idx += 1
             continue
         current = {**line, "text": text, "bbox": bbox}
+        current_can_group = _line_has_formula_body(text)
         lookahead = idx + 1
         continuation_count = 0
         while lookahead < len(ordered):
@@ -1382,6 +1757,8 @@ def _merge_formula_lines(lines: list[dict[str, Any]], page_width: float) -> list
             if len(candidate_bbox) < 4 or not candidate_text:
                 lookahead += 1
                 continue
+            if not current_can_group:
+                break
             if _same_line_equation_number(current.get("bbox") or [], candidate_text, candidate_bbox, page_width):
                 current["text"] = f"{current.get('text', '')} {candidate_text}".strip()
                 current["bbox"] = _union_nonempty_bboxes([current.get("bbox") or [], candidate_bbox])
@@ -1404,14 +1781,18 @@ def _looks_like_formula(text: str, bbox: list[float], page_width: float) -> bool
     compact = re.sub(r"\s+", "", text)
     if len(compact) < 3 or len(compact) > 180:
         return False
+    if _is_equation_number_only(text):
+        return False
     lowered = text.strip().lower()
+    if _looks_like_formula_noise(text):
+        return False
     if FIGURE_CAPTION_PATTERN.search(text) or TABLE_CAPTION_PATTERN.search(text):
         return False
     if lowered.startswith(("where ", "when ", "for ", "table ", "figure ", "fig.")):
         return False
     if _looks_like_sentence_formula_noise(text):
         return False
-    if not (MATH_PATTERN.search(text) or FORMULA_SYMBOL_PATTERN.search(text) or EQUATION_NUMBER_PATTERN.search(text)):
+    if not _has_strong_formula_signal(text):
         return False
     width = _bbox_width(bbox)
     if page_width > 0 and width > page_width * 0.85 and len(text.split()) > 12:
@@ -1421,6 +1802,60 @@ def _looks_like_formula(text: str, bbox: list[float], page_width: float) -> bool
     alpha_words = len(re.findall(r"[A-Za-z]{3,}", text))
     latex_tokens = len(re.findall(r"\\[A-Za-z]+", text))
     return (math_chars + digit_chars + latex_tokens >= 2) and alpha_words <= 10
+
+
+def _line_has_formula_body(text: str) -> bool:
+    value = str(text or "").strip()
+    if not value or _is_equation_number_only(value):
+        return False
+    if value.endswith(":") and len(value.split()) >= 4:
+        return False
+    if _looks_like_formula_noise(value):
+        return False
+    if _looks_like_sentence_formula_noise(value):
+        return False
+    return _has_strong_formula_signal(value)
+
+
+def _has_strong_formula_signal(text: str) -> bool:
+    value = str(text or "")
+    if re.search(r"(=|\\frac|\\sum|\\int|\\sqrt|[A-Za-z0-9]\s*[\^_]|[\u2206\u0394\u03b4\u03bc\u03c3\u03b1-\u03c9])", value):
+        return True
+    if re.search(r"\b(?:sin|cos|tan|log|ln|exp)\s*\(", value):
+        return True
+    return False
+
+
+def _looks_like_formula_noise(text: str) -> bool:
+    value = re.sub(r"\s+", " ", str(text or "")).strip()
+    lowered = value.lower()
+    if not value:
+        return True
+    if re.search(r"(https?://|www\.|crossref|pubmed|creative\s+commons|license|copyright|\bcc\s+by\b)", lowered):
+        return True
+    if re.search(r"\b(?:adv\.|small|mater\.|chem\.|electrochim\.|journal|doi)\b", lowered) and len(re.findall(r"[A-Za-z]{3,}", value)) >= 3:
+        return True
+    if re.match(r"^\d+(?:\.\d+)+\.?\s+[A-Z][A-Za-z]", value) and "=" not in value:
+        return True
+    if value.count(";") >= 2 and "=" not in value:
+        return True
+    return False
+
+
+def _is_equation_number_only(text: str) -> bool:
+    return bool(re.fullmatch(r"\(?\s*\d+[A-Za-z]?\s*\)?", str(text or "").strip()))
+
+
+def _split_formula_number(text: str) -> tuple[str, str]:
+    value = str(text or "").strip()
+    if not value:
+        return "", ""
+    match = re.search(r"\s*(\(\s*(\d+[A-Za-z]?)\s*\))\s*$", value)
+    if not match:
+        return value, ""
+    body = value[: match.start()].strip()
+    number = match.group(2).strip()
+    return body, number
 
 
 def _same_line_equation_number(formula_bbox: list[float], text: str, bbox: list[float], page_width: float) -> bool:
@@ -1677,6 +2112,14 @@ def _bbox_iou(left: list[float], right: list[float]) -> float:
         return 0.0
     union = _bbox_area(left) + _bbox_area(right) - inter
     return inter / union if union > 0 else 0.0
+
+
+def _bbox_overlap_ratio(left: list[float], right: list[float]) -> float:
+    inter = _bbox_intersection_area(left, right)
+    if inter <= 0:
+        return 0.0
+    denom = min(_bbox_area(left), _bbox_area(right))
+    return inter / denom if denom > 0 else 0.0
 
 
 def _overlap_ratio(left_rect: Any, right_rect: Any) -> float:

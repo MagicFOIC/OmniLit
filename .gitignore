@@ -58,6 +58,7 @@ Workspace/Download/**/*.tmp
 Workspace/Download/pdfs/
 Workspace/Download/gui_settings.json
 Workspace/Literature/extractions/
+Workspace/extraction_eval/
 Workspace/task_state/
 Workspace/Translate/APIKey.enc
 Workspace/Translate/UserAPIKey.enc
