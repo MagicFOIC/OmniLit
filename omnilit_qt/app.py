@@ -24,6 +24,7 @@ from .controllers import (
 )
 from .i18n import LocaleController
 from .paths import AppPaths
+from .pymupdf_tools import silence_mupdf_diagnostics
 from .services import AccountStore
 
 
@@ -73,6 +74,7 @@ def _schedule_window_frame_center(window) -> None:
 
 def run() -> int:
     """启动 Qt/QML 桌面应用。参数：无。返回值：进程退出码。"""
+    silence_mupdf_diagnostics()
     QQuickStyle.setStyle("Fusion")
     app = QApplication(sys.argv)
     app.setApplicationName("OmniLit")
@@ -92,6 +94,7 @@ def run() -> int:
     knowledge_graph = KnowledgeGraphController(shell, paths, store, locale)
     knowledge_graph.setPdfExtractionController(pdf_extraction)
     pdf_extraction.analysisReady.connect(knowledge_graph.invalidateRecord)
+    pdf_extraction.analysisReady.connect(literature_library.notifyExtractionReady)
     word_cloud = WordCloudController(shell, paths, store, locale)
     word_cloud.setKnowledgeGraphController(knowledge_graph)
     translation = TranslationController(shell, paths, store, locale)

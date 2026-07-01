@@ -296,6 +296,37 @@ class LiteratureLibraryControllerTests(unittest.TestCase):
             controller.setFilters("strict", "downloaded", "", ["not present"])
             self.assertEqual(controller.filteredCount, 0)
 
+    def test_records_mark_existing_extraction_index(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:
+            root = Path(temp)
+            self.seed_metadata(root)
+            controller = self.make_controller(root)
+            self.assertTrue(controller.refresh())
+            self.wait_for_idle(controller)
+
+            record = controller.records[0]
+            self.assertFalse(record["hasExtraction"])
+
+            index_path = controller._extraction_index_path(record["recordId"])
+            index_path.parent.mkdir(parents=True, exist_ok=True)
+            index_path.write_text(
+                json.dumps(
+                    {
+                        "version": 3,
+                        "sourcePath": record["localPdfPath"],
+                        "engine": "pymupdf",
+                        "pageCount": 1,
+                        "pages": [{"page": 0, "width": 240, "height": 320}],
+                        "elements": [],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            self.assertTrue(controller.hasExtraction(record["recordId"]))
+            self.assertTrue(controller.records[0]["hasExtraction"])
+
     def test_ensure_loaded_uses_cache_when_signatures_match(self) -> None:
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:
             root = Path(temp)
@@ -516,6 +547,89 @@ class LiteratureLibraryControllerTests(unittest.TestCase):
             self.assertEqual(controller.totalCount, 1)
             self.assertTrue(controller.records[0]["localPdfPath"].endswith("sample.pdf"))
 
+    def test_refresh_does_not_extract_pdf_text_for_missing_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            download_root = root / "Download"
+            pdf_dir = download_root / "pdfs"
+            pdf_dir.mkdir(parents=True)
+            pdf_path = pdf_dir / "paper.pdf"
+            write_sample_pdf(pdf_path)
+            (download_root / "metadata_battery.jsonl").write_text(
+                json.dumps(
+                    {
+                        "keyword": "lithium-sulfur batteries",
+                        "literature_source": "openalex",
+                        "source_record_id": "https://openalex.org/W-no-text",
+                        "title": "Lithium-sulfur batteries without extracted fields",
+                        "download_status": "downloaded",
+                        "local_pdf_path": "pdfs/paper.pdf",
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            controller = self.make_controller(root)
+            core = import_resource_module(AppPaths(ROOT, root, ()), "Download", "literature_download_core")
+
+            with mock.patch.object(core, "extract_pdf_text", side_effect=AssertionError("PDF text should not be read")):
+                self.assertTrue(controller.refresh())
+                self.wait_for_idle(controller)
+
+            self.assertEqual(controller.totalCount, 1)
+            self.assertTrue(controller.records[0]["localPdfPath"].endswith("paper.pdf"))
+
+    def test_manual_pdf_title_does_not_open_pdf_during_refresh(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:
+            root = Path(temp)
+            pdf_dir = root / "Download" / "pdfs"
+            pdf_dir.mkdir(parents=True)
+            manual_pdf = pdf_dir / "local-only.pdf"
+            write_sample_pdf(manual_pdf)
+            controller = self.make_controller(root)
+
+            with mock.patch.object(fitz, "open", side_effect=AssertionError("manual title should use filename")):
+                self.assertTrue(controller.refresh())
+                self.wait_for_idle(controller)
+
+            self.assertEqual(controller.totalCount, 1)
+            self.assertIn("local only", controller.records[0]["title"].casefold())
+
+    def test_visible_records_load_in_batches(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:
+            root = Path(temp)
+            download_root = root / "Download"
+            download_root.mkdir(parents=True)
+            rows = []
+            for index in range(305):
+                rows.append(
+                    json.dumps(
+                        {
+                            "keyword": "lithium-sulfur batteries",
+                            "literature_source": "openalex",
+                            "source_record_id": f"https://openalex.org/W-batch-{index}",
+                            "title": f"Lithium-sulfur batteries batch record {index:03d}",
+                            "abstract": "This paper discusses polysulfide control.",
+                            "publication_year": 2024,
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+            (download_root / "metadata_battery.jsonl").write_text("\n".join(rows) + "\n", encoding="utf-8")
+            controller = self.make_controller(root)
+
+            self.assertTrue(controller.refresh())
+            self.wait_for_idle(controller)
+
+            self.assertEqual(controller.filteredCount, 305)
+            self.assertEqual(controller.visibleCount, 300)
+            self.assertEqual(len(controller.visibleRecords), 300)
+            self.assertTrue(controller.hasMoreVisibleRecords)
+            self.assertTrue(controller.loadMoreVisibleRecords())
+            self.assertEqual(controller.visibleCount, 305)
+            self.assertFalse(controller.hasMoreVisibleRecords)
+
     def test_thumbnail_and_organize_keep_original_pdf(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -574,7 +688,7 @@ class LiteratureLibraryControllerTests(unittest.TestCase):
 
             failed_record_id = "failed"
             controller._record_by_id[failed_record_id] = {"recordId": failed_record_id, "localPdfPath": str(pdf_path)}
-            with mock.patch.object(LiteratureLibraryController, "_render_pdf_first_page", return_value=""):
+            with mock.patch.object(LiteratureLibraryController, "_render_pdf_first_page", return_value="") as render:
                 self.assertEqual(controller.thumbnailFor(failed_record_id), "")
                 deadline = time.monotonic() + 5.0
                 while controller.thumbnailStateFor(failed_record_id) == "generating" and time.monotonic() < deadline:
@@ -583,7 +697,33 @@ class LiteratureLibraryControllerTests(unittest.TestCase):
                 QCoreApplication.processEvents()
 
             self.assertEqual(controller.thumbnailStateFor(failed_record_id), "failed")
+            self.assertEqual(render.call_count, 1)
             self.assertEqual(controller.thumbnailFor(failed_record_id), "")
+            self.assertEqual(render.call_count, 1)
+
+            pdf_path.write_bytes(pdf_path.read_bytes() + b"\n% changed")
+            with mock.patch.object(LiteratureLibraryController, "_render_pdf_first_page", return_value="file:///retry.png") as retry_render:
+                self.assertEqual(controller.thumbnailFor(failed_record_id), "")
+                deadline = time.monotonic() + 5.0
+                while controller.thumbnailStateFor(failed_record_id) == "generating" and time.monotonic() < deadline:
+                    QCoreApplication.processEvents()
+                    time.sleep(0.01)
+                QCoreApplication.processEvents()
+            self.assertEqual(retry_render.call_count, 1)
+            self.assertEqual(controller.thumbnailStateFor(failed_record_id), "ready")
+
+            thrown_record_id = "failed_throw"
+            controller._record_by_id[thrown_record_id] = {"recordId": thrown_record_id, "localPdfPath": str(pdf_path)}
+            with mock.patch.object(LiteratureLibraryController, "_render_pdf_first_page", side_effect=RuntimeError("boom")) as thrown_render:
+                self.assertEqual(controller.thumbnailFor(thrown_record_id), "")
+                deadline = time.monotonic() + 5.0
+                while controller.thumbnailStateFor(thrown_record_id) == "generating" and time.monotonic() < deadline:
+                    QCoreApplication.processEvents()
+                    time.sleep(0.01)
+                QCoreApplication.processEvents()
+            self.assertEqual(controller.thumbnailStateFor(thrown_record_id), "failed")
+            self.assertEqual(controller.thumbnailFor(thrown_record_id), "")
+            self.assertEqual(thrown_render.call_count, 1)
 
     def test_preview_generates_high_resolution_cache_lazily(self) -> None:
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:

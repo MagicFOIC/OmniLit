@@ -106,6 +106,10 @@ class PdfExtractionEngineTests(unittest.TestCase):
             self.assertEqual(mineru.calls, 0)
             saved = json.loads((root / "out" / "extraction_index.json").read_text(encoding="utf-8"))
             self.assertEqual(saved["version"], 3)
+            self.assertTrue((root / "out" / "quality_report.json").exists())
+            quality_report = json.loads((root / "out" / "quality_report.json").read_text(encoding="utf-8"))
+            self.assertEqual(quality_report["summary"]["engineErrors"], 1)
+            self.assertEqual(quality_report["engineErrors"][0]["engine"], "paddleocr_vl")
 
     def test_retired_hybrid_engine_is_unsupported(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -136,6 +140,7 @@ class PdfExtractionEngineTests(unittest.TestCase):
             self.assertEqual([error["engine"] for error in index["engineErrors"]], ["hybrid"])
             self.assertEqual(index["engineErrors"][0]["code"], "UNSUPPORTED_ENGINE")
             self.assertEqual(index["elements"][0]["engine"], "pymupdf")
+            self.assertEqual(index["debugFiles"]["qualityReportJson"], str(root / "out" / "quality_report.json"))
 
 
 if __name__ == "__main__":

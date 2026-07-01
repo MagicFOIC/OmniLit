@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
-from omnilit_qt.pdf_extraction_quality import apply_quality, score_formula, score_table
+from omnilit_qt.pdf_extraction_quality import apply_quality, build_quality_report, score_formula, score_table, write_quality_report
 
 
 class PdfExtractionQualityTests(unittest.TestCase):
@@ -66,6 +69,95 @@ class PdfExtractionQualityTests(unittest.TestCase):
         self.assertTrue(element["needsReview"])
         self.assertIn("unanchored_text_table", element["qualityFlags"])
         self.assertIn("page_sized_table", element["qualityFlags"])
+
+    def test_quality_report_collects_review_items_conflicts_and_schema_warnings(self) -> None:
+        index = {
+            "sourcePath": "paper.pdf",
+            "sourceSha256": "abc",
+            "engine": "fusion",
+            "engineChain": ["pymupdf", "mineru", "fusion"],
+            "pageCount": 1,
+            "engineErrors": [{"engine": "mineru", "code": "ENGINE_FAILED", "message": "down"}],
+            "elements": [
+                {
+                    "id": "t1",
+                    "type": "table",
+                    "page": 0,
+                    "bbox": [1, 2, 50, 80],
+                    "pageSize": [100, 100],
+                    "confidence": 0.4,
+                    "needsReview": True,
+                    "qualityFlags": ["weak_table_evidence"],
+                    "table": [["A"]],
+                    "metadata": {"tableEvidenceScore": 0.2},
+                    "sourceEngines": ["pymupdf", "mineru"],
+                },
+                {
+                    "id": "f1",
+                    "type": "formula",
+                    "page": 0,
+                    "bbox": [10, 10, 40, 20],
+                    "pageSize": [100, 100],
+                    "confidence": 0.9,
+                    "needsReview": False,
+                    "latex": "E = mc^2",
+                    "qualityFlags": [],
+                    "pngPath": "clips/f1.png",
+                    "manualOverride": True,
+                    "metadata": {"formulaNumber": "2", "manualOverride": True, "overrideUpdatedAt": "2026-07-01T00:00:00+00:00"},
+                },
+            ],
+        }
+
+        report = build_quality_report(index)
+
+        self.assertEqual(report["summary"]["tables"], {"count": 1, "needsReview": 1})
+        self.assertEqual(report["summary"]["formulas"], {"count": 1, "needsReview": 0})
+        self.assertEqual(report["summary"]["engineErrors"], 1)
+        self.assertEqual(report["summary"]["engineConflicts"], 1)
+        self.assertEqual(report["summary"]["schemaWarnings"], 1)
+        self.assertEqual(report["summary"]["manualOverrides"], 1)
+        self.assertEqual(report["reviewItems"][0]["id"], "t1")
+        formula_item = next(item for item in report["lowConfidenceElements"] + report["reviewItems"] if item["id"] == "t1")
+        self.assertNotIn("formulaNumber", formula_item)
+        self.assertEqual(report["engineConflicts"][0]["conflictFlags"], ["weak_table_evidence"])
+        self.assertEqual(report["schemaWarnings"][0]["missingFields"], ["jsonPath", "csvPath", "pngPath"])
+        self.assertEqual(report["manualOverrides"][0]["id"], "f1")
+        self.assertEqual(report["manualOverrides"][0]["formulaNumber"], "2")
+        self.assertEqual(report["manualOverrides"][0]["overrideUpdatedAt"], "2026-07-01T00:00:00+00:00")
+
+    def test_quality_report_includes_formula_number_for_formula_review_items(self) -> None:
+        report = build_quality_report(
+            {
+                "engine": "pymupdf",
+                "pageCount": 1,
+                "elements": [
+                    {
+                        "id": "f1",
+                        "type": "formula",
+                        "page": 0,
+                        "bbox": [10, 10, 40, 20],
+                        "confidence": 0.4,
+                        "needsReview": True,
+                        "latex": "E = mc^2",
+                        "metadata": {"formulaNumber": "7"},
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(report["reviewItems"][0]["formulaNumber"], "7")
+
+    def test_write_quality_report_outputs_json_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            report_path = write_quality_report(
+                Path(temp),
+                {"engine": "pymupdf", "pageCount": 1, "elements": [{"id": "f1", "type": "formula", "needsReview": True}]},
+            )
+
+            self.assertTrue(report_path.exists())
+            saved = json.loads(report_path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["summary"]["reviewItems"], 1)
 
 
 if __name__ == "__main__":

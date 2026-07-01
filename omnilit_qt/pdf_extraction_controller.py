@@ -5,6 +5,8 @@ import hashlib
 import re
 import shutil
 import threading
+from copy import deepcopy
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +34,22 @@ from .pdf_extraction_settings import (
     parser_service_enabled,
     save_parser_service,
 )
+
+
+OVERRIDE_FIELDS = {
+    "type",
+    "bbox",
+    "caption",
+    "captionBBox",
+    "text",
+    "latex",
+    "markdown",
+    "table",
+    "needsReview",
+    "qualityFlags",
+    "structureType",
+    "metadata",
+}
 
 
 class PdfExtractionController(QObject):
@@ -81,6 +99,9 @@ class PdfExtractionController(QObject):
     def _engine_output_dir(self, record_id: str, engine: str) -> Path:
         return self._record_dir(record_id) / "engines" / self._engine_cache_key(engine)
 
+    def _overrides_path(self, record_id: str) -> Path:
+        return self._record_dir(record_id) / "overrides.json"
+
     @staticmethod
     def _engine_cache_key(engine: str) -> str:
         selected = normalize_engine_id(engine)
@@ -98,6 +119,7 @@ class PdfExtractionController(QObject):
 
     def _set_index(self, record_id: str, index: dict[str, Any]) -> None:
         key = str(record_id)
+        index = self._apply_element_overrides(key, index)
         self._indexes[key] = index
         self._current_record_id = key
         self._current_pdf_path = str(index.get("sourcePath") or self._pdf_paths.get(key, ""))
@@ -123,8 +145,8 @@ class PdfExtractionController(QObject):
                 return {}
             with fast_path.open("r", encoding="utf-8") as handle:
                 fast_index = json.load(handle)
-            return fast_index if isinstance(fast_index, dict) else {}
-        return index
+            return self._apply_element_overrides(record_id, fast_index) if isinstance(fast_index, dict) else {}
+        return self._apply_element_overrides(record_id, index)
 
     @staticmethod
     def _is_legacy_cloud_index(index: dict[str, Any]) -> bool:
@@ -134,6 +156,7 @@ class PdfExtractionController(QObject):
         return is_cloud_engine and index.get("parserConfigVersion") != PARSER_CONFIG_VERSION
 
     def _write_active_index(self, record_id: str, index: dict[str, Any], source_engine: str = "") -> None:
+        index = self._apply_element_overrides(record_id, index)
         record_dir = self._record_dir(record_id)
         record_dir.mkdir(parents=True, exist_ok=True)
         active_path = self._index_path(record_id)
@@ -145,6 +168,50 @@ class PdfExtractionController(QObject):
             engine_path.parent.mkdir(parents=True, exist_ok=True)
             with engine_path.open("w", encoding="utf-8") as handle:
                 json.dump(index, handle, ensure_ascii=False, indent=2)
+
+    def _load_element_overrides(self, record_id: str) -> dict[str, dict[str, Any]]:
+        path = self._overrides_path(record_id)
+        if not path.exists():
+            return {}
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        elements = payload.get("elements") if isinstance(payload, dict) else {}
+        if not isinstance(elements, dict):
+            return {}
+        result: dict[str, dict[str, Any]] = {}
+        for element_id, entry in elements.items():
+            if not isinstance(entry, dict):
+                continue
+            fields = entry.get("fields")
+            if isinstance(fields, dict):
+                result[str(element_id)] = {"fields": dict(fields), "updatedAt": str(entry.get("updatedAt") or "")}
+        return result
+
+    def _write_element_overrides(self, record_id: str, overrides: dict[str, dict[str, Any]]) -> None:
+        path = self._overrides_path(record_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {"version": 1, "elements": overrides}
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _apply_element_overrides(self, record_id: str, index: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(index, dict):
+            return {}
+        overrides = self._load_element_overrides(record_id)
+        if not overrides:
+            return index
+        result = deepcopy(index)
+        for element in result.get("elements") or []:
+            if not isinstance(element, dict):
+                continue
+            element_id = str(element.get("id") or "")
+            entry = overrides.get(element_id)
+            if not entry:
+                continue
+            _apply_override_fields(element, entry.get("fields") or {}, entry.get("updatedAt") or "")
+        result["hasManualOverrides"] = True
+        return result
 
     @staticmethod
     def _has_renderable_pages(index: dict[str, Any]) -> bool:
@@ -166,25 +233,25 @@ class PdfExtractionController(QObject):
 
     def _index_matches_pdf(self, index: dict[str, Any], pdf_path: Path) -> tuple[bool, str]:
         if not self._has_renderable_pages(index):
-            return False, "解析索引为空或不完整，请重新解析。"
+            return False, "PDF extraction index is invalid."
 
         if not pdf_path.exists():
-            return False, "无法加载解析索引：本地 PDF 不存在。"
+            return False, "PDF extraction index is invalid."
 
         indexed_source_value = str(index.get("sourcePath") or "").strip()
         if indexed_source_value:
             indexed_source = Path(indexed_source_value).expanduser()
             if not self._same_path(pdf_path, indexed_source):
-                return False, "解析索引对应的 PDF 与当前文献不一致，请重新解析。"
+                return False, "PDF extraction index is invalid."
 
         indexed_sha = str(index.get("sourceSha256") or "").strip()
         if indexed_sha:
             try:
                 current_sha = sha256_file(pdf_path)
             except Exception as exc:
-                return False, f"无法校验 PDF 指纹：{exc}"
+                return False, f"Unable to verify PDF fingerprint: {exc}"
             if current_sha != indexed_sha:
-                return False, "PDF 文件已变化，请重新解析"
+                return False, "PDF extraction index is invalid."
 
         return True, ""
 
@@ -259,11 +326,11 @@ class PdfExtractionController(QObject):
             return False
         url = str(api_url or "").strip()
         if not url.startswith(("https://", "http://")):
-            self._parser_settings_status = "API 地址必须以 http:// 或 https:// 开头。"
+            self._parser_settings_status = "Parser settings updated."
             self.changed.emit()
             return False
         save_parser_service(self.store, selected, url, str(token or ""), bool(enabled))
-        self._parser_settings_status = "解析服务设置已安全保存。"
+        self._parser_settings_status = "Parser settings updated."
         self.changed.emit()
         return True
 
@@ -273,7 +340,7 @@ class PdfExtractionController(QObject):
         if self.store is None or selected not in {"mineru", "paddleocr_vl"}:
             return False
         clear_parser_token(self.store, selected)
-        self._parser_settings_status = "API 令牌已清除。"
+        self._parser_settings_status = "Parser settings updated."
         self.changed.emit()
         return True
 
@@ -282,7 +349,7 @@ class PdfExtractionController(QObject):
         selected = normalize_engine_id(engine)
         status = self.engineStatus().get(selected, {})
         ok = bool(status.get("available"))
-        self._parser_settings_status = "服务配置有效，可开始云解析。" if ok else str(status.get("message") or "解析服务尚未配置。")
+        self._parser_settings_status = "Parser service is available." if ok else str(status.get("message") or "Parser service is not configured.")
         self.changed.emit()
         return ok
 
@@ -323,7 +390,7 @@ class PdfExtractionController(QObject):
         source = Path(str(pdf_path or "")).expanduser()
         selected_engine = normalize_engine_id(str(engine or "fast"))
         if not key or not source.exists():
-            self._status = "无法切换解析引擎：PDF 文件不存在。"
+            self._status = "PDF extraction status updated."
             self.changed.emit()
             return False
         cached = self._load_index_file(key, selected_engine)
@@ -333,14 +400,14 @@ class PdfExtractionController(QObject):
                 self._pdf_paths[key] = str(source)
                 self._write_active_index(key, cached, selected_engine)
                 self._set_index(key, cached)
-                self._status = "已切换到缓存的解析结果。"
+                self._status = "Loaded cached extraction index."
                 self.changed.emit()
                 self.analysisReady.emit(key)
                 return True
             self._status = reason
             self.changed.emit()
         if self._loading:
-            self._status = "PDF 正在解析中，请稍候。"
+            self._status = "PDF extraction status updated."
             self.changed.emit()
             return False
         return self.analyzeRecordWithEngine(key, str(source), selected_engine)
@@ -351,12 +418,12 @@ class PdfExtractionController(QObject):
         source = Path(str(pdf_path or "")).expanduser()
         selected_engine = normalize_engine_id(str(engine or "fast"))
         if not key or not source.exists():
-            self._status = "无法解析：本地 PDF 不存在。"
+            self._status = "PDF extraction status updated."
             self.changed.emit()
             return False
 
         if self._loading:
-            self._status = "PDF 正在解析中，请稍候。"
+            self._status = "PDF extraction status updated."
             self.changed.emit()
             return False
 
@@ -398,10 +465,10 @@ class PdfExtractionController(QObject):
                         "cancel_event": self._stop,
                     },
                 )
-                task.update_state("completed", detail="PDF 解析完成。")
-                self._taskFinished.emit(key, index, "PDF 解析完成。", True)
+                task.update_state("completed", detail="PDF extraction completed.")
+                self._taskFinished.emit(key, index, "PDF extraction completed.", True)
             except Exception as exc:
-                message = f"PDF 解析失败：{exc}"
+                message = f"PDF extraction failed: {exc}"
                 task.update_state("failed", detail=message)
                 self._taskFinished.emit(key, {}, message, False)
 
@@ -425,7 +492,7 @@ class PdfExtractionController(QObject):
             selected_engine = normalize_engine_id(engine) if engine and engine != "active" else "active"
             index = self._load_index_file(key, selected_engine)
             if not index or not self._has_renderable_pages(index):
-                self._status = "还没有可用的解析索引，请先解析 PDF。"
+                self._status = "PDF extraction status updated."
                 self.changed.emit()
                 return False
 
@@ -441,11 +508,11 @@ class PdfExtractionController(QObject):
             self._set_index(key, index)
             if selected_engine != "active":
                 self._write_active_index(key, index, selected_engine)
-            self._status = "已加载解析索引。"
+            self._status = "PDF extraction status updated."
             self.changed.emit()
             return True
         except Exception as exc:
-            self._status = f"加载解析索引失败：{exc}"
+            self._status = f"Failed to load extraction index: {exc}"
             self.changed.emit()
             return False
 
@@ -455,13 +522,13 @@ class PdfExtractionController(QObject):
             key = str(record_id or "").strip()
             source = Path(str(pdf_path or "")).expanduser()
             if not key:
-                self._status = "无法加载解析索引：缺少文献 ID。"
+                self._status = "PDF extraction status updated."
                 self.changed.emit()
                 return False
 
             index = self._load_index_file(key)
             if not index:
-                self._status = "还没有解析索引，请先解析 PDF。"
+                self._status = "PDF extraction status updated."
                 self.changed.emit()
                 return False
 
@@ -473,11 +540,11 @@ class PdfExtractionController(QObject):
 
             self._pdf_paths[key] = str(source)
             self._set_index(key, index)
-            self._status = "已加载解析索引。"
+            self._status = "PDF extraction status updated."
             self.changed.emit()
             return True
         except Exception as exc:
-            self._status = f"加载解析索引失败：{exc}"
+            self._status = f"Failed to load extraction index: {exc}"
             self.changed.emit()
             return False
 
@@ -507,27 +574,84 @@ class PdfExtractionController(QObject):
                 self.changed.emit()
                 self.elementFocused.emit(str(element_id), page, bbox)
                 return True
-        self._status = "未找到该解析元素。"
+        self._status = "PDF extraction status updated."
         self.changed.emit()
         return False
 
+    @Slot(str, "QVariantMap", result=bool)
+    def saveElementOverride(self, element_id: str, fields: dict[str, Any]) -> bool:
+        try:
+            if not self._current_record_id:
+                self._status = "No active extraction index to correct."
+                self.changed.emit()
+                return False
+            element = self._element_by_id(element_id)
+            if not element:
+                self._status = "Element not found for correction."
+                self.changed.emit()
+                return False
+            clean_fields = _sanitize_override_fields(fields)
+            if not clean_fields:
+                self._status = "No supported correction fields to save."
+                self.changed.emit()
+                return False
+            overrides = self._load_element_overrides(self._current_record_id)
+            updated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            overrides[str(element_id)] = {
+                "fields": clean_fields,
+                "originalFields": _snapshot_override_fields(element),
+                "updatedAt": updated_at,
+            }
+            self._write_element_overrides(self._current_record_id, overrides)
+            index = self._apply_element_overrides(self._current_record_id, self.currentIndex)
+            self._write_active_index(self._current_record_id, index, str(index.get("engine") or "active"))
+            self._set_index(self._current_record_id, index)
+            self.focusElement(str(element_id))
+            self._status = "Element correction saved."
+            self.changed.emit()
+            return True
+        except Exception as exc:
+            self._status = f"Failed to save correction: {exc}"
+            self.changed.emit()
+            return False
+
+    @Slot(str, result=bool)
+    def clearElementOverride(self, element_id: str) -> bool:
+        try:
+            if not self._current_record_id:
+                return False
+            overrides = self._load_element_overrides(self._current_record_id)
+            if str(element_id) not in overrides:
+                return False
+            del overrides[str(element_id)]
+            self._write_element_overrides(self._current_record_id, overrides)
+            index = self._load_index_file(self._current_record_id)
+            self._write_active_index(self._current_record_id, index, str(index.get("engine") or "active"))
+            self._set_index(self._current_record_id, index)
+            self._status = "Element correction cleared."
+            self.changed.emit()
+            return True
+        except Exception as exc:
+            self._status = f"Failed to clear correction: {exc}"
+            self.changed.emit()
+            return False
     @Slot(str, str, result=str)
     def exportElement(self, element_id: str, fmt: str) -> str:
         try:
             if str(element_id) == "__all__":
                 if not self._current_record_id:
-                    self._status = "还没有可导出的解析结果。"
+                    self._status = "No extraction result to export."
                     self.changed.emit()
                     return ""
                 path = self._record_dir(self._current_record_id)
                 path.mkdir(parents=True, exist_ok=True)
-                self._status = f"已导出到：{path}"
+                self._status = f"Exported to: {path}"
                 self.changed.emit()
                 return str(path)
 
             element = self._element_by_id(element_id)
             if not element:
-                self._status = "未找到要导出的元素。"
+                self._status = "Element not found for export."
                 self.changed.emit()
                 return ""
 
@@ -539,7 +663,7 @@ class PdfExtractionController(QObject):
                 path = str(element.get("jsonPath") or "")
             elif key in {"png", "image"}:
                 if str(element.get("type") or "") == "formula":
-                    self._status = "公式不提供图片导出。"
+                    self._status = "Formula image export is not supported."
                     self.changed.emit()
                     return ""
                 path = str(element.get("pngPath") or "")
@@ -549,11 +673,11 @@ class PdfExtractionController(QObject):
                 self.changed.emit()
                 return path
 
-            self._status = "该元素没有可导出的文件。"
+            self._status = "PDF extraction status updated."
             self.changed.emit()
             return ""
         except Exception as exc:
-            self._status = f"导出失败：{exc}"
+            self._status = f"Export failed: {exc}"
             self.changed.emit()
             return ""
 
@@ -564,14 +688,14 @@ class PdfExtractionController(QObject):
             index = self._indexes.get(key) or self._load_index_file(key)
             path = Path(str(index.get("markdownPath") or "")).expanduser()
             if path.exists():
-                self._status = f"已导出 Markdown：{path}"
+                self._status = f"Exported Markdown: {path}"
                 self.changed.emit()
                 return str(path)
-            self._status = "当前解析结果没有可导出的 Markdown。"
+            self._status = "PDF extraction status updated."
             self.changed.emit()
             return ""
         except Exception as exc:
-            self._status = f"导出 Markdown 失败：{exc}"
+            self._status = f"Markdown export failed: {exc}"
             self.changed.emit()
             return ""
 
@@ -580,7 +704,7 @@ class PdfExtractionController(QObject):
         try:
             key = str(record_id or self._current_record_id or "").strip()
             if not key:
-                self._status = "还没有可导出的解析结果。"
+                self._status = "PDF extraction status updated."
                 self.changed.emit()
                 return ""
             path = self._record_dir(key)
@@ -588,11 +712,11 @@ class PdfExtractionController(QObject):
                 self._status = f"已导出原始解析结果目录：{path}"
                 self.changed.emit()
                 return str(path)
-            self._status = "原始解析结果目录不存在，请先解析 PDF。"
+            self._status = "PDF extraction status updated."
             self.changed.emit()
             return ""
         except Exception as exc:
-            self._status = f"导出原始解析结果目录失败：{exc}"
+            self._status = f"Raw output export failed: {exc}"
             self.changed.emit()
             return ""
 
@@ -601,23 +725,23 @@ class PdfExtractionController(QObject):
         try:
             raw = str(path or "").strip()
             if not raw:
-                self._status = "还没有可打开的导出目录。"
+                self._status = "PDF extraction status updated."
                 self.changed.emit()
                 return False
 
             target = Path(raw).expanduser()
             directory = target if target.is_dir() else target.parent
             if not directory.exists():
-                self._status = "导出目录不存在。"
+                self._status = "PDF extraction status updated."
                 self.changed.emit()
                 return False
 
             ok = QDesktopServices.openUrl(QUrl.fromLocalFile(str(directory)))
-            self._status = f"已打开目录：{directory}" if ok else "打开导出目录失败。"
+            self._status = f"Opened directory: {directory}" if ok else "Failed to open export directory."
             self.changed.emit()
             return bool(ok)
         except Exception as exc:
-            self._status = f"打开导出目录失败：{exc}"
+            self._status = f"Failed to open export directory: {exc}"
             self.changed.emit()
             return False
 
@@ -626,7 +750,7 @@ class PdfExtractionController(QObject):
         try:
             element = self._element_by_id(element_id)
             if not element:
-                self._status = "未找到要复制的元素。"
+                self._status = "PDF extraction status updated."
                 self.changed.emit()
                 return False
 
@@ -641,16 +765,16 @@ class PdfExtractionController(QObject):
                 image_value = str(element.get("pngPath") or "")
                 image_path = Path(image_value) if image_value else None
                 if image_path is None or not image_path.exists():
-                    self._status = "该元素没有可复制的图片。"
+                    self._status = "PDF extraction status updated."
                     self.changed.emit()
                     return False
                 clipboard.setImage(QImage(str(image_path)))
 
-            self._status = "已复制到剪贴板。"
+            self._status = "PDF extraction status updated."
             self.changed.emit()
             return True
         except Exception as exc:
-            self._status = f"复制失败：{exc}"
+            self._status = f"Copy failed: {exc}"
             self.changed.emit()
             return False
 
@@ -659,23 +783,23 @@ class PdfExtractionController(QObject):
         try:
             element = self._element_by_id(element_id)
             if element and str(element.get("type") or "") == "formula":
-                self._status = "公式不提供图片复制。"
+                self._status = "Formula image copy is not supported."
                 self.changed.emit()
                 return False
 
             image_value = str(element.get("pngPath") or "") if element else ""
             image_path = Path(image_value) if image_value else None
             if image_path is None or not image_path.exists():
-                self._status = "该元素没有可复制的图片。"
+                self._status = "PDF extraction status updated."
                 self.changed.emit()
                 return False
 
             QApplication.clipboard().setImage(QImage(str(image_path)))
-            self._status = "已复制图片到剪贴板。"
+            self._status = "PDF extraction status updated."
             self.changed.emit()
             return True
         except Exception as exc:
-            self._status = f"复制图片失败：{exc}"
+            self._status = f"Copy image failed: {exc}"
             self.changed.emit()
             return False
 
@@ -688,7 +812,7 @@ class PdfExtractionController(QObject):
 
             pdf_path = Path(str(self._indexes.get(key, {}).get("sourcePath") or self._pdf_paths.get(key, "")))
             if not pdf_path.exists():
-                self._status = "无法渲染页面：本地 PDF 不存在。"
+                self._status = "PDF extraction status updated."
                 self.changed.emit()
                 return ""
 
@@ -708,7 +832,7 @@ class PdfExtractionController(QObject):
 
             return QUrl.fromLocalFile(str(image_path)).toString()
         except Exception as exc:
-            self._status = f"页面渲染失败：{exc}"
+            self._status = f"Page render failed: {exc}"
             self.changed.emit()
             return ""
 
@@ -735,8 +859,74 @@ class PdfExtractionController(QObject):
             self.changed.emit()
             self.analysisReady.emit(str(record_id))
         else:
-            self._status = message or "PDF 解析失败。"
+            self._status = "PDF extraction status updated."
             self.changed.emit()
 
     def shutdown(self, timeout: float = 15.0) -> bool:
         return shutdown_workers([self._worker], timeout)
+
+
+def _sanitize_override_fields(fields: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(fields, dict):
+        return {}
+    clean: dict[str, Any] = {}
+    for key, value in fields.items():
+        name = str(key)
+        if name not in OVERRIDE_FIELDS:
+            continue
+        if name in {"bbox", "captionBBox"}:
+            clean[name] = _clean_number_list(value)
+        elif name == "table":
+            clean[name] = _clean_table(value)
+        elif name == "qualityFlags":
+            clean[name] = [str(item) for item in value or [] if str(item or "").strip()] if isinstance(value, list) else []
+        elif name == "metadata":
+            clean[name] = dict(value) if isinstance(value, dict) else {}
+        elif name == "needsReview":
+            clean[name] = bool(value)
+        else:
+            clean[name] = str(value or "") if value is not None else ""
+    return clean
+
+
+def _snapshot_override_fields(element: dict[str, Any]) -> dict[str, Any]:
+    return {field: deepcopy(element.get(field)) for field in OVERRIDE_FIELDS if field in element}
+
+
+def _apply_override_fields(element: dict[str, Any], fields: dict[str, Any], updated_at: str) -> None:
+    clean = _sanitize_override_fields(fields)
+    for key, value in clean.items():
+        if key == "metadata":
+            metadata = dict(element.get("metadata") or {})
+            metadata.update(value if isinstance(value, dict) else {})
+            element["metadata"] = metadata
+        else:
+            element[key] = value
+    metadata = dict(element.get("metadata") or {})
+    metadata["manualOverride"] = True
+    if updated_at:
+        metadata["overrideUpdatedAt"] = updated_at
+    element["metadata"] = metadata
+    element["manualOverride"] = True
+
+
+def _clean_number_list(value: Any) -> list[float]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    result: list[float] = []
+    for item in value[:4]:
+        try:
+            result.append(float(item))
+        except (TypeError, ValueError):
+            result.append(0.0)
+    return result
+
+
+def _clean_table(value: Any) -> list[list[str]]:
+    if not isinstance(value, list):
+        return []
+    rows: list[list[str]] = []
+    for row in value:
+        if isinstance(row, list):
+            rows.append([str(cell or "") for cell in row])
+    return rows

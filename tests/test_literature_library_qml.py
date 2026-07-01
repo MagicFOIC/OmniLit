@@ -29,6 +29,10 @@ class LiteratureLibraryQmlTests(unittest.TestCase):
         self.assertIn("root.selectedDetails.contentSummary", qml)
         self.assertIn("literatureLibraryController.ensureLoaded()", qml)
         self.assertIn("onClicked: literatureLibraryController.refresh()", qml)
+        self.assertIn("model: literatureLibraryController.visibleRecords", qml)
+        self.assertIn("literatureLibraryController.loadMoreVisibleRecords()", qml)
+        self.assertIn("literatureLibraryController.hasMoreVisibleRecords", qml)
+        self.assertIn("literatureLibraryController.records", qml)
 
     def test_library_toolbar_defaults_to_simple_controls_with_collapsed_filters(self) -> None:
         qml = (ROOT / "ui" / "qml" / "LiteratureLibraryPage.qml").read_text(encoding="utf-8")
@@ -51,6 +55,9 @@ class LiteratureLibraryQmlTests(unittest.TestCase):
 
         self.assertIn("解析阅读", qml)
         self.assertIn("LiteratureReaderPage", qml)
+        self.assertIn("literatureLibraryController.hasExtraction", qml)
+        self.assertIn('parsed ? "解析阅读 ✓" : "解析阅读"', qml)
+        self.assertIn("success: parsed", qml)
         reader = (qml_dir / "LiteratureReaderPage.qml").read_text(encoding="utf-8")
         self.assertIn("pdfExtractionController", reader)
         self.assertIn("pdfExtractionController.pages", reader)
@@ -118,16 +125,17 @@ class LiteratureLibraryQmlTests(unittest.TestCase):
         journal_type = qml.index('text: modelData.journalTypeLabel || "未识别"')
         favorite = qml.index('text: modelData.isFavorite ? "已收藏" : "收藏"')
         compare = qml.index('text: modelData.inCompare ? "移出对比" : "加入对比"')
-        reader = qml.index('text: "解析阅读"')
+        word_cloud = qml.index("onClicked: root.openWordCloud(index, modelData, false)")
+        reader = qml.index('parsed ? "解析阅读 ✓" : "解析阅读"')
+        graph = qml.index("onClicked: root.openKnowledgeGraph(index, modelData)")
 
         self.assertLess(downloaded, journal_type)
         self.assertLess(favorite, compare)
-        self.assertLess(compare, reader)
-        self.assertIn("id: recordMoreMenu", qml)
-        self.assertIn("onTriggered: literatureLibraryController.toggleCompare(recordDelegate.record.recordId)", qml)
-        self.assertIn("onTriggered: root.openKnowledgeGraph(index, recordDelegate.record)", qml)
-        self.assertIn("onTriggered: root.openWordCloud(index, recordDelegate.record, false)", qml)
-        self.assertIn('visible: false\n                                        enabled: !!modelData.localPdfPath && !knowledgeGraphController.loading', qml)
+        self.assertLess(compare, word_cloud)
+        self.assertLess(word_cloud, reader)
+        self.assertLess(reader, graph)
+        self.assertIn("onClicked: literatureLibraryController.toggleCompare(modelData.recordId)", qml)
+        self.assertNotIn("recordMoreMenu", qml)
         self.assertNotIn("modelData.keywordsText || modelData.contentSummary", qml)
 
     def test_reader_keeps_feedback_and_export_state_per_element(self) -> None:

@@ -1,0 +1,44 @@
+{
+  "name": "sample_academic",
+  "expectedElements": [
+    {
+      "id": "table_1",
+      "type": "table",
+      "page": 0,
+      "bbox": [72.0, 92.0, 312.0, 164.0],
+      "pageSize": [612.0, 792.0],
+      "caption": "Table 1 Effect of cathode parameters",
+      "tableShape": [3, 2],
+      "needsReview": false
+    },
+    {
+      "id": "formula_1",
+      "type": "formula",
+      "page": 0,
+      "bbox": [265.0, 214.0, 347.0, 240.0],
+      "pageSize": [612.0, 792.0],
+      "latex": "E = mc^2",
+      "formulaNumber": "1",
+      "needsReview": true
+    },
+    {
+      "id": "formula_2",
+      "type": "formula",
+      "page": 0,
+      "bbox": [268.0, 249.0, 344.0, 290.0],
+      "pageSize": [612.0, 792.0],
+      "latex": "a = b + c d = e + f",
+      "formulaNumber": "2",
+      "needsReview": true
+    },
+    {
+      "id": "figure_1",
+      "type": "figure",
+      "page": 0,
+      "bbox": [144.0, 296.0, 416.0, 413.0],
+      "pageSize": [612.0, 792.0],
+      "caption": "Fig. 1. Rectangular image area",
+      "needsReview": false
+    }
+  ]
+}

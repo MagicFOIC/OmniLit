@@ -16,6 +16,7 @@ from .app_controller import AppController
 from .background_tasks import ManagedWorker, shutdown_workers
 from .i18n import LocaleController
 from .paths import AppPaths
+from .pymupdf_tools import silence_mupdf_diagnostics
 from .services import AccountStore, as_float, default_download_dir, import_resource_module, normalize_download_form_config
 
 
@@ -54,6 +55,7 @@ KEYWORD_GROUP_ALIASES: dict[str, str] = {
 BROAD_KEYWORD_GROUPS = {"article", "study", "result", "method", "battery"}
 
 LIBRARY_CACHE_VERSION = 2
+VISIBLE_RECORD_BATCH_SIZE = 300
 
 JOURNAL_TYPE_LABELS: dict[str, str] = {
     "all": "全部期刊类型",
@@ -205,6 +207,7 @@ class LiteratureLibraryController(QObject):
         self._records: list[dict[str, Any]] = []
         self._filtered: list[dict[str, Any]] = []
         self._record_by_id: dict[str, dict[str, Any]] = {}
+        self._visible_limit = VISIBLE_RECORD_BATCH_SIZE
         self._query = ""
         self._relevance_filter = "all"
         self._pdf_status_filter = "all"
@@ -278,6 +281,38 @@ class LiteratureLibraryController(QObject):
     @staticmethod
     def _library_cache_path(output_root: Path) -> Path:
         return output_root / "library_cache.json"
+
+    @staticmethod
+    def _safe_record_id(record_id: str) -> str:
+        value = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(record_id or "record")).strip("._")
+        value = value[:72] or "record"
+        suffix = hashlib.sha1(str(record_id).encode("utf-8")).hexdigest()[:8]
+        return f"{value}_{suffix}"
+
+    def _extraction_index_path(self, record_id: str) -> Path:
+        return self.paths.data("Literature", "extractions", self._safe_record_id(record_id), "extraction_index.json")
+
+    @staticmethod
+    def _is_usable_extraction_index(path: Path) -> bool:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return False
+        if not isinstance(payload, dict):
+            return False
+        try:
+            page_count = int(payload.get("pageCount") or 0)
+        except (TypeError, ValueError):
+            page_count = 0
+        pages = payload.get("pages") or []
+        return page_count > 0 and isinstance(pages, list) and bool(pages)
+
+    def _has_extraction_index(self, record_id: str) -> bool:
+        key = str(record_id or "").strip()
+        if not key:
+            return False
+        path = self._extraction_index_path(key)
+        return path.exists() and self._is_usable_extraction_index(path)
 
     @staticmethod
     def _metadata_signature(meta_path: Path) -> dict[str, Any]:
@@ -480,17 +515,6 @@ class LiteratureLibraryController(QObject):
 
     @staticmethod
     def _manual_pdf_title(pdf_path: Path) -> str:
-        title = ""
-        try:
-            import fitz
-
-            with fitz.open(pdf_path) as document:
-                metadata = document.metadata or {}
-                title = str(metadata.get("title") or "").strip()
-        except Exception:
-            title = ""
-        if title and title.casefold() not in {"untitled", "none"}:
-            return re.sub(r"\s+", " ", title).strip()
         stem = re.sub(r"[_\-]+", " ", pdf_path.stem).strip()
         return re.sub(r"\s+", " ", stem).strip() or pdf_path.name
 
@@ -631,13 +655,6 @@ class LiteratureLibraryController(QObject):
         abstract = str(enriched.get("abstract") or enriched.get("extracted_abstract") or "")
         extracted_abstract = str(enriched.get("extracted_abstract") or "")
         explicit_keywords = list(enriched.get("extracted_keywords") or [])
-        if (not abstract or not explicit_keywords) and pdf_path:
-            pdf_text = core.extract_pdf_text(pdf_path)
-            if not abstract:
-                extracted_abstract = core.extract_abstract_from_text(pdf_text)
-                abstract = extracted_abstract
-            if not explicit_keywords:
-                explicit_keywords = core.extract_keywords_from_text(pdf_text)
         extracted_keywords = core.generate_extracted_keywords(
             keyword,
             str(enriched.get("title") or ""),
@@ -1040,6 +1057,7 @@ class LiteratureLibraryController(QObject):
     def _render_pdf_first_page(pdf_path: Path, image_path: Path, max_width: int) -> str:
         try:
             image_path.parent.mkdir(parents=True, exist_ok=True)
+            silence_mupdf_diagnostics()
             import fitz
 
             with fitz.open(pdf_path) as document:
@@ -1054,6 +1072,54 @@ class LiteratureLibraryController(QObject):
         except Exception:
             return ""
 
+    @staticmethod
+    def _pdf_file_signature(pdf_path: Path) -> dict[str, Any]:
+        try:
+            stat = pdf_path.stat()
+            return {
+                "path": str(pdf_path.resolve()),
+                "size": int(stat.st_size),
+                "mtime_ns": int(stat.st_mtime_ns),
+            }
+        except OSError:
+            return {"path": str(pdf_path), "size": 0, "mtime_ns": 0}
+
+    @classmethod
+    def _read_page_image_failure(cls, marker_path: Path, pdf_path: Path) -> bool:
+        try:
+            with marker_path.open("r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except Exception:
+            return False
+        if not isinstance(payload, dict):
+            return False
+        if payload.get("pdf") == cls._pdf_file_signature(pdf_path):
+            return True
+        try:
+            marker_path.unlink()
+        except OSError:
+            pass
+        return False
+
+    @classmethod
+    def _write_page_image_failure(cls, marker_path: Path, pdf_path: Path) -> None:
+        try:
+            marker_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {"pdf": cls._pdf_file_signature(pdf_path), "failedAt": datetime.now().isoformat(timespec="seconds")}
+            tmp_path = marker_path.with_name(f"{marker_path.name}.tmp")
+            with tmp_path.open("w", encoding="utf-8") as handle:
+                json.dump(payload, handle, ensure_ascii=False)
+            tmp_path.replace(marker_path)
+        except Exception:
+            return
+
+    @staticmethod
+    def _clear_page_image_failure(marker_path: Path) -> None:
+        try:
+            marker_path.unlink()
+        except OSError:
+            pass
+
     def _cached_page_image_url(
         self,
         *,
@@ -1066,7 +1132,7 @@ class LiteratureLibraryController(QObject):
         state_prefix: str,
     ) -> str:
         key = str(record_id)
-        if key in urls:
+        if key in urls and urls[key]:
             return urls[key]
         record = self._record_by_id.get(key)
         if not record or not record.get("localPdfPath"):
@@ -1079,13 +1145,25 @@ class LiteratureLibraryController(QObject):
             return ""
         cache_dir = self._output_root() / cache_folder
         image_path = cache_dir / f"{key}.png"
+        failure_path = cache_dir / f"{key}.failed.json"
         if image_path.exists() and image_path.stat().st_mtime >= pdf_path.stat().st_mtime:
             url = QUrl.fromLocalFile(str(image_path)).toString()
             urls[key] = url
+            self._clear_page_image_failure(failure_path)
             return url
+        if self._read_page_image_failure(failure_path, pdf_path):
+            urls[key] = ""
+            return ""
 
         def run() -> None:
-            url = self._render_pdf_first_page(pdf_path, image_path, max_width)
+            try:
+                url = self._render_pdf_first_page(pdf_path, image_path, max_width)
+            except Exception:
+                url = ""
+            if url:
+                self._clear_page_image_failure(failure_path)
+            else:
+                self._write_page_image_failure(failure_path, pdf_path)
             ready_signal.emit(key, url)
 
         task = ManagedWorker(
@@ -1102,12 +1180,13 @@ class LiteratureLibraryController(QObject):
         self,
         *,
         record_id: str,
+        cache_folder: str,
         workers: dict[str, ManagedWorker],
         urls: dict[str, str],
     ) -> str:
         key = str(record_id)
-        if key in urls:
-            return "ready" if urls[key] else "failed"
+        if key in urls and urls[key]:
+            return "ready"
         record = self._record_by_id.get(key)
         if not record or not record.get("localPdfPath"):
             return "missing_pdf"
@@ -1117,6 +1196,14 @@ class LiteratureLibraryController(QObject):
         pdf_path = Path(str(record["localPdfPath"]))
         if not pdf_path.exists():
             return "missing_pdf"
+        cache_dir = self._output_root() / cache_folder
+        image_path = cache_dir / f"{key}.png"
+        if image_path.exists() and image_path.stat().st_mtime >= pdf_path.stat().st_mtime:
+            return "ready"
+        if self._read_page_image_failure(cache_dir / f"{key}.failed.json", pdf_path):
+            return "failed"
+        if key in urls:
+            return "failed"
         return "idle"
 
     def _apply_loaded_records(self, records: list[dict[str, Any]]) -> None:
@@ -1127,6 +1214,9 @@ class LiteratureLibraryController(QObject):
         valid_keys = {str(option.get("key") or "") for option in self._keyword_group_options}
         self._keyword_group_filter = {key for key in self._keyword_group_filter if key in valid_keys}
         self._apply_filters()
+
+    def _reset_visible_limit(self) -> None:
+        self._visible_limit = VISIBLE_RECORD_BATCH_SIZE
 
     def _list_record(self, record: dict[str, Any]) -> dict[str, Any]:
         record_id = str(record.get("recordId") or "")
@@ -1167,6 +1257,7 @@ class LiteratureLibraryController(QObject):
             "favoriteProjectIds": favorite_project_ids,
             "favoriteProjectNamesText": self._favorite_project_names_text(record_id),
             "inCompare": record_id in compare_ids,
+            "hasExtraction": self._has_extraction_index(record_id),
         }
 
     @staticmethod
@@ -1256,6 +1347,7 @@ class LiteratureLibraryController(QObject):
                     continue
             filtered.append(record)
         self._filtered = self._sort_records(filtered)
+        self._reset_visible_limit()
 
     def _start_worker(
         self,
@@ -1360,6 +1452,18 @@ class LiteratureLibraryController(QObject):
         return [self._list_record(record) for record in self._filtered]
 
     @Property("QVariantList", notify=changed)
+    def visibleRecords(self) -> list[dict[str, Any]]:
+        return [self._list_record(record) for record in self._filtered[: self._visible_limit]]
+
+    @Property(int, notify=changed)
+    def visibleCount(self) -> int:
+        return min(len(self._filtered), self._visible_limit)
+
+    @Property(bool, notify=changed)
+    def hasMoreVisibleRecords(self) -> bool:
+        return self._visible_limit < len(self._filtered)
+
+    @Property("QVariantList", notify=changed)
     def keywordGroupOptions(self) -> list[dict[str, Any]]:
         return list(self._keyword_group_options)
 
@@ -1384,6 +1488,23 @@ class LiteratureLibraryController(QObject):
     @Property(int, notify=changed)
     def filteredCount(self) -> int:
         return len(self._filtered)
+
+    @Slot(result=bool)
+    def loadMoreVisibleRecords(self) -> bool:
+        if self._visible_limit >= len(self._filtered):
+            return False
+        self._visible_limit = min(len(self._filtered), self._visible_limit + VISIBLE_RECORD_BATCH_SIZE)
+        self.changed.emit()
+        return True
+
+    @Slot(str, result=bool)
+    def hasExtraction(self, record_id: str) -> bool:
+        return self._has_extraction_index(record_id)
+
+    @Slot(str)
+    def notifyExtractionReady(self, record_id: str) -> None:
+        if str(record_id or "") in self._record_by_id:
+            self.changed.emit()
 
     @Property(str, notify=changed)
     def statusText(self) -> str:
@@ -1677,6 +1798,7 @@ class LiteratureLibraryController(QObject):
     def thumbnailStateFor(self, record_id: str) -> str:
         return self._cached_page_image_state(
             record_id=str(record_id),
+            cache_folder="library_thumbnails",
             workers=self._thumbnail_workers,
             urls=self._thumbnail_urls,
         )
@@ -1697,6 +1819,7 @@ class LiteratureLibraryController(QObject):
     def previewStateFor(self, record_id: str) -> str:
         return self._cached_page_image_state(
             record_id=str(record_id),
+            cache_folder="library_previews",
             workers=self._preview_workers,
             urls=self._preview_urls,
         )

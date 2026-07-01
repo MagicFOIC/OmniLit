@@ -59,7 +59,7 @@ def make_base_index(source: Path, output_dir: Path, engine: str, page_count: int
             "figures": {"count": 0, "needsReview": 0},
             "formulas": {"count": 0, "needsReview": 0},
         },
-        "debugFiles": {"mineruLayoutPdf": "", "fusionReportJson": ""},
+        "debugFiles": {"mineruLayoutPdf": "", "fusionReportJson": "", "qualityReportJson": ""},
     }
 
 
@@ -161,6 +161,7 @@ def ensure_version_3(index: dict[str, Any], engine: str = "") -> dict[str, Any]:
     result["debugFiles"] = {
         "mineruLayoutPdf": str(debug_files.get("mineruLayoutPdf") or ""),
         "fusionReportJson": str(debug_files.get("fusionReportJson") or ""),
+        "qualityReportJson": str(debug_files.get("qualityReportJson") or ""),
     }
     normalized_elements = []
     for element in result.get("elements") or []:

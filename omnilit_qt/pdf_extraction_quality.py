@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import re
+from pathlib import Path
 from typing import Any
 
 from .pdf_extraction_schema import normalize_bbox
@@ -96,7 +98,7 @@ def score_formula(element: dict[str, Any]) -> tuple[float, list[str]]:
         flags.append("short_latex")
     if any(token in latex for token in ("=", "\\frac", "^", "_", "\\sum", "\\int")):
         score += 0.12
-    if _looks_numbered(latex):
+    if _looks_numbered(latex) or str(metadata.get("formulaNumber") or "").strip():
         score += 0.05
     if _has_source_pair(element):
         score += 0.1
@@ -149,8 +151,163 @@ def quality_summary(elements: list[dict[str, Any]]) -> dict[str, dict[str, int]]
     return result
 
 
+def build_quality_report(index: dict[str, Any]) -> dict[str, Any]:
+    elements = [item for item in index.get("elements") or [] if isinstance(item, dict)]
+    summary = quality_summary(elements)
+    review_items = [_element_review_item(element) for element in elements if _element_needs_review(element)]
+    low_confidence = [
+        _element_review_item(element)
+        for element in elements
+        if _optional_float(element.get("confidence")) is not None and float(element.get("confidence") or 0.0) < 0.65
+    ]
+    schema_warnings = _schema_warnings(elements)
+    engine_conflicts = _engine_conflicts(elements)
+    manual_overrides = [_manual_override_item(element) for element in elements if _has_manual_override(element)]
+    engine_errors = [dict(item) for item in index.get("engineErrors") or [] if isinstance(item, dict)]
+    return {
+        "version": 1,
+        "sourcePath": str(index.get("sourcePath") or ""),
+        "sourceSha256": str(index.get("sourceSha256") or ""),
+        "engine": str(index.get("engine") or ""),
+        "engineChain": [str(item) for item in index.get("engineChain") or [] if str(item or "").strip()],
+        "pageCount": int(index.get("pageCount") or 0),
+        "summary": {
+            **summary,
+            "reviewItems": len(review_items),
+            "lowConfidence": len(low_confidence),
+            "engineErrors": len(engine_errors),
+            "engineConflicts": len(engine_conflicts),
+            "schemaWarnings": len(schema_warnings),
+            "manualOverrides": len(manual_overrides),
+        },
+        "reviewItems": review_items,
+        "lowConfidenceElements": low_confidence,
+        "manualOverrides": manual_overrides,
+        "engineErrors": engine_errors,
+        "engineConflicts": engine_conflicts,
+        "schemaWarnings": schema_warnings,
+    }
+
+
+def write_quality_report(output_dir: str | Path, index: dict[str, Any]) -> Path:
+    target = Path(output_dir) / "quality_report.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(build_quality_report(index), ensure_ascii=False, indent=2), encoding="utf-8")
+    return target
+
+
 def _finalize(score: float, flags: list[str]) -> tuple[float, list[str]]:
     return round(max(0.05, min(0.99, score)), 3), list(dict.fromkeys(flags))
+
+
+def _element_needs_review(element: dict[str, Any]) -> bool:
+    return bool(element.get("needsReview") or element.get("qualityFlags") or float(element.get("confidence") or 0.0) < 0.65)
+
+
+def _element_review_item(element: dict[str, Any]) -> dict[str, Any]:
+    item = {
+        "id": str(element.get("id") or ""),
+        "type": str(element.get("type") or ""),
+        "page": int(element.get("page") or 0),
+        "bbox": normalize_bbox(element.get("bbox")),
+        "confidence": float(element.get("confidence") or 0.0),
+        "needsReview": bool(element.get("needsReview")),
+        "qualityFlags": [str(flag) for flag in element.get("qualityFlags") or [] if str(flag or "").strip()],
+        "caption": str(element.get("caption") or ""),
+        "sourceEngines": [str(item) for item in element.get("sourceEngines") or [] if str(item or "").strip()],
+        "sourceElementIds": [str(item) for item in element.get("sourceElementIds") or [] if str(item or "").strip()],
+    }
+    metadata = element.get("metadata") or {}
+    if str(element.get("type") or "") == "formula" and metadata.get("formulaNumber"):
+        item["formulaNumber"] = str(metadata.get("formulaNumber") or "")
+    if _has_manual_override(element):
+        item["manualOverride"] = True
+        if metadata.get("overrideUpdatedAt"):
+            item["overrideUpdatedAt"] = str(metadata.get("overrideUpdatedAt") or "")
+    return item
+
+
+def _has_manual_override(element: dict[str, Any]) -> bool:
+    metadata = element.get("metadata") or {}
+    return bool(element.get("manualOverride") or metadata.get("manualOverride"))
+
+
+def _manual_override_item(element: dict[str, Any]) -> dict[str, Any]:
+    item = _element_review_item(element)
+    metadata = element.get("metadata") or {}
+    item["manualOverride"] = True
+    if metadata.get("overrideUpdatedAt"):
+        item["overrideUpdatedAt"] = str(metadata.get("overrideUpdatedAt") or "")
+    return item
+
+
+def _engine_conflicts(elements: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    conflict_flags = {
+        "weak_formula_match",
+        "weak_table_evidence",
+        "duplicate_of_table",
+        "bbox_clipped",
+        "bbox_out_of_page",
+    }
+    conflicts: list[dict[str, Any]] = []
+    for element in elements:
+        flags = {str(flag) for flag in element.get("qualityFlags") or []}
+        metadata = element.get("metadata") or {}
+        source_engines = [str(item) for item in element.get("sourceEngines") or [] if str(item or "").strip()]
+        source_disagreement = (
+            len(set(source_engines)) > 1
+            and (
+                metadata.get("formulaMatchScore") is not None
+                and float(_optional_float(metadata.get("formulaMatchScore")) or 0.0) < 0.55
+                or metadata.get("tableEvidenceScore") is not None
+                and float(_optional_float(metadata.get("tableEvidenceScore")) or 0.0) < 0.55
+            )
+        )
+        matched_flags = sorted(flags.intersection(conflict_flags))
+        if not matched_flags and not source_disagreement:
+            continue
+        item = _element_review_item(element)
+        item["conflictFlags"] = matched_flags
+        if metadata.get("formulaMatchScore") is not None:
+            item["formulaMatchScore"] = float(_optional_float(metadata.get("formulaMatchScore")) or 0.0)
+        if metadata.get("tableEvidenceScore") is not None:
+            item["tableEvidenceScore"] = float(_optional_float(metadata.get("tableEvidenceScore")) or 0.0)
+        conflicts.append(item)
+    return conflicts
+
+
+def _schema_warnings(elements: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    warnings: list[dict[str, Any]] = []
+    for element in elements:
+        kind = str(element.get("type") or "")
+        missing: list[str] = []
+        if kind == "table":
+            if not element.get("table"):
+                missing.append("table")
+            if not element.get("jsonPath"):
+                missing.append("jsonPath")
+            if not element.get("csvPath"):
+                missing.append("csvPath")
+            if not element.get("pngPath"):
+                missing.append("pngPath")
+        elif kind == "formula":
+            if not (element.get("latex") or element.get("text")):
+                missing.append("latex")
+            if not element.get("pngPath"):
+                missing.append("pngPath")
+        elif kind in {"figure", "chart"} and not element.get("pngPath"):
+            missing.append("pngPath")
+        if missing:
+            warnings.append(
+                {
+                    "id": str(element.get("id") or ""),
+                    "type": kind,
+                    "page": int(element.get("page") or 0),
+                    "missingFields": missing,
+                    "message": "Element is missing expected extraction artifacts.",
+                }
+            )
+    return warnings
 
 
 def _valid_bbox(element: dict[str, Any]) -> bool:

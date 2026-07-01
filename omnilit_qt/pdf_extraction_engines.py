@@ -8,6 +8,7 @@ from .pdf_extraction_core import analyze_pdf
 from .pdf_extraction_fusion import fuse_pymupdf_mineru_indexes
 from .pdf_extraction_mineru import MinerUExtractionEngine
 from .pdf_extraction_paddleocr_vl import PaddleOCRVLExtractionEngine
+from .pdf_extraction_quality import quality_summary, write_quality_report
 from .pdf_extraction_schema import ensure_version_3, make_base_index, merge_indexes
 from .pdf_extraction_settings import normalize_engine_id
 
@@ -219,6 +220,13 @@ def _mark_review_if_deep_failed(index: dict[str, Any]) -> dict[str, Any]:
 
 def _write_index(output_dir: Path, index: dict[str, Any]) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
+    index = ensure_version_3(index, str(index.get("engine") or ""))
+    index["qualitySummary"] = quality_summary([item for item in index.get("elements") or [] if isinstance(item, dict)])
+    debug_files = dict(index.get("debugFiles") or {})
+    index["debugFiles"] = debug_files
+    debug_files["qualityReportJson"] = str(output_dir / "quality_report.json")
+    report_path = write_quality_report(output_dir, index)
+    debug_files["qualityReportJson"] = str(report_path)
     with (output_dir / "extraction_index.json").open("w", encoding="utf-8") as handle:
         json.dump(index, handle, ensure_ascii=False, indent=2)
     return index

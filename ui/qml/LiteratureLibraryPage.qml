@@ -67,10 +67,10 @@ Item {
     Connections {
         target: literatureLibraryController
         function onChanged() {
-            if(literatureLibraryController.records.length > 0 && literatureList.currentIndex < 0)
+            if(literatureLibraryController.visibleRecords.length > 0 && literatureList.currentIndex < 0)
                 literatureList.currentIndex = 0
-            else if(literatureList.currentIndex >= literatureLibraryController.records.length)
-                literatureList.currentIndex = literatureLibraryController.records.length > 0 ? 0 : -1
+            else if(literatureList.currentIndex >= literatureLibraryController.visibleRecords.length)
+                literatureList.currentIndex = literatureLibraryController.visibleRecords.length > 0 ? 0 : -1
             root.syncSelectedRecordFromIndex()
             root.updateSelection()
         }
@@ -340,9 +340,13 @@ Item {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         clip: true
-                        model: literatureLibraryController.records
+                        model: literatureLibraryController.visibleRecords
                         ScrollBar.vertical: ScrollBar {
                             policy: ScrollBar.AsNeeded
+                        }
+                        onAtYEndChanged: {
+                            if(atYEnd && literatureLibraryController.hasMoreVisibleRecords)
+                                literatureLibraryController.loadMoreVisibleRecords()
                         }
                         Component.onCompleted: {
                             if(count > 0) {
@@ -465,13 +469,24 @@ Item {
                                     }
                                     PillButton {
                                         text: modelData.inCompare ? "移出对比" : "加入对比"
-                                        visible: false
                                         onClicked: literatureLibraryController.toggleCompare(modelData.recordId)
                                     }
                                     PillButton {
-                                        text: "解析阅读"
+                                        property bool generated: {
+                                            wordCloudController.statusText
+                                            return wordCloudController.hasCloud(String(modelData.recordId || ""))
+                                        }
+                                        text: wordCloudController.loading && wordCloudController.currentScope === "record" && wordCloudController.currentKey === String(modelData.recordId || "") ? "生成中..." : generated ? "词云 ✓" : "词云"
+                                        enabled: !!modelData.localPdfPath && !wordCloudController.loading
+                                        success: generated
+                                        onClicked: root.openWordCloud(index, modelData, false)
+                                    }
+                                    PillButton {
+                                        property bool parsed: modelData.hasExtraction || literatureLibraryController.hasExtraction(String(modelData.recordId || ""))
+                                        text: parsed ? "解析阅读 ✓" : "解析阅读"
                                         visible: !!modelData.localPdfPath
                                         enabled: !!modelData.localPdfPath
+                                        success: parsed
                                         onClicked: root.openReader(index,modelData)
                                     }
                                     PillButton {
@@ -482,25 +497,9 @@ Item {
                                         text: knowledgeGraphController.loading
                                               && knowledgeGraphController.currentRecordId === String(modelData.recordId || "")
                                               ? "生成中..." : generated ? "知识图谱 ✓" : "知识图谱"
-                                        visible: false
                                         enabled: !!modelData.localPdfPath && !knowledgeGraphController.loading
                                         success: generated
                                         onClicked: root.openKnowledgeGraph(index, modelData)
-                                    }
-                                    PillButton {
-                                        property bool generated: {
-                                            wordCloudController.statusText
-                                            return wordCloudController.hasCloud(String(modelData.recordId || ""))
-                                        }
-                                        text: wordCloudController.loading && wordCloudController.currentScope === "record" && wordCloudController.currentKey === String(modelData.recordId || "") ? "生成中..." : generated ? "词云 ✓" : "词云"
-                                        visible: false
-                                        enabled: !!modelData.localPdfPath && !wordCloudController.loading
-                                        success: generated
-                                        onClicked: root.openWordCloud(index, modelData, false)
-                                    }
-                                    PillButton {
-                                        text: "更多"
-                                        onClicked: recordMoreMenu.open()
                                     }
                                     Text {
                                         Layout.fillWidth: true
@@ -521,24 +520,18 @@ Item {
                                             }
                                         }
                                     }
-                                    Menu {
-                                        id: recordMoreMenu
-                                        MenuItem {
-                                            text: recordDelegate.record.inCompare ? "移出对比" : "加入对比"
-                                            onTriggered: literatureLibraryController.toggleCompare(recordDelegate.record.recordId)
-                                        }
-                                        MenuItem {
-                                            text: knowledgeGraphController.hasGraph(String(recordDelegate.record.recordId || "")) ? "打开知识图谱" : "生成知识图谱"
-                                            enabled: !!recordDelegate.record.localPdfPath && !knowledgeGraphController.loading
-                                            onTriggered: root.openKnowledgeGraph(index, recordDelegate.record)
-                                        }
-                                        MenuItem {
-                                            text: wordCloudController.hasCloud(String(recordDelegate.record.recordId || "")) ? "打开词云" : "生成词云"
-                                            enabled: !!recordDelegate.record.localPdfPath && !wordCloudController.loading
-                                            onTriggered: root.openWordCloud(index, recordDelegate.record, false)
-                                        }
-                                    }
                                 }
+                            }
+                        }
+                        footer: Item {
+                            width: literatureList.width
+                            height: literatureLibraryController.hasMoreVisibleRecords ? 52 : 0
+                            visible: literatureLibraryController.hasMoreVisibleRecords
+
+                            PillButton {
+                                anchors.centerIn: parent
+                                text: "加载更多 " + literatureLibraryController.visibleCount + " / " + literatureLibraryController.filteredCount
+                                onClicked: literatureLibraryController.loadMoreVisibleRecords()
                             }
                         }
                     }
@@ -865,8 +858,8 @@ Item {
     }
 
     function syncSelectedRecordFromIndex() {
-        if(literatureList.currentIndex >= 0 && literatureList.currentIndex < literatureLibraryController.records.length) {
-            root.selectedRecord = literatureLibraryController.records[literatureList.currentIndex]
+        if(literatureList.currentIndex >= 0 && literatureList.currentIndex < literatureLibraryController.visibleRecords.length) {
+            root.selectedRecord = literatureLibraryController.visibleRecords[literatureList.currentIndex]
             root.selectedRecordId = root.selectedRecord.recordId || ""
         } else {
             root.selectedRecord = ({})

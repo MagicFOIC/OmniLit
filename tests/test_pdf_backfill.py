@@ -86,12 +86,14 @@ class PdfBackfillTests(unittest.TestCase):
                 {
                     "title": "Missing DOI PDF",
                     "doi": "10.1/missing",
+                    "keyword": "battery: cathode/*?",
                     "download_status": "no_candidate",
                     "open_access": {"is_oa": True},
                 },
                 {
                     "title": "Missing arXiv PDF",
                     "arxiv_id": "2601.00001v1",
+                    "keyword": "arXiv lithium sulfur",
                     "download_status": "no_candidate",
                 },
             ]
@@ -142,6 +144,14 @@ class PdfBackfillTests(unittest.TestCase):
                 for line in metadata_path.read_text(encoding="utf-8").splitlines()
             ][3:]
             self.assertEqual([record["download_status"] for record in appended], ["downloaded", "downloaded"])
+            doi_folder = core.safe_keyword_folder_name("battery: cathode/*?")
+            arxiv_folder = core.safe_keyword_folder_name("arXiv lithium sulfur")
+            doi_local_path = appended[0]["local_pdf_path"].replace("\\", "/")
+            arxiv_local_path = appended[1]["local_pdf_path"].replace("\\", "/")
+            self.assertIn(f"pdfs/{doi_folder}/", doi_local_path)
+            self.assertIn(f"pdfs/{arxiv_folder}/", arxiv_local_path)
+            self.assertTrue((pdf_dir / doi_folder / core.safe_filename("10.1/missing")).is_file())
+            self.assertTrue((pdf_dir / arxiv_folder / core.safe_filename("2601.00001v1")).is_file())
             self.assertTrue(all(record["resolver_version"] == core.PDF_RESOLVER_VERSION for record in appended))
             self.assertEqual(stats.downloaded_pdfs, 2)
             self.assertEqual(stats.pdf_downloaded, 2)
@@ -161,6 +171,146 @@ class PdfBackfillTests(unittest.TestCase):
 
         self.assertIn("元数据 PDF 补全完成。", zh)
         self.assertIn("Metadata PDF backfill finished.", en)
+
+    def test_backfill_uses_europe_pmc_doi_refresh_for_pmc_pdf(self) -> None:
+        payload = valid_pdf_bytes()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            pdf_dir = root / "pdfs"
+            pdf_dir.mkdir()
+            metadata_path = root / "metadata_battery.jsonl"
+            metadata_path.write_text(
+                json.dumps({
+                    "title": "DOI has a PMC mirror",
+                    "doi": "10.1/pmc-refresh",
+                    "keyword": "battery",
+                    "download_status": "no_candidate",
+                    "open_access": {"is_oa": True},
+                }) + "\n",
+                encoding="utf-8",
+            )
+            session = BackfillSession(payload)
+            config = core.CrawlConfig(
+                email="qa@example.com",
+                out_dir=pdf_dir,
+                meta_path=metadata_path,
+                state_path=root / "crawl_state.json",
+                min_pdf_bytes=8,
+                request_delay=0,
+                page_delay=0,
+                resume=True,
+            )
+
+            with patch.object(core, "build_session", return_value=session), patch.object(
+                core,
+                "query_unpaywall",
+                return_value=None,
+            ), patch.object(
+                core,
+                "query_openalex_work",
+                return_value=None,
+            ), patch.object(
+                core,
+                "query_europe_pmc_work_by_doi",
+                return_value={
+                    "pmcid": "PMC7654321",
+                    "europe_pmc_id": "7654321",
+                    "open_access": {"is_oa": True, "oa_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC7654321/"},
+                    "fullTextUrlList": {"fullTextUrl": []},
+                },
+            ):
+                stats = core.backfill_missing_pdfs_from_metadata(config)
+
+            self.assertEqual(stats.backfill_downloaded_pdfs, 1)
+            self.assertIn("https://pmc.ncbi.nlm.nih.gov/articles/PMC7654321/pdf/", session.get_urls)
+            appended = [
+                json.loads(line)
+                for line in metadata_path.read_text(encoding="utf-8").splitlines()
+            ][1:]
+            self.assertEqual(appended[0]["download_status"], "downloaded")
+            self.assertEqual(appended[0]["pmcid"], "PMC7654321")
+
+    def test_backfill_resolves_dynamic_candidates_when_static_candidates_are_empty(self) -> None:
+        payload = valid_pdf_bytes()
+
+        class SemanticResponse:
+            status_code = 200
+            headers: dict[str, str] = {}
+
+            @staticmethod
+            def json() -> dict:
+                return {"isOpenAccess": True, "openAccessPdf": {"url": "https://repo.example/s2.pdf"}}
+
+        class Session:
+            def __init__(self) -> None:
+                self.get_urls: list[str] = []
+                self.head_urls: list[str] = []
+                self.closed = False
+
+            def head(self, url, **_kwargs):
+                self.head_urls.append(url)
+                return HeadResponse()
+
+            def get(self, url, **_kwargs):
+                self.get_urls.append(url)
+                if "semanticscholar.org" in url:
+                    return SemanticResponse()
+                return PdfResponse(payload)
+
+            def close(self) -> None:
+                self.closed = True
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            pdf_dir = root / "pdfs"
+            pdf_dir.mkdir()
+            metadata_path = root / "metadata_battery.jsonl"
+            metadata_path.write_text(
+                json.dumps({
+                    "title": "Semantic Scholar can recover this PDF",
+                    "doi": "10.1/semantic-backfill",
+                    "keyword": "battery",
+                    "download_status": "no_candidate",
+                    "open_access": {"is_oa": True},
+                }) + "\n",
+                encoding="utf-8",
+            )
+            session = Session()
+            config = core.CrawlConfig(
+                email="qa@example.com",
+                out_dir=pdf_dir,
+                meta_path=metadata_path,
+                state_path=root / "crawl_state.json",
+                min_pdf_bytes=8,
+                request_delay=0,
+                page_delay=0,
+                resume=True,
+            )
+
+            with patch.object(core, "build_session", return_value=session), patch.object(
+                core,
+                "query_unpaywall",
+                return_value=None,
+            ), patch.object(
+                core,
+                "query_openalex_work",
+                return_value=None,
+            ), patch.object(
+                core,
+                "query_europe_pmc_work_by_doi",
+                return_value=None,
+            ):
+                stats = core.backfill_missing_pdfs_from_metadata(config)
+
+            self.assertEqual(stats.backfill_downloaded_pdfs, 1)
+            self.assertIn("https://repo.example/s2.pdf", session.head_urls)
+            self.assertIn("https://repo.example/s2.pdf", session.get_urls)
+            appended = [
+                json.loads(line)
+                for line in metadata_path.read_text(encoding="utf-8").splitlines()
+            ][1:]
+            self.assertEqual(appended[0]["download_status"], "downloaded")
+            self.assertEqual(appended[0]["pdf_candidates"], ["https://repo.example/s2.pdf"])
 
     def test_run_once_automatically_backfills_missing_pdf_after_crawl(self) -> None:
         payload = valid_pdf_bytes()
@@ -231,23 +381,23 @@ class PdfBackfillTests(unittest.TestCase):
         self.assertTrue(core.record_needs_pdf_retry(old_record, now=core.datetime(2026, 6, 5, 1, 0, 0)))
         self.assertFalse(core.record_needs_pdf_retry(current_record, now=core.datetime(2026, 6, 5, 1, 0, 0)))
 
-    def test_retry_needed_when_resolver_version_changes_to_v3(self) -> None:
+    def test_retry_needed_when_resolver_version_changes_to_v4(self) -> None:
         old_record = {
             "doi": "10.1/old-v2",
             "download_status": "not_open_access",
-            "resolver_version": "oa_pdf_resolver_v2",
+            "resolver_version": "oa_pdf_resolver_v3",
             "pdf_retry_attempts": 99,
             "last_pdf_retry_at": "2026-06-05T00:00:00",
         }
         current_record = {
-            "doi": "10.1/current-v3",
+            "doi": "10.1/current-v4",
             "download_status": "not_open_access",
-            "resolver_version": "oa_pdf_resolver_v3",
+            "resolver_version": "oa_pdf_resolver_v4",
             "pdf_retry_attempts": core.MAX_PERMANENT_PDF_RETRY_ATTEMPTS,
             "last_pdf_retry_at": "2026-06-05T00:00:00",
         }
 
-        self.assertEqual(core.PDF_RESOLVER_VERSION, "oa_pdf_resolver_v3")
+        self.assertEqual(core.PDF_RESOLVER_VERSION, "oa_pdf_resolver_v4")
         self.assertTrue(core.record_needs_pdf_retry(old_record, now=core.datetime(2026, 6, 5, 1, 0, 0)))
         self.assertFalse(core.record_needs_pdf_retry(current_record, now=core.datetime(2026, 6, 5, 1, 0, 0)))
 
@@ -278,6 +428,36 @@ class PdfBackfillTests(unittest.TestCase):
         self.assertTrue(core.record_needs_pdf_retry(transient, now=now))
         self.assertFalse(core.record_needs_pdf_retry(blocked, now=now))
         self.assertFalse(core.record_needs_pdf_retry(closed, now=now))
+
+    def test_terminal_pdf_failures_do_not_repeat_after_current_resolver_attempt(self) -> None:
+        now = core.datetime(2026, 6, 26, 12, 0, 0)
+        openalex_404 = {
+            "doi": "10.1/openalex-404",
+            "download_status": "request_error",
+            "download_reason": "http_404",
+            "resolver_version": core.PDF_RESOLVER_VERSION,
+            "pdf_retry_attempts": core.MAX_TERMINAL_PDF_RETRY_ATTEMPTS,
+            "last_pdf_retry_at": "2026-06-01T00:00:00",
+            "last_candidate_url": "https://content.openalex.org/works/W123.pdf",
+            "candidate_source": "openalex_content_api",
+            "http_status": 404,
+        }
+        publisher_html = {
+            "doi": "10.1/publisher-html",
+            "download_status": "not_pdf",
+            "download_reason": "text/html;charset=utf-8",
+            "resolver_version": core.PDF_RESOLVER_VERSION,
+            "pdf_retry_attempts": core.MAX_TERMINAL_PDF_RETRY_ATTEMPTS,
+            "last_pdf_retry_at": "2026-06-01T00:00:00",
+            "last_candidate_url": "https://onlinelibrary.wiley.com/doi/pdf/10.1002/example",
+            "candidate_source": "publisher_rule",
+            "content_type": "text/html;charset=utf-8",
+        }
+
+        self.assertTrue(core.is_terminal_pdf_failure(openalex_404))
+        self.assertTrue(core.is_terminal_pdf_failure(publisher_html))
+        self.assertFalse(core.record_needs_pdf_retry(openalex_404, now=now))
+        self.assertFalse(core.record_needs_pdf_retry(publisher_html, now=now))
 
 
 if __name__ == "__main__":
