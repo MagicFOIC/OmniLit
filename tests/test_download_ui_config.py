@@ -4,9 +4,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from omnilit_qt.download_controller import DOWNLOAD_FORM_FIELDS, DownloadController
 from omnilit_qt.paths import AppPaths
 from omnilit_qt.services import build_download_config
+
+try:
+    from omnilit_qt.download_controller import DOWNLOAD_FORM_FIELDS, DownloadController
+except ModuleNotFoundError:  # pragma: no cover - depends on local Qt runtime.
+    DOWNLOAD_FORM_FIELDS = ()
+    DownloadController = None
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -188,6 +193,7 @@ class DownloadUiConfigTests(unittest.TestCase):
         self.assertIn("property bool activePulse: false", checkbox)
         self.assertIn("SequentialAnimation on opacity", checkbox)
 
+    @unittest.skipUnless(DownloadController is not None, "PySide6 is not installed in this environment")
     def test_download_controller_tracks_quality_email_and_stats(self) -> None:
         for field in ("includeUnknownImpactFactor", "journalMetricSource", "journalMetricCsv", "qualityPreset"):
             self.assertIn(field, DOWNLOAD_FORM_FIELDS)

@@ -5,15 +5,21 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from omnilit_qt.onboarding_controller import WORKDIR_SUBDIRS, OnboardingController
 from omnilit_qt.paths import AppPaths
 from omnilit_qt.services import AccountStore
+
+try:
+    from omnilit_qt.onboarding_controller import WORKDIR_SUBDIRS, OnboardingController
+except ModuleNotFoundError:  # pragma: no cover - depends on local Qt runtime.
+    WORKDIR_SUBDIRS = ()
+    OnboardingController = None
 
 
 class DummyApp:
     version = "9.9.9"
 
 
+@unittest.skipUnless(OnboardingController is not None, "PySide6 is not installed in this environment")
 class OnboardingControllerTests(unittest.TestCase):
     def make_controller(self, root: Path) -> tuple[OnboardingController, AccountStore]:
         paths = AppPaths(root, root)

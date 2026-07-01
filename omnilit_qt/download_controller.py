@@ -3,12 +3,22 @@ from datetime import date
 
 import threading
 from pathlib import Path
+from collections.abc import Mapping
 from typing import Any
 
 from PySide6.QtCore import QObject, Property, Signal, Slot
-from PySide6.QtWidgets import QFileDialog
+from PySide6.QtWidgets import QApplication, QFileDialog
 
-from ._controller_support import _load_form_setting, _open_path, _save_form_setting
+from ._controller_support import (
+    _load_form_setting,
+    _open_path,
+    _save_form_setting,
+    classify_download_stage,
+    classify_log_level,
+    export_log_entries,
+    log_entries_to_text,
+    log_entry,
+)
 from .app_controller import AppController
 from .background_tasks import ManagedWorker, shutdown_workers
 from .i18n import LocaleController, tr
@@ -90,7 +100,7 @@ class DownloadController(QObject):
         self._active_source_key = ""
         self._active_source_label = ""
         self._active_source_text = ""
-        self._logs: list[str] = []
+        self._log_entries: list[dict[str, Any]] = []
         self._source_api_tests: dict[str, dict[str, str]] = {}
         self._stop = threading.Event()
         self._worker: ManagedWorker | None = None
@@ -149,11 +159,46 @@ class DownloadController(QObject):
         )
 
 
-    def _append(self, text: str) -> None:
-        """追加日志并限制长度。参数：文本。返回值：无。"""
-        if text.strip():
-            self._logs.append(text.strip())
-            self._logs = self._logs[-800:]
+    def _append(self, text: str, *, level: str | None = None, stage: str | None = None, details: str = "") -> None:
+        """Append one structured download log entry."""
+        clean = str(text or "").strip()
+        if not clean:
+            return
+        if "\n" in clean and not details:
+            title, detail_text = clean.split("\n", 1)
+            clean, details = title.strip(), detail_text.strip()
+        self._log_entries.append(
+            log_entry(
+                level=level or classify_log_level(clean),
+                stage=stage or classify_download_stage(clean),
+                message=clean,
+                details=details,
+                source=self._active_source_label,
+                index=len(self._log_entries),
+            )
+        )
+        self._log_entries = self._log_entries[-1000:]
+
+    def _append_summary(self, ok: bool, message: str) -> None:
+        """Append a compact final task summary."""
+        pdf_failed = self._stats.get("pdf_failed") or self._stats.get("failed_pdfs") or self._stats.get("backfill_failed_pdfs") or 0
+        pdf_downloaded = self._stats.get("pdf_downloaded") or self._stats.get("downloaded_pdfs") or self._stats.get("backfill_downloaded_pdfs") or 0
+        skipped = (
+            self._stats.get("skipped_duplicates", 0)
+            + self._stats.get("skipped_without_key", 0)
+            + self._stats.get("skipped_irrelevant", 0)
+            + self._stats.get("skipped_not_oa", 0)
+            + self._stats.get("skipped_by_topic_score", 0)
+            + self._stats.get("skipped_by_keyword_match", 0)
+            + self._stats.get("skipped_by_impact_factor", 0)
+        )
+        total = self._stats.get("fetched_items_total") or self._stats.get("fetched_items") or self._stats.get("backfill_scanned_records") or 0
+        summary = (
+            f"{message}\n"
+            f"Total={total}; success={pdf_downloaded}; failed={pdf_failed}; skipped={skipped}; "
+            f"metadata_saved={self._stats.get('added_records', 0)}."
+        )
+        self._append(summary, level="success" if ok else "error", stage="summary")
 
     def _on_progress(self, stats: object, message: str) -> None:
         """接收下载进度。参数：统计对象和消息。返回值：无。"""
@@ -165,7 +210,6 @@ class DownloadController(QObject):
         }
 
         self._status = message
-        self._append(message)
         self._active_source_key = str(getattr(stats, "active_source_key", "") or "")
         self._active_source_label = str(getattr(stats, "active_source_label", "") or "")
         if self._active_source_label:
@@ -175,6 +219,7 @@ class DownloadController(QObject):
                 self._active_source_text = f"Current database: {self._active_source_label}"
         else:
             self._active_source_text = ""
+        self._append(message)
 
         if self._is_round_summary_message(message):
             self._last_round_summary = message
@@ -199,14 +244,14 @@ class DownloadController(QObject):
 
         self._status = final_status
 
-        # 如果已经有详细总结，就不要再把“下载任务完成。”追加到日志尾部，
-        # 避免用户最后看到的仍然是泛化完成文案。
-        if not (ok and self._last_round_summary):
-            self._append(message)
+        if ok and self._last_round_summary:
+            self._append(self._last_round_summary, level="success", stage="summary")
+        else:
+            self._append_summary(ok, message)
 
         self.app.set_status(final_status)
 
-        # 避免下一次任务复用旧总结。
+        # Clear the cached round summary before the next task.
         self._last_round_summary = ""
 
         self.changed.emit()
@@ -244,7 +289,45 @@ class DownloadController(QObject):
     @Property(str, notify=changed)
     def logText(self) -> str:
         """返回下载日志。参数：无。返回值：多行文本。"""
-        return "\n".join(self._logs)
+        return log_entries_to_text(self._log_entries)
+
+    @Property("QVariantList", notify=changed)
+    def logEntries(self) -> list[dict[str, Any]]:
+        """Return structured download log entries."""
+        return [dict(item) for item in self._log_entries]
+
+    @Slot()
+    def clearLog(self) -> None:
+        """Clear visible download logs."""
+        self._log_entries = []
+        self.changed.emit()
+
+    @Slot(result=str)
+    def exportLog(self) -> str:
+        """Export current download logs and return the JSONL path."""
+        if not self._log_entries:
+            return ""
+        path = export_log_entries(self.paths, "literature_download", self._log_entries)
+        self._status = path
+        self.changed.emit()
+        return path
+
+    @Slot("QVariantList", result=bool)
+    def copyLogEntries(self, entries: list[Any]) -> bool:
+        """Copy the provided visible log entries to the system clipboard."""
+        app = QApplication.instance()
+        if app is None:
+            return False
+        normalized: list[dict[str, Any]] = []
+        for item in entries or []:
+            value = item.toVariant() if hasattr(item, "toVariant") else item
+            if isinstance(value, Mapping):
+                normalized.append(dict(value))
+        text = log_entries_to_text(normalized)
+        if not text:
+            return False
+        app.clipboard().setText(text)
+        return True
 
     @Property("QVariantMap", notify=changed)
     def stats(self) -> dict[str, int]:
@@ -461,7 +544,7 @@ class DownloadController(QObject):
 
         self._stop.clear()
         self._last_round_summary = ""
-        self._logs, self._stats, self._running = [], self._empty_stats(), True
+        self._log_entries, self._stats, self._running = [], self._empty_stats(), True
         self._active_source_key = ""
         self._active_source_label = ""
         self._active_source_text = ""
@@ -524,7 +607,7 @@ class DownloadController(QObject):
 
         self._stop.clear()
         self._last_round_summary = ""
-        self._logs, self._stats, self._running = [], self._empty_stats(), True
+        self._log_entries, self._stats, self._running = [], self._empty_stats(), True
         self._active_source_key = ""
         self._active_source_label = ""
         self._active_source_text = ""
@@ -559,6 +642,3 @@ class DownloadController(QObject):
     def shutdown(self, timeout: float = 15.0) -> bool:
         """Request a clean stop and wait for metadata and PDF writes to settle."""
         return shutdown_workers([self._worker], timeout)
-
-
-

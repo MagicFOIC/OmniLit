@@ -23,7 +23,7 @@ Item {
     LayoutMetrics { id: metrics; viewportWidth: root.width; viewportHeight: root.height }
 
     Timer { id: saveSettingsTimer; interval: 350; onTriggered: translationController.saveConfig(config()) }
-    Component.onCompleted: { restoreSavedConfig(); syncPreview(); restoringSettings = false; root.registerTourTargets() }
+    Component.onCompleted: { restoreSavedConfig(); restoringSettings = false; root.registerTourTargets() }
     Component.onDestruction: root.unregisterTourTargets()
     onSelectedGlossariesChanged: scheduleSave()
 
@@ -525,17 +525,38 @@ Item {
                     ColumnLayout {
                         anchors.fill: parent
                         anchors.margins: 12
-                        Text { text: i18n.text("live_preview"); color: theme.text; font.weight: Font.Bold }
-                        ScrollView {
-                            id: previewScroll
+                        Text {
+                            text: i18n.text("live_preview")
+                            color: theme.text
+                            font.weight: Font.Bold
+                        }
+                        AutoScrollPanel {
+                            id: previewPanel
                             Layout.fillWidth: true
                             Layout.fillHeight: true
-                            clip: true
-                            SoftTextArea {
-                                id: previewArea
-                                width: previewScroll.availableWidth
-                                readOnly: true
-                                wrapMode: TextArea.Wrap
+                            unreadText: i18n.text("new_translation_output")
+                            contentRevision: String(translationController.previewEntries.length) + ":" + translationController.previewText.length
+
+                            Repeater {
+                                model: translationController.previewEntries
+                                delegate: Rectangle {
+                                    width: previewPanel.width
+                                    implicitHeight: previewTextBlock.implicitHeight + 18
+                                    radius: 8
+                                    color: theme.accentSofter
+                                    border.color: theme.border
+                                    Text {
+                                        id: previewTextBlock
+                                        anchors.left: parent.left
+                                        anchors.right: parent.right
+                                        anchors.top: parent.top
+                                        anchors.margins: 9
+                                        text: modelData.text
+                                        color: theme.text
+                                        wrapMode: Text.WrapAnywhere
+                                        lineHeight: theme.translationLineHeight
+                                    }
+                                }
                             }
                         }
                     }
@@ -547,23 +568,18 @@ Item {
                     ColumnLayout {
                         anchors.fill: parent
                         anchors.margins: 12
-                        Text { text: i18n.text("task_log"); color: theme.text; font.weight: Font.Bold }
-                        ScrollPreservingTextArea {
+                        LogPanel {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
-                            text: translationController.logText
-                            readOnly: true
-                            wrapMode: TextArea.Wrap
+                            title: i18n.text("task_log")
+                            entries: translationController.logEntries
+                            controller: translationController
+                            unreadText: i18n.text("new_log_output")
                         }
                     }
                 }
             }
         }
-    }
-
-    Connections {
-        target: translationController
-        function onChanged() { root.syncPreview() }
     }
 
     function toggleGlossary(path, enabled) {
@@ -615,19 +631,6 @@ Item {
         summary.checked = savedValue(settings, "summaryPage", true)
         references.checked = savedValue(settings, "translateReferences", false)
         headerFooter.checked = savedValue(settings, "translateHeaderFooter", false)
-    }
-
-    function syncPreview() {
-        let flick = previewScroll.contentItem
-        if(!flick || previewArea.text === translationController.previewText) return
-        let oldY = flick.contentY
-        let maxY = Math.max(0, flick.contentHeight - flick.height)
-        let wasAtBottom = oldY >= maxY - 12
-        previewArea.text = translationController.previewText
-        Qt.callLater(function() {
-            let newMaxY = Math.max(0, flick.contentHeight - flick.height)
-            flick.contentY = wasAtBottom ? newMaxY : Math.min(oldY, newMaxY)
-        })
     }
 
     function targetLangIndex(value) {

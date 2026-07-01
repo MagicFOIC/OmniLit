@@ -505,18 +505,13 @@ Item {
                     anchors.fill: parent
                     anchors.margins: 12
 
-                    Text {
-                        text: i18n.text("task_log")
-                        color: theme.text
-                        font.weight: Font.Bold
-                    }
-
-                    ScrollPreservingTextArea {
+                    LogPanel {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        text: downloadController.logText
-                        readOnly: true
-                        wrapMode: TextArea.Wrap
+                        title: i18n.text("task_log")
+                        entries: downloadController.logEntries
+                        controller: downloadController
+                        unreadText: i18n.text("new_log_output")
                     }
                 }
             }

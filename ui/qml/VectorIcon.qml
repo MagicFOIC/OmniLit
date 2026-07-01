@@ -46,6 +46,8 @@ Item {
         if (iconName === "user") return "M12 12 A4 4 0 1 0 12 4 A4 4 0 1 0 12 12 M4.5 21 C5.2 16.8 7.7 15 12 15 C16.3 15 18.8 16.8 19.5 21"
         if (iconName === "email") return "M4 6 L20 6 L20 18 L4 18 Z M4 7 L12 13 L20 7"
         if (iconName === "lock") return "M6 10 L18 10 L18 21 L6 21 Z M8.5 10 L8.5 7.5 C8.5 3 15.5 3 15.5 7.5 L15.5 10 M12 14 L12 17"
+        if (iconName === "copy") return "M8 8 L18 8 L18 20 L8 20 Z M6 16 L4 16 L4 4 L14 4 L14 6"
+        if (iconName === "trash") return "M5 7 L19 7 M10 11 L10 17 M14 11 L14 17 M8 7 L8.5 20 L15.5 20 L16 7 M9 7 L9.5 4 L14.5 4 L15 7"
         return ""
     }
 }

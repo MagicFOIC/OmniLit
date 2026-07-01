@@ -8,12 +8,23 @@ import threading
 import traceback
 from datetime import datetime
 from pathlib import Path
+from collections.abc import Mapping
 from typing import Any
 
 from PySide6.QtCore import QObject, Property, Signal, Slot
-from PySide6.QtWidgets import QFileDialog
+from PySide6.QtWidgets import QApplication, QFileDialog
 
-from ._controller_support import LogWriter, _format_bytes, _load_form_setting, _open_path, _save_form_setting
+from ._controller_support import (
+    LogWriter,
+    _format_bytes,
+    _load_form_setting,
+    _open_path,
+    _save_form_setting,
+    classify_log_level,
+    export_log_entries,
+    log_entries_to_text,
+    log_entry,
+)
 from .app_controller import AppController
 from .background_tasks import ManagedWorker, shutdown_workers
 from .i18n import LocaleController, tr
@@ -154,10 +165,14 @@ class TranslationController(QObject):
         self._status, self._current_document = locale.textf("not_started"), ""
         self._pending_documents: list[dict[str, str]] = []
         self._preview_text = locale.textf("preview_waiting")
-        self._logs: list[str] = []
+        self._preview_entries: list[dict[str, str]] = []
+        self._log_entries: list[dict[str, Any]] = []
         self._stop = threading.Event()
         self._worker: ManagedWorker | None = None
         self._file_index, self._file_total = 0, 1
+        self._translated_documents: list[str] = []
+        self._failed_documents: list[str] = []
+        self._skipped_documents: list[str] = []
         self._default_key = self._default_key_source = self._user_key = ""
         self.progress.connect(self._on_progress)
         self.log.connect(self._append_log)
@@ -249,12 +264,55 @@ class TranslationController(QObject):
     @Property(str, notify=changed)
     def logText(self) -> str:
         """返回翻译日志。参数：无。返回值：多行文本。"""
-        return "\n".join(self._logs)
+        return log_entries_to_text(self._log_entries)
+
+    @Property("QVariantList", notify=changed)
+    def logEntries(self) -> list[dict[str, Any]]:
+        """Return structured translation task log entries."""
+        return [dict(item) for item in self._log_entries]
 
     @Property(str, notify=changed)
     def previewText(self) -> str:
         """Return translated text completed so far for live preview."""
         return self._preview_text
+
+    @Property("QVariantList", notify=changed)
+    def previewEntries(self) -> list[dict[str, str]]:
+        """Return translated preview paragraphs as stable entries."""
+        return [dict(item) for item in self._preview_entries]
+
+    @Slot()
+    def clearLog(self) -> None:
+        """Clear visible translation logs."""
+        self._log_entries = []
+        self.changed.emit()
+
+    @Slot(result=str)
+    def exportLog(self) -> str:
+        """Export current translation logs and return the JSONL path."""
+        if not self._log_entries:
+            return ""
+        path = export_log_entries(self.paths, "literature_translation", self._log_entries)
+        self._status = path
+        self.changed.emit()
+        return path
+
+    @Slot("QVariantList", result=bool)
+    def copyLogEntries(self, entries: list[Any]) -> bool:
+        """Copy the provided visible log entries to the system clipboard."""
+        app = QApplication.instance()
+        if app is None:
+            return False
+        normalized: list[dict[str, Any]] = []
+        for item in entries or []:
+            value = item.toVariant() if hasattr(item, "toVariant") else item
+            if isinstance(value, Mapping):
+                normalized.append(dict(value))
+        text = log_entries_to_text(normalized)
+        if not text:
+            return False
+        app.clipboard().setText(text)
+        return True
 
     @Property(bool, notify=changed)
     def defaultKeyLoaded(self) -> bool:
@@ -290,8 +348,33 @@ class TranslationController(QObject):
 
     def _append_log(self, message: str) -> None:
         """追加日志并限制长度。参数：日志文本。返回值：无。"""
-        self._logs.extend(line.strip() for line in str(message).splitlines() if line.strip())
-        self._logs = self._logs[-1000:]
+        raw = str(message or "").strip()
+        if not raw:
+            return
+        if "Traceback" in raw or "\n  File " in raw:
+            self._log_entries.append(
+                log_entry(
+                    level="error",
+                    stage="technical",
+                    title="Technical error details",
+                    message=raw.splitlines()[-1] if raw.splitlines() else "Technical error details",
+                    details=raw,
+                    document=self._current_document,
+                    index=len(self._log_entries),
+                )
+            )
+        else:
+            for line in (line.strip() for line in raw.splitlines() if line.strip()):
+                self._log_entries.append(
+                    log_entry(
+                        level=classify_log_level(line),
+                        stage="runtime",
+                        message=line,
+                        document=self._current_document,
+                        index=len(self._log_entries),
+                    )
+                )
+        self._log_entries = self._log_entries[-1000:]
         self.changed.emit()
 
     def _ensure_default_glossaries(self) -> None:
@@ -327,9 +410,26 @@ class TranslationController(QObject):
         self._current_document = document
         self.changed.emit()
 
+    def _set_preview_text(self, text: str, document: str = "") -> None:
+        """Update live preview text and stable paragraph entries."""
+        self._preview_text = str(text)
+        lines = self._preview_text.splitlines()
+        current_document = document or (lines[0].strip() if lines else self._current_document)
+        body = "\n".join(lines[1:]).strip() if len(lines) > 1 else self._preview_text.strip()
+        paragraphs = [part.strip() for part in re.split(r"\n\s*\n", body) if part.strip()]
+        self._preview_entries = [
+            {
+                "id": f"{current_document}-{index}",
+                "document": current_document,
+                "index": str(index + 1),
+                "text": paragraph,
+            }
+            for index, paragraph in enumerate(paragraphs)
+        ]
+
     def _on_preview(self, text: str) -> None:
         """Refresh the live translation preview."""
-        self._preview_text = str(text)
+        self._set_preview_text(str(text))
         self.changed.emit()
 
     def _on_progress(self, stage: str, message: str, current: int, total: int) -> None:
@@ -337,16 +437,48 @@ class TranslationController(QObject):
         self._workflow_index = {"prepare": 0, "extract": 1, "translate": 2, "summary": 3, "render": 4, "done": 5}.get(stage, self._workflow_index)
         self._progress = ((max(1, self._file_index) - 1) + self._stage_fraction(stage, current, total)) / max(1, self._file_total)
         self._status = message
-        self._append_log(f"{stage}: {message}")
+        self._log_entries.append(
+            log_entry(
+                level=classify_log_level(message),
+                stage=stage or "task",
+                message=message,
+                document=self._current_document,
+                index=len(self._log_entries),
+            )
+        )
+        self._log_entries = self._log_entries[-1000:]
         self.app.set_status(message)
         self.changed.emit()
+
+    def _append_translation_summary(self, ok: bool, message: str) -> None:
+        total = self._file_total
+        success = len(self._translated_documents)
+        failed = len(self._failed_documents)
+        skipped = len(self._skipped_documents)
+        details = ""
+        if self._failed_documents:
+            details = "Failed documents:\n" + "\n".join(f"- {name}" for name in self._failed_documents)
+        self._log_entries.append(
+            log_entry(
+                level="success" if ok and not failed else "error" if failed else "warning",
+                stage="summary",
+                message=f"{message}\nTotal={total}; success={success}; failed={failed}; skipped={skipped}.",
+                details=details,
+                index=len(self._log_entries),
+            )
+        )
+        self._log_entries = self._log_entries[-1000:]
+
+    def _mark_unfinished_documents_skipped(self, pdfs: list[Path]) -> None:
+        finished = set(self._translated_documents) | set(self._failed_documents)
+        self._skipped_documents = [pdf.name for pdf in pdfs if pdf.name not in finished]
 
     def _on_finished(self, ok: bool, message: str) -> None:
         """完成翻译状态流转。参数：成功标志和消息。返回值：无。"""
         self._running, self._status = False, message
         if ok:
             self._progress, self._workflow_index = 1.0, 5
-        self._append_log(message)
+        self._append_translation_summary(ok, message)
         self.app.set_status(message)
         self.changed.emit()
 
@@ -713,11 +845,16 @@ class TranslationController(QObject):
                         self._file_index = index
                         self.document.emit(pdf.name)
                         core.translate_pdf(pdf, args, translator, glossary_text)
+                        self._translated_documents.append(pdf.name)
             except TranslationCancelled as exc:
                 message = str(exc)
+                self._mark_unfinished_documents_skipped(pdfs)
                 task.update_state("cancelled", detail=message)
                 self.finished.emit(False, message)
             except Exception as exc:
+                if self._current_document and self._current_document not in self._failed_documents:
+                    self._failed_documents.append(self._current_document)
+                self._mark_unfinished_documents_skipped(pdfs)
                 self.log.emit(traceback.format_exc())
                 message = tr(language, "translate_failed", error=exc)
                 task.update_state("failed", detail=message)
@@ -728,11 +865,21 @@ class TranslationController(QObject):
                 self.finished.emit(True, message)
 
         self._stop.clear()
-        self._logs, self._progress, self._workflow_index = [], 0.0, 0
+        self._log_entries, self._progress, self._workflow_index = [], 0.0, 0
+        self._translated_documents, self._failed_documents, self._skipped_documents = [], [], []
         self._current_document = pdfs[0].name
-        self._preview_text = tr(language, "preview_waiting")
+        self._set_preview_text(tr(language, "preview_waiting"), self._current_document)
         self._file_index, self._file_total, self._running = 0, len(pdfs), True
         self._status = tr(language, "translate_started", count=len(pdfs))
+        self._log_entries.append(
+            log_entry(
+                level="info",
+                stage="prepare",
+                message=self._status,
+                document=self._current_document,
+                index=len(self._log_entries),
+            )
+        )
         self.changed.emit()
         task = ManagedWorker(
             name="AcademicPdfTranslation",
@@ -754,6 +901,16 @@ class TranslationController(QObject):
             else:
                 self._stop.set()
             self._status = self.locale.textf("request_stop_translate")
+            self._log_entries.append(
+                log_entry(
+                    level="warning",
+                    stage="cancel",
+                    message=self._status,
+                    document=self._current_document,
+                    index=len(self._log_entries),
+                )
+            )
+            self._log_entries = self._log_entries[-1000:]
         self.app.set_status(self._status)
         self.changed.emit()
 

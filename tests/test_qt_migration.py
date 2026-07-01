@@ -1504,6 +1504,27 @@ class BackgroundTaskTests(unittest.TestCase):
             self.assertEqual(state["metadata"], {"kind": "download"})
             self.assertFalse(state_path.with_suffix(".json.tmp").exists())
 
+    def test_managed_worker_records_failure_without_reraising_from_thread(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            state_path = Path(temp) / "task_state" / "failed.json"
+
+            def target() -> None:
+                raise RuntimeError("boom")
+
+            worker = ManagedWorker(
+                name="FailingTask",
+                target=target,
+                state_path=state_path,
+                metadata={"kind": "failure-check"},
+            )
+            worker.start()
+
+            self.assertTrue(worker.join(1))
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(state["status"], "failed")
+            self.assertIn("RuntimeError: boom", state["detail"])
+            self.assertEqual(state["metadata"], {"kind": "failure-check"})
+
     def test_app_shutdown_waits_for_all_background_controllers(self) -> None:
         calls: list[tuple[str, float]] = []
 
@@ -1606,10 +1627,14 @@ class QtOnlyTests(unittest.TestCase):
         self.assertNotIn("translationController.addDocuments(translationDir.text)", translation)
         self.assertIn("id: pendingDocumentsScroll", translation)
         self.assertIn("Math.min(pendingDocumentsList.implicitHeight", translation)
-        self.assertIn("function onChanged() { root.syncPreview() }", translation)
-        self.assertIn("let oldY = flick.contentY", translation)
-        self.assertIn("let wasAtBottom = oldY >= maxY - 12", translation)
-        self.assertNotIn("text: translationController.previewText", translation)
+        auto_panel = (ROOT / "ui" / "qml" / "AutoScrollPanel.qml").read_text(encoding="utf-8")
+        self.assertIn("id: previewPanel", translation)
+        self.assertIn("translationController.previewEntries", translation)
+        self.assertIn('unreadText: i18n.text("new_translation_output")', translation)
+        self.assertIn("let oldY = root.lastY", auto_panel)
+        self.assertIn("root.hasUnread = newMaxY > oldY + root.stickThreshold", auto_panel)
+        self.assertIn("function onContentHeightChanged() { root.preserveOrFollow() }", auto_panel)
+        self.assertNotIn("function onContentHeightChanged() { root.captureScrollState() }", auto_panel)
         controls_row = translation[
             translation.index('Text { text: i18n.text("more_options")') : translation.index(
                 "StatusBanner { Layout.fillWidth: true"
@@ -1843,8 +1868,30 @@ class QtOnlyTests(unittest.TestCase):
         self.assertNotIn("id: defaultApiKeyInput", translation)
         self.assertNotIn("translationController.saveDefaultKey(apiKey.text", translation)
         self.assertNotIn("deploymentKeyAdvancedVisible", translation)
-        self.assertIn("text: translationController.logText", translation)
+        self.assertIn("entries: translationController.logEntries", translation)
+        self.assertIn("LogPanel {", translation)
         self.assertNotIn("id: logScroll", translation)
+
+    def test_task_logs_use_structured_autoscroll_log_panel(self) -> None:
+        qml_dir = ROOT / "ui" / "qml"
+        download = (qml_dir / "DownloadPage.qml").read_text(encoding="utf-8")
+        translation = (qml_dir / "TranslationPage.qml").read_text(encoding="utf-8")
+        log_panel = (qml_dir / "LogPanel.qml").read_text(encoding="utf-8")
+        auto_panel = (qml_dir / "AutoScrollPanel.qml").read_text(encoding="utf-8")
+
+        self.assertIn("entries: downloadController.logEntries", download)
+        self.assertIn("entries: translationController.logEntries", translation)
+        self.assertIn('unreadText: i18n.text("new_log_output")', download)
+        self.assertIn('unreadText: i18n.text("new_log_output")', translation)
+        self.assertIn("AutoScrollPanel {", log_panel)
+        self.assertIn("id: levelFilter", log_panel)
+        self.assertIn("id: searchField", log_panel)
+        self.assertIn("root.controller.exportLog()", log_panel)
+        self.assertIn("root.controller.clearLog()", log_panel)
+        self.assertIn("copyBuffer.forceActiveFocus()", log_panel)
+        self.assertIn("visible: root.hasUnread && !root.followTail", auto_panel)
+        self.assertNotIn("text: downloadController.logText", download)
+        self.assertNotIn("text: translationController.logText", translation)
 
     def test_update_page_has_no_editable_manifest_url(self) -> None:
         qml = (ROOT / "ui" / "qml" / "UpdatePage.qml").read_text(encoding="utf-8")

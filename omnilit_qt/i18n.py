@@ -407,6 +407,23 @@ TEXTS: dict[str, tuple[str, str]] = {
     "live_preview": ("实时翻译预览", "Live translation preview"),
     "task_log": ("任务日志", "Task log"),
     "preview_waiting": ("翻译开始后，这里会实时显示已经完成的译文。", "Completed translations will appear here while the job is running."),
+    "log_level_all": ("全部", "All"),
+    "log_level_info": ("信息", "Info"),
+    "log_level_success": ("成功", "Success"),
+    "log_level_warning": ("警告", "Warning"),
+    "log_level_error": ("错误", "Error"),
+    "log_level_debug": ("调试", "Debug"),
+    "search_logs": ("搜索日志", "Search logs"),
+    "copy_visible_logs": ("复制当前日志", "Copy visible logs"),
+    "export_logs": ("导出日志", "Export logs"),
+    "clear_logs": ("清空日志", "Clear logs"),
+    "log_copied": ("当前日志已复制。", "Visible logs copied."),
+    "log_copy_failed": ("没有可复制的日志。", "No logs to copy."),
+    "log_exported": ("日志已导出。", "Logs exported."),
+    "log_export_empty": ("没有可导出的日志。", "No logs to export."),
+    "log_cleared": ("日志已清空。", "Logs cleared."),
+    "show_details": ("展开技术详情", "Show details"),
+    "hide_details": ("收起技术详情", "Hide details"),
     "welcome": ("欢迎回来，{username}", "Welcome back, {username}"),
     "current_version": ("当前版本", "Current version"),
     "data_dir": ("用户数据目录", "User data directory"),
@@ -477,6 +494,8 @@ TEXTS: dict[str, tuple[str, str]] = {
 }
 
 TEXTS.update({
+    "new_log_output": ("有新日志，点击查看最新输出", "New logs available. Click to view the latest output."),
+    "new_translation_output": ("有新翻译内容，点击查看最新输出", "New translation content available. Click to view the latest output."),
     "onboarding_workdir_title": ("设置软件工作目录", "Set workspace folder"),
     "onboarding_workdir_body": (
         "OmniLit 会把下载、翻译、解析、文献库和缓存文件放在这个目录下。请选择一个长期可用且可写的位置。",
@@ -853,6 +872,28 @@ RU_TEXTS.update({
     "range_custom": "Custom page count",
     "first_n_pages": "First N pages",
     "terms_count": "{count} terms",
+})
+
+RU_TEXTS.update({
+    "new_log_output": "New logs available. Click to view the latest output.",
+    "new_translation_output": "New translation content available. Click to view the latest output.",
+    "log_level_all": "All",
+    "log_level_info": "Info",
+    "log_level_success": "Success",
+    "log_level_warning": "Warning",
+    "log_level_error": "Error",
+    "log_level_debug": "Debug",
+    "search_logs": "Search logs",
+    "copy_visible_logs": "Copy visible logs",
+    "export_logs": "Export logs",
+    "clear_logs": "Clear logs",
+    "show_details": "Show details",
+    "hide_details": "Hide details",
+    "log_copied": "Logs copied.",
+    "log_copy_failed": "Could not copy logs.",
+    "log_exported": "Logs exported.",
+    "log_export_empty": "No logs to export.",
+    "log_cleared": "Logs cleared.",
 })
 
 

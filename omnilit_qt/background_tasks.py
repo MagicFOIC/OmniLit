@@ -93,7 +93,6 @@ class ManagedWorker:
             self._target()
         except BaseException as exc:
             self.update_state("failed", detail=f"{type(exc).__name__}: {exc}")
-            raise
         finally:
             if self._status in {"running", "stopping"}:
                 final_status = "cancelled" if self._cancel_event.is_set() else "completed"
