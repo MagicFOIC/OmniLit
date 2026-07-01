@@ -24,6 +24,28 @@ class DownloadSourceTests(unittest.TestCase):
             ],
         )
 
+    def test_arxiv_query_preserves_user_inflections_for_recall(self) -> None:
+        query = core.arxiv_query("lithium-sulfur batteries")
+
+        self.assertIn('all:"lithium sulfur batteries"', query)
+        self.assertIn("all:batteries", query)
+        self.assertIn("all:battery", query)
+
+    def test_arxiv_query_includes_plural_and_normalized_forms(self) -> None:
+        query = core.arxiv_query("polysulfides")
+
+        self.assertIn("all:polysulfides", query)
+        self.assertIn("all:polysulfide", query)
+
+    def test_arxiv_state_key_is_versioned(self) -> None:
+        config = core.CrawlConfig()
+
+        arxiv_key = core.state_key("battery", config, core.SOURCE_ARXIV)
+        openalex_key = core.state_key("battery", config, core.SOURCE_OPENALEX)
+
+        self.assertIn(core.ARXIV_QUERY_STATE_VERSION, arxiv_key)
+        self.assertNotIn(core.ARXIV_QUERY_STATE_VERSION, openalex_key)
+
     def test_crossref_search_normalizes_metadata(self) -> None:
         class Response:
             @staticmethod
@@ -266,6 +288,63 @@ class DownloadSourceTests(unittest.TestCase):
         self.assertIn(
             "https://pmc.ncbi.nlm.nih.gov/articles/PMC1234567/pdf/",
             core.iter_pdf_candidates(item, None),
+        )
+
+    def test_europe_pmc_doi_lookup_returns_pmc_and_fulltext_candidates(self) -> None:
+        class Response:
+            status_code = 200
+            headers: dict[str, str] = {}
+
+            @staticmethod
+            def raise_for_status() -> None:
+                return None
+
+            @staticmethod
+            def json() -> dict:
+                return {
+                    "resultList": {
+                        "result": [{
+                            "source": "MED",
+                            "id": "987",
+                            "pmcid": "PMC9876543",
+                            "doi": "10.9999/epmc-doi",
+                            "title": "Europe PMC DOI full text",
+                            "pubYear": "2025",
+                            "isOpenAccess": "Y",
+                            "fullTextUrlList": {
+                                "fullTextUrl": [{
+                                    "availabilityCode": "OA",
+                                    "documentStyle": "pdf",
+                                    "url": "https://europepmc.org/articles/PMC9876543?pdf=render",
+                                }]
+                            },
+                        }]
+                    }
+                }
+
+        class Session:
+            def __init__(self) -> None:
+                self.params = None
+
+            def get(self, _url, params=None, **_kwargs):
+                self.params = params
+                return Response()
+
+        session = Session()
+        record = core.query_europe_pmc_work_by_doi(
+            session,
+            "https://doi.org/10.9999/epmc-doi",
+            core.CrawlConfig(request_delay=0),
+        )
+
+        self.assertEqual(session.params["query"], 'OPEN_ACCESS:Y AND DOI:"10.9999/epmc-doi"')
+        self.assertEqual(record["pmcid"], "PMC9876543")
+        self.assertEqual(
+            core.iter_pdf_candidates(record, None),
+            [
+                "https://pmc.ncbi.nlm.nih.gov/articles/PMC9876543/pdf/",
+                "https://europepmc.org/articles/PMC9876543?pdf=render",
+            ],
         )
 
     def test_extract_pmcid_from_fulltext_url(self) -> None:

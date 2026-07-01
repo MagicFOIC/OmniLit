@@ -41,6 +41,9 @@ ENV_API_KEYS = {
     SOURCE_DOAJ: "OMNILIT_DOAJ_API_KEY",
     SOURCE_SEMANTIC_SCHOLAR: "OMNILIT_SEMANTIC_SCHOLAR_API_KEY",
 }
+ENV_API_KEY_FALLBACKS = {
+    SOURCE_OPENALEX: ("OPENALEX_API_KEY",),
+}
 ENV_CONTACT_EMAIL = "OMNILIT_CONTACT_EMAIL"
 ENV_SOURCE_API_PROXY_URL = "OMNILIT_SOURCE_API_PROXY_URL"
 ENV_DOAJ_PROXY_ENABLED = "OMNILIT_DOAJ_PREMIUM_VIA_PROXY"
@@ -136,11 +139,11 @@ def default_proxy_base_url(source: str) -> str:
 def default_literature_api_settings(contact_email: str = "") -> LiteratureApiSettings:
     contact = (contact_email or os.getenv(ENV_CONTACT_EMAIL, "")).strip()
     settings = LiteratureApiSettings(
-        openalex_api_key=os.getenv(ENV_API_KEYS[SOURCE_OPENALEX], "").strip(),
+        openalex_api_key=env_api_key(SOURCE_OPENALEX),
         crossref_mailto=contact,
         europe_pmc_email=contact,
-        doaj_api_key=os.getenv(ENV_API_KEYS[SOURCE_DOAJ], "").strip(),
-        semantic_scholar_api_key=os.getenv(ENV_API_KEYS[SOURCE_SEMANTIC_SCHOLAR], "").strip(),
+        doaj_api_key=env_api_key(SOURCE_DOAJ),
+        semantic_scholar_api_key=env_api_key(SOURCE_SEMANTIC_SCHOLAR),
         sources={source: default_source_config(source) for source in ALL_CONFIG_SOURCES},
     )
     settings.sources[SOURCE_OPENALEX].api_key = settings.openalex_api_key
@@ -149,6 +152,17 @@ def default_literature_api_settings(contact_email: str = "") -> LiteratureApiSet
     settings.sources[SOURCE_CROSSREF].contact_email = settings.crossref_mailto
     settings.sources[SOURCE_EUROPE_PMC].contact_email = settings.europe_pmc_email
     return settings
+
+
+def env_api_key(source: str) -> str:
+    """Return the configured API key, accepting source-specific aliases."""
+    for name in (ENV_API_KEYS.get(source), *ENV_API_KEY_FALLBACKS.get(source, ())):
+        if not name:
+            continue
+        value = os.getenv(name, "").strip()
+        if value:
+            return value
+    return ""
 
 
 def source_settings_from_mapping(value: dict[str, Any] | None) -> dict[str, SourceApiConfig]:

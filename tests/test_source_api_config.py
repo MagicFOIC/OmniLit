@@ -57,6 +57,27 @@ class RecordingSession:
 
 
 class SourceApiConfigTests(unittest.TestCase):
+    def test_openalex_key_falls_back_to_standard_env_name(self) -> None:
+        with patch.dict("os.environ", {"OPENALEX_API_KEY": "standard-openalex"}, clear=True):
+            settings = core.default_literature_api_settings("qa@example.com")
+
+        self.assertEqual(settings.openalex_api_key, "standard-openalex")
+        self.assertEqual(settings.source(SOURCE_OPENALEX).api_key, "standard-openalex")
+
+    def test_openalex_omnilit_env_name_takes_precedence(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "OMNILIT_OPENALEX_API_KEY": "omnilit-openalex",
+                "OPENALEX_API_KEY": "standard-openalex",
+            },
+            clear=True,
+        ):
+            settings = core.default_literature_api_settings("qa@example.com")
+
+        self.assertEqual(settings.openalex_api_key, "omnilit-openalex")
+        self.assertEqual(settings.source(SOURCE_OPENALEX).api_key, "omnilit-openalex")
+
     def test_openalex_key_is_added_to_request_params(self) -> None:
         session = RecordingSession()
         settings = LiteratureApiSettings(openalex_api_key="oa-secret", sources={SOURCE_OPENALEX: default_source_config(SOURCE_OPENALEX)})

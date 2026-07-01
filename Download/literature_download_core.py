@@ -134,12 +134,44 @@ PDF_HEAD_TIMEOUT = (3, 5)
 PDF_LANDING_TIMEOUT = (8, 15)
 PDF_API_TIMEOUT = (8, 15)
 PDF_DOWNLOAD_TIMEOUT = (12, 30)
+OPENALEX_CONTENT_PDF_DOWNLOAD_TIMEOUT = (8, 15)
+PDF_DOWNLOAD_TOTAL_TIMEOUT = 180.0
+OPENALEX_CONTENT_PDF_DOWNLOAD_TOTAL_TIMEOUT = 45.0
+PDF_BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/124.0.0.0 Safari/537.36"
+)
+PDF_BROWSER_ACCEPT = "application/pdf,application/octet-stream;q=0.9,text/html;q=0.8,*/*;q=0.5"
+HTML_BROWSER_ACCEPT = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-PDF_RESOLVER_VERSION = "oa_pdf_resolver_v3"
+PDF_RESOLVER_VERSION = "oa_pdf_resolver_v4"
+ARXIV_QUERY_STATE_VERSION = "arxiv_query_v2"
 PDF_RETRY_COOLDOWN = timedelta(days=7)
 PERMANENT_FAILURE_STATUSES = {"blocked_or_login", "not_open_access", "no_candidate"}
 MAX_PDF_RETRY_ATTEMPTS = 8
 MAX_PERMANENT_PDF_RETRY_ATTEMPTS = 3
+MAX_TERMINAL_PDF_RETRY_ATTEMPTS = 1
+KEYWORD_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "as",
+    "at",
+    "based",
+    "by",
+    "for",
+    "from",
+    "in",
+    "of",
+    "on",
+    "or",
+    "the",
+    "to",
+    "using",
+    "via",
+    "with",
+}
 
 
 @dataclass
@@ -385,6 +417,59 @@ def is_openalex_content_url(url: str | None) -> bool:
     return host == "content.openalex.org" or host.endswith(".content.openalex.org")
 
 
+def pdf_download_request_params(config: CrawlConfig, pdf_url: str) -> dict[str, str] | None:
+    """Return auth params for PDF hosts that require source API credentials."""
+    if is_openalex_content_url(pdf_url):
+        api_key = source_api_key(config, SOURCE_OPENALEX)
+        if api_key:
+            return {"api_key": api_key}
+    return None
+
+
+def pdf_download_timeout(pdf_url: str) -> tuple[int, int]:
+    """Return the timeout tuple for a PDF download candidate."""
+    if is_openalex_content_url(pdf_url):
+        return OPENALEX_CONTENT_PDF_DOWNLOAD_TIMEOUT
+    return PDF_DOWNLOAD_TIMEOUT
+
+
+def pdf_download_total_timeout(pdf_url: str) -> float:
+    """Return the wall-clock timeout for one streamed PDF candidate."""
+    if is_openalex_content_url(pdf_url):
+        return OPENALEX_CONTENT_PDF_DOWNLOAD_TOTAL_TIMEOUT
+    return PDF_DOWNLOAD_TOTAL_TIMEOUT
+
+
+def pdf_download_timeout_result(
+    pdf_url: str,
+    candidate_source: str | None,
+    status_code: int | None = None,
+    content_type: str | None = None,
+    final_url: str | None = None,
+) -> DownloadResult:
+    """Build a stable result when a streamed PDF candidate runs too long."""
+    seconds = int(pdf_download_total_timeout(pdf_url))
+    return DownloadResult(
+        None,
+        "request_error",
+        pdf_url,
+        f"download_timeout_{seconds}s",
+        candidate_source=candidate_source,
+        http_status=status_code,
+        content_type=content_type,
+        final_url=final_url,
+        failure_reason="download_timeout",
+    )
+
+
+def safe_download_result_url(url: str | None) -> str | None:
+    """Normalize and redact a URL before storing it in download metadata."""
+    normalized = normalize_candidate_url(url)
+    if not normalized:
+        return None
+    return redact_sensitive_text(normalized)
+
+
 def increment_counter(mapping: dict[str, int], key: str | None) -> None:
     """Increment a reason/source counter with a stable fallback key."""
     normalized_key = str(key or "unknown").strip() or "unknown"
@@ -506,6 +591,30 @@ def user_agent_with_contact(session: requests.Session, contact_email: str) -> st
     return base
 
 
+def same_origin_referer(url: str | None) -> str | None:
+    """Return a conservative origin referer for browser-like PDF requests."""
+    normalized = normalize_candidate_url(url)
+    if not normalized:
+        return None
+    parsed = urlparse(normalized)
+    if not parsed.scheme or not parsed.netloc:
+        return None
+    return f"{parsed.scheme}://{parsed.netloc}/"
+
+
+def browser_like_pdf_headers(url: str | None, *, accept: str = PDF_BROWSER_ACCEPT) -> dict[str, str]:
+    """Headers used for publisher/repository PDF requests that reject bot UAs."""
+    headers = {
+        "User-Agent": PDF_BROWSER_USER_AGENT,
+        "Accept": accept,
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    referer = same_origin_referer(url)
+    if referer:
+        headers["Referer"] = referer
+    return headers
+
+
 def source_api_get(
     session: requests.Session,
     source: str,
@@ -613,6 +722,8 @@ def state_key(keyword: str, config: CrawlConfig, source: str = SOURCE_OPENALEX) 
     # Preserve historical OpenAlex state keys while isolating new source cursors.
     if source != SOURCE_OPENALEX:
         parts["source"] = source
+    if source == SOURCE_ARXIV:
+        parts["source_revision"] = ARXIV_QUERY_STATE_VERSION
     return json.dumps(parts, ensure_ascii=False, sort_keys=True)
 
 
@@ -853,14 +964,17 @@ def extract_arxiv_id(record: dict[str, Any]) -> str | None:
         if not value:
             continue
         text = str(value).strip()
-        match = re.search(r"arxiv:(\d{4}\.\d{4,5}(?:v\d+)?)", text, flags=re.IGNORECASE)
+        match = re.search(r"arxiv:((?:\d{4}\.\d{4,5}|[a-z.-]+/\d{7})(?:v\d+)?)", text, flags=re.IGNORECASE)
         if match:
             return match.group(1)
-        match = re.search(r"arxiv\.org/(?:abs|pdf)/(\d{4}\.\d{4,5}(?:v\d+)?)", text, flags=re.IGNORECASE)
+        match = re.search(r"arxiv\.org/(?:abs|pdf)/((?:\d{4}\.\d{4,5}|[a-z.-]+/\d{7})(?:v\d+)?)", text, flags=re.IGNORECASE)
         if match:
             return match.group(1)
-        if re.fullmatch(r"\d{4}\.\d{4,5}(?:v\d+)?", text):
+        if re.fullmatch(r"(?:\d{4}\.\d{4,5}|[a-z.-]+/\d{7})(?:v\d+)?", text):
             return text
+        normalized = normalize_arxiv_id(value)
+        if normalized:
+            return normalized
     ids = record.get("ids") or {}
     if isinstance(ids, dict):
         for key in ("arxiv", "arxiv_id"):
@@ -1091,8 +1205,6 @@ def candidate_host_priority(url: str) -> int:
         return 2
     if host.endswith("osti.gov"):
         return 3
-    if host.endswith("content.openalex.org"):
-        return 4
     if any(host == publisher or host.endswith(f".{publisher}") for publisher in publisher_hosts):
         return 30
     repository_tokens = (
@@ -1113,6 +1225,8 @@ def candidate_host_priority(url: str) -> int:
         return 5
     if "doaj.org" in host:
         return 6
+    if host.endswith("content.openalex.org"):
+        return 25
     return 10
 
 
@@ -1122,9 +1236,10 @@ def candidate_source_priority(candidate_source: str) -> int:
         "arxiv_pdf": 0,
         "pmc_direct": 1,
         "europe_pmc_fullTextUrl": 2,
-        "openalex_content_api": 3,
+        "semantic_scholar_openAccessPdf": 3,
         "doaj_fulltext": 5,
         "landing_page_meta": 8,
+        "openalex_content_api": 9,
         "unpaywall_url_for_pdf": 10,
         "openalex_pdf_url": 10,
         "openalex_landing": 11,
@@ -1235,6 +1350,35 @@ def add_semantic_candidates_by_priority(
         len(candidate_details),
     )
     candidate_details[insert_at:insert_at] = additions
+
+
+def has_high_confidence_pdf_candidate(candidate_details: list[PdfCandidate]) -> bool:
+    """Return whether the queue already has a strong repository/direct OA candidate."""
+    high_confidence_sources = {
+        "arxiv_pdf",
+        "pmc_direct",
+        "europe_pmc_fullTextUrl",
+        "doaj_fulltext",
+        "unpaywall_url_for_pdf",
+        "semantic_scholar_openAccessPdf",
+    }
+    return any(candidate.candidate_source in high_confidence_sources for candidate in candidate_details)
+
+
+def enrich_weak_candidates_with_semantic_scholar(
+    candidate_details: list[PdfCandidate],
+    record: dict[str, Any],
+    session: requests.Session,
+    config: CrawlConfig,
+    stats: CrawlStats | None = None,
+) -> list[PdfCandidate]:
+    """Add Semantic Scholar OA PDFs before weak publisher/OpenAlex candidates."""
+    if has_high_confidence_pdf_candidate(candidate_details):
+        return prioritize_pdf_candidate_details(candidate_details)
+    semantic_urls = fetch_semantic_scholar_pdf_candidates(session, record, config, stats)
+    if semantic_urls:
+        add_semantic_candidates_by_priority(candidate_details, semantic_urls)
+    return prioritize_pdf_candidate_details(candidate_details)
 
 
 def is_known_oa_record(record: dict[str, Any], unpaywall: dict[str, Any] | None = None) -> bool:
@@ -1605,6 +1749,8 @@ def record_needs_pdf_retry(
     cooldown_elapsed = not last_retry_at or current_time - last_retry_at >= PDF_RETRY_COOLDOWN
 
     if status in RETRYABLE_DOWNLOAD_STATUSES:
+        if is_terminal_pdf_failure(record):
+            return attempts < MAX_TERMINAL_PDF_RETRY_ATTEMPTS and cooldown_elapsed
         if status in PERMANENT_FAILURE_STATUSES:
             return attempts < MAX_PERMANENT_PDF_RETRY_ATTEMPTS and cooldown_elapsed
         if attempts >= MAX_PDF_RETRY_ATTEMPTS and not cooldown_elapsed:
@@ -1618,6 +1764,56 @@ def record_needs_pdf_retry(
         or (isinstance(unpaywall, dict) and unpaywall.get("is_oa"))
         or record.get("pdf_candidates")
     )
+
+
+def is_terminal_pdf_failure(record: dict[str, Any]) -> bool:
+    """Return whether a failed PDF lookup is unlikely to improve without new resolver logic."""
+    status = str(record.get("download_status") or "").strip()
+    reason = str(
+        record.get("download_reason")
+        or record.get("last_pdf_failure_reason")
+        or record.get("failure_reason")
+        or ""
+    ).casefold()
+    content_type = str(record.get("content_type") or "").casefold()
+    candidate_source = str(record.get("candidate_source") or "").casefold()
+    last_url = normalize_candidate_url(record.get("last_candidate_url") or record.get("download_source_url"))
+    host = urlparse(last_url).netloc.casefold() if last_url else ""
+    try:
+        http_status = int(record.get("http_status") or 0)
+    except (TypeError, ValueError):
+        http_status = 0
+
+    if status == "request_error" and (
+        http_status == 404
+        or reason in {"http_404", "head_http_404"}
+        or reason.startswith("head_http_404")
+    ):
+        return True
+
+    if host.endswith("content.openalex.org") and (
+        http_status in {401, 402, 403, 404}
+        or reason in {"http_401", "http_402", "http_403", "http_404"}
+    ):
+        return True
+
+    if status in {"blocked_or_login", "not_pdf"} and (
+        http_status in {401, 402, 403}
+        or reason in {"http_401", "http_402", "http_403", "blocked_or_login"}
+        or "blocked_or_login" in reason
+        or "login" in reason
+        or "paywall" in reason
+    ):
+        return True
+
+    if status == "not_pdf" and (
+        "text/html" in reason
+        or "text/html" in content_type
+        or reason in {"html_landing_page", "head_not_pdf_content"}
+    ):
+        return candidate_source in {"publisher_rule", "openalex_landing", "unpaywall_landing", "landing_page_meta", "landing_page_anchor"}
+
+    return False
 
 
 def pdf_sha256(path: Path) -> str:
@@ -1813,6 +2009,64 @@ def clean_markup_text(value: Any) -> str:
     return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", str(value or "")))).strip()
 
 
+def normalize_europe_pmc_item(item: dict[str, Any]) -> dict[str, Any]:
+    """Normalize one Europe PMC result into the shared record shape."""
+    full_text_urls = (item.get("fullTextUrlList") or {}).get("fullTextUrl", [])
+    oa_urls = [
+        link.get("url")
+        for link in full_text_urls
+        if link.get("availabilityCode") == "OA" and link.get("url")
+    ]
+    pdf_urls = [
+        link.get("url")
+        for link in full_text_urls
+        if link.get("availabilityCode") == "OA"
+        and str(link.get("documentStyle") or "").casefold() == "pdf"
+        and link.get("url")
+    ]
+    pmcid = item.get("pmcid")
+    if not pmcid and str(item.get("source") or "").casefold() == "pmc":
+        raw_id = str(item.get("id") or "")
+        if re.fullmatch(r"\d+", raw_id):
+            pmcid = f"PMC{raw_id}"
+        elif re.fullmatch(r"PMC\d+", raw_id, flags=re.IGNORECASE):
+            pmcid = raw_id.upper()
+    source_record_id = f"{item.get('source') or 'unknown'}:{item.get('id') or pmcid or item.get('doi')}"
+    publication_date = (
+        item.get("firstPublicationDate")
+        or item.get("electronicPublicationDate")
+        or (item.get("journalInfo") or {}).get("printPublicationDate")
+        or (f"{item.get('pubYear')}-01-01" if item.get("pubYear") else None)
+    )
+    return {
+        "id": f"europepmc:{source_record_id}",
+        "source_record_id": f"{SOURCE_EUROPE_PMC}:{source_record_id}",
+        "literature_source": SOURCE_EUROPE_PMC,
+        "europe_pmc_id": item.get("id"),
+        "pmcid": pmcid,
+        "doi": item.get("doi"),
+        "title": clean_markup_text(item.get("title")),
+        "publication_date": publication_date,
+        "publication_year": item.get("pubYear"),
+        "cited_by_count": item.get("citedByCount"),
+        "authorships": [
+            {"author": {"display_name": author.get("fullName")}}
+            for author in (item.get("authorList") or {}).get("author", [])
+            if author.get("fullName")
+        ],
+        "abstract": clean_markup_text(item.get("abstractText")),
+        "primary_location": {
+            "pdf_url": pdf_urls[0] if pdf_urls else None,
+            "landing_page_url": oa_urls[0] if oa_urls else None,
+        },
+        "open_access": {
+            "is_oa": item.get("isOpenAccess") == "Y",
+            "oa_url": (pdf_urls or oa_urls or [None])[0],
+        },
+        "fullTextUrlList": item.get("fullTextUrlList") or {},
+    }
+
+
 def search_europe_pmc(
     session: requests.Session,
     keyword: str,
@@ -1838,74 +2092,79 @@ def search_europe_pmc(
     )
     raise_source_for_status(response)
     data = response.json()
-    normalized: list[dict[str, Any]] = []
-    for item in (data.get("resultList") or {}).get("result", []):
-        full_text_urls = (item.get("fullTextUrlList") or {}).get("fullTextUrl", [])
-        oa_urls = [
-            link.get("url")
-            for link in full_text_urls
-            if link.get("availabilityCode") == "OA" and link.get("url")
-        ]
-        pdf_urls = [
-            link.get("url")
-            for link in full_text_urls
-            if link.get("availabilityCode") == "OA"
-            and str(link.get("documentStyle") or "").casefold() == "pdf"
-            and link.get("url")
-        ]
-        pmcid = item.get("pmcid")
-        if not pmcid and str(item.get("source") or "").casefold() == "pmc":
-            raw_id = str(item.get("id") or "")
-            if re.fullmatch(r"\d+", raw_id):
-                pmcid = f"PMC{raw_id}"
-            elif re.fullmatch(r"PMC\d+", raw_id, flags=re.IGNORECASE):
-                pmcid = raw_id.upper()
-        source_record_id = f"{item.get('source') or 'unknown'}:{item.get('id') or pmcid or item.get('doi')}"
-        publication_date = (
-            item.get("firstPublicationDate")
-            or item.get("electronicPublicationDate")
-            or (item.get("journalInfo") or {}).get("printPublicationDate")
-            or (f"{item.get('pubYear')}-01-01" if item.get("pubYear") else None)
-        )
-        normalized.append(
-            {
-                "id": f"europepmc:{source_record_id}",
-                "source_record_id": f"{SOURCE_EUROPE_PMC}:{source_record_id}",
-                "literature_source": SOURCE_EUROPE_PMC,
-                "europe_pmc_id": item.get("id"),
-                "pmcid": pmcid,
-                "doi": item.get("doi"),
-                "title": clean_markup_text(item.get("title")),
-                "publication_date": publication_date,
-                "publication_year": item.get("pubYear"),
-                "cited_by_count": item.get("citedByCount"),
-                "authorships": [
-                    {"author": {"display_name": author.get("fullName")}}
-                    for author in (item.get("authorList") or {}).get("author", [])
-                    if author.get("fullName")
-                ],
-                "abstract": clean_markup_text(item.get("abstractText")),
-                "primary_location": {
-                    "pdf_url": pdf_urls[0] if pdf_urls else None,
-                    "landing_page_url": oa_urls[0] if oa_urls else None,
-                },
-                "open_access": {
-                    "is_oa": item.get("isOpenAccess") == "Y",
-                    "oa_url": (pdf_urls or oa_urls or [None])[0],
-                },
-                "fullTextUrlList": item.get("fullTextUrlList") or {},
-            }
-        )
+    normalized = [
+        normalize_europe_pmc_item(item)
+        for item in (data.get("resultList") or {}).get("result", [])
+    ]
     next_cursor = data.get("nextCursorMark")
     if not normalized or next_cursor == cursor:
         next_cursor = None
     return {"results": normalized, "meta": {"next_cursor": next_cursor}}
 
 
+def query_europe_pmc_work_by_doi(
+    session: requests.Session,
+    doi: str | None,
+    config: CrawlConfig,
+) -> dict[str, Any] | None:
+    """Refresh PMC/Europe PMC OA full-text metadata for one DOI."""
+    doi = normalize_doi(doi)
+    if not doi:
+        return None
+    response = source_api_get(
+        session,
+        SOURCE_EUROPE_PMC,
+        source_url(config, SOURCE_EUROPE_PMC, EUROPE_PMC_URL),
+        config,
+        params={
+            "query": f'OPEN_ACCESS:Y AND DOI:"{doi}"',
+            "format": "json",
+            "resultType": "core",
+            "pageSize": 1,
+            "cursorMark": "*",
+        },
+    )
+    if response.status_code == 404:
+        return None
+    raise_source_for_status(response)
+    data = response.json()
+    results = (data.get("resultList") or {}).get("result", [])
+    if not results:
+        return None
+    return normalize_europe_pmc_item(results[0])
+
+
+def raw_keyword_terms(keyword: str) -> list[str]:
+    """Return deduplicated user terms without stemming for external search APIs."""
+    terms: list[str] = []
+    seen: set[str] = set()
+    for term in re.findall(r"[a-z0-9]+", str(keyword or "").casefold()):
+        if term in KEYWORD_STOPWORDS or term in seen:
+            continue
+        seen.add(term)
+        terms.append(term)
+    return terms
+
+
 def arxiv_query(keyword: str) -> str:
-    """Docstring."""
-    terms = keyword_terms(keyword)
-    return " AND ".join(f"all:{term}" for term in terms) or f'all:"{keyword}"'
+    """Build a high-recall arXiv API query without losing plural user terms."""
+    raw_terms = raw_keyword_terms(keyword)
+    normalized_terms = keyword_terms(keyword)
+    clauses: list[str] = []
+
+    if len(raw_terms) > 1:
+        clauses.append(f'all:"{" ".join(raw_terms)}"')
+    if raw_terms:
+        clauses.append(" AND ".join(f"all:{term}" for term in raw_terms))
+    if normalized_terms and normalized_terms != raw_terms:
+        clauses.append(" AND ".join(f"all:{term}" for term in normalized_terms))
+
+    unique_clauses = list(dict.fromkeys(clauses))
+    if not unique_clauses:
+        return f'all:"{str(keyword or "").strip()}"'
+    if len(unique_clauses) == 1:
+        return unique_clauses[0]
+    return " OR ".join(f"({clause})" for clause in unique_clauses)
 
 
 def search_arxiv(
@@ -1915,7 +2174,10 @@ def search_arxiv(
     cursor: str = "0",
 ) -> dict[str, Any]:
     """Docstring."""
-    start = int(cursor or 0)
+    try:
+        start = max(0, int(cursor or 0))
+    except (TypeError, ValueError):
+        start = 0
     response = source_api_get(
         session,
         SOURCE_ARXIV,
@@ -2355,30 +2617,10 @@ def search_terms(text: str) -> list[str]:
 
 def keyword_terms(keyword: str) -> list[str]:
     """Docstring."""
-    stopwords = {
-        "a",
-        "an",
-        "and",
-        "as",
-        "at",
-        "based",
-        "by",
-        "for",
-        "from",
-        "in",
-        "of",
-        "on",
-        "or",
-        "the",
-        "to",
-        "using",
-        "via",
-        "with",
-    }
     terms: list[str] = []
     seen: set[str] = set()
     for term in search_terms(keyword):
-        if term in stopwords or term in seen:
+        if term in KEYWORD_STOPWORDS or term in seen:
             continue
         seen.add(term)
         terms.append(term)
@@ -3086,7 +3328,12 @@ def resolve_landing_page_pdf_candidate_details(
             detail=landing_url,
         )
         try:
-            response = get(landing_url, timeout=PDF_LANDING_TIMEOUT, allow_redirects=True)
+            response = get(
+                landing_url,
+                headers=browser_like_pdf_headers(landing_url, accept=HTML_BROWSER_ACCEPT),
+                timeout=PDF_LANDING_TIMEOUT,
+                allow_redirects=True,
+            )
         except (requests.RequestException, TypeError):
             logging.debug("Could not fetch OA landing page: %s", landing_url, exc_info=True)
             continue
@@ -3303,7 +3550,12 @@ def verify_pdf_url_with_head(
     )
 
     try:
-        response = head(url, timeout=PDF_HEAD_TIMEOUT, allow_redirects=True)
+        response = head(
+            url,
+            headers=browser_like_pdf_headers(url),
+            timeout=PDF_HEAD_TIMEOUT,
+            allow_redirects=True,
+        )
     except requests.RequestException:
         # Some publishers reject HEAD while serving the PDF through GET.
         # Let the streamed download validate content type, bytes, and PDF structure.
@@ -3373,6 +3625,14 @@ def resolve_open_access_pdf(
             PdfCandidate(url, "semantic_scholar_openAccessPdf")
             for url in fetch_semantic_scholar_pdf_candidates(session, record, config, stats)
         ]
+    else:
+        candidate_details = enrich_weak_candidates_with_semantic_scholar(
+            candidate_details,
+            record,
+            session,
+            config,
+            stats,
+        )
     if not candidate_details:
         candidate_details = resolve_landing_page_pdf_candidate_details(record, unpaywall_data, session, config, stats)
     candidates = candidate_details_to_urls(candidate_details)
@@ -3550,9 +3810,14 @@ def download_pdf(
     tmp_path = path.with_suffix(".part")
     try:
         last_result: DownloadResult | None = None
+        request_params = pdf_download_request_params(config, pdf_url)
+        request_timeout = pdf_download_timeout(pdf_url)
+        download_deadline = time.monotonic() + pdf_download_total_timeout(pdf_url)
         for attempt in range(3):
             if stop_requested(config):
                 return DownloadResult(None, "stopped", pdf_url, candidate_source=candidate_source)
+            if time.monotonic() >= download_deadline:
+                return pdf_download_timeout_result(pdf_url, candidate_source)
             emit_pdf_progress(
                 config,
                 stats,
@@ -3563,15 +3828,28 @@ def download_pdf(
             )
             with session.get(
                 pdf_url,
-                timeout=PDF_DOWNLOAD_TIMEOUT,
+                params=request_params,
+                headers=browser_like_pdf_headers(pdf_url),
+                timeout=request_timeout,
                 stream=True,
                 allow_redirects=True,
             ) as response:
                 status_code = getattr(response, "status_code", None)
                 content_type = response_content_type(response)
                 content_disposition = response_content_disposition(response)
-                final_url = normalize_candidate_url(getattr(response, "url", None)) or pdf_url
+                raw_final_url = normalize_candidate_url(getattr(response, "url", None)) or pdf_url
+                final_url = safe_download_result_url(raw_final_url) or pdf_url
                 if status_code in {401, 402, 403}:
+                    if is_openalex_content_url(pdf_url):
+                        emit_pdf_progress(
+                            config,
+                            stats,
+                            "pdf_auth_failed",
+                            f"OpenAlex content PDF 未授权或无权限：{host_label(pdf_url)}",
+                            f"OpenAlex content PDF is unauthorized or unavailable for this key: {host_label(pdf_url)}",
+                            detail=pdf_url,
+                        )
+                        logging.error("OpenAlex content PDF unauthorized or unavailable: http_%s | %s", status_code, pdf_url)
                     return DownloadResult(None, "blocked_or_login", pdf_url, f"http_{status_code}", candidate_source=candidate_source, http_status=status_code, content_type=content_type, final_url=final_url, failure_reason="blocked_or_login")
                 if status_code == 429:
                     retry_after = getattr(response, "headers", {}).get("Retry-After") if getattr(response, "headers", None) else None
@@ -3594,8 +3872,12 @@ def download_pdf(
                 if status_code not in {200, 206}:
                     return DownloadResult(None, "request_error", pdf_url, f"http_{status_code}", candidate_source=candidate_source, http_status=status_code, content_type=content_type, final_url=final_url, failure_reason=f"http_{status_code}")
 
+                if time.monotonic() >= download_deadline:
+                    return pdf_download_timeout_result(pdf_url, candidate_source, status_code, content_type, final_url)
                 chunks = response.iter_content(chunk_size=PDF_CHUNK_SIZE)
                 first_chunk = next(chunks, b"")
+                if time.monotonic() >= download_deadline:
+                    return pdf_download_timeout_result(pdf_url, candidate_source, status_code, content_type, final_url)
                 first_4kb = first_chunk[:4096]
                 looks_like_html_body = (
                     first_chunk.lstrip().lower().startswith(b"<!doctype html")
@@ -3605,7 +3887,7 @@ def download_pdf(
                     if looks_like_blocked_or_login_content(content_type or "text/html", first_chunk):
                         return DownloadResult(None, "blocked_or_login", pdf_url, content_type or "html_login", candidate_source=candidate_source, http_status=status_code, content_type=content_type, final_url=final_url, failure_reason="blocked_or_login")
                     html_text = limited_html_from_response(first_chunk, chunks)
-                    discovered = extract_pdf_candidates_from_html(final_url, html_text)
+                    discovered = extract_pdf_candidates_from_html(raw_final_url, html_text)
                     if discovered:
                         emit_pdf_progress(
                             config,
@@ -3627,7 +3909,7 @@ def download_pdf(
                         return DownloadResult(None, "blocked_or_login", pdf_url, content_type or "html_login", candidate_source=candidate_source, http_status=status_code, content_type=content_type, final_url=final_url, failure_reason="blocked_or_login")
                     if "text/html" in content_type or "application/xhtml" in content_type:
                         html_text = limited_html_from_response(first_chunk, chunks)
-                        discovered = extract_pdf_candidates_from_html(final_url, html_text)
+                        discovered = extract_pdf_candidates_from_html(raw_final_url, html_text)
                         if discovered:
                             emit_pdf_progress(
                                 config,
@@ -3644,6 +3926,8 @@ def download_pdf(
                     if first_chunk:
                         fout.write(first_chunk)
                     for chunk in chunks:
+                        if time.monotonic() >= download_deadline:
+                            return pdf_download_timeout_result(pdf_url, candidate_source, status_code, content_type, final_url)
                         if stop_requested(config):
                             return DownloadResult(None, "stopped", pdf_url, candidate_source=candidate_source, http_status=status_code, content_type=content_type, final_url=final_url, failure_reason="stopped")
                         if chunk:
@@ -3813,7 +4097,7 @@ def fallback_pdf_paths_for_record(record: dict[str, Any], meta_path: Path, out_d
     """Return all compatible local PDF paths that may belong to a metadata record."""
     paths = resolve_record_pdf_paths(record, meta_path)
     fallback_out_dirs = [out_dir]
-    keyword = record.get("keyword")
+    keyword = pdf_storage_keyword(record)
     if keyword:
         fallback_out_dirs.insert(0, keyword_pdf_dir(str(keyword), out_dir))
 
@@ -3840,6 +4124,27 @@ def fallback_pdf_paths_for_record(record: dict[str, Any], meta_path: Path, out_d
 def record_has_any_valid_pdf(record: dict[str, Any], meta_path: Path, out_dir: Path, min_pdf_bytes: int) -> bool:
     """Return whether any explicit or legacy PDF path for a record is valid."""
     return any(validate_existing_pdf(path, min_pdf_bytes) for path in fallback_pdf_paths_for_record(record, meta_path, out_dir))
+
+
+def pdf_storage_keyword(record: dict[str, Any]) -> str:
+    """Return the metadata keyword used for keyword-scoped PDF storage."""
+    for key in ("keyword", "search_keyword", "source_keyword", "query", "search"):
+        keyword = str(record.get(key) or "").strip()
+        if keyword:
+            return keyword
+    for key in ("matched_keywords", "keywords"):
+        values = record.get(key)
+        if isinstance(values, str):
+            candidates = re.split(r"[,;|]", values)
+        elif isinstance(values, (list, tuple, set)):
+            candidates = values
+        else:
+            candidates = []
+        for value in candidates:
+            keyword = str(value or "").strip()
+            if keyword:
+                return keyword
+    return ""
 
 
 def refresh_record_oa_metadata(
@@ -3870,6 +4175,33 @@ def refresh_record_oa_metadata(
                 refreshed[key] = openalex.get(key)
         refreshed["openalex_id"] = openalex.get("id") or refreshed.get("openalex_id")
         refreshed["source_record_id"] = refreshed.get("source_record_id") or openalex.get("id")
+
+    refreshed_doi = normalize_doi(refreshed.get("doi") or refreshed.get("normalized_doi"))
+    refreshed_unpaywall = refreshed.get("unpaywall") if isinstance(refreshed.get("unpaywall"), dict) else None
+    should_query_europe_pmc = not has_high_confidence_pdf_candidate(
+        iter_pdf_candidate_details(refreshed, refreshed_unpaywall)
+    )
+    if refreshed_doi and should_query_europe_pmc:
+        try:
+            europe_pmc = query_europe_pmc_work_by_doi(session, refreshed_doi, config)
+        except Exception as exc:
+            logging.warning("Backfill continuing without refreshed Europe PMC data: %s | %s", refreshed_doi, exc)
+            europe_pmc = None
+        if europe_pmc:
+            for key in ("pmcid", "europe_pmc_id", "fullTextUrlList"):
+                if europe_pmc.get(key):
+                    refreshed[key] = europe_pmc.get(key)
+            europe_primary = europe_pmc.get("primary_location") or {}
+            if isinstance(europe_primary, dict) and (europe_primary.get("pdf_url") or europe_primary.get("landing_page_url")):
+                refreshed.setdefault("locations", [])
+                if isinstance(refreshed["locations"], list):
+                    refreshed["locations"].append(europe_primary)
+            europe_oa = europe_pmc.get("open_access") or {}
+            if isinstance(europe_oa, dict) and europe_oa.get("is_oa"):
+                open_access = dict(refreshed.get("open_access") or {})
+                open_access["is_oa"] = True
+                open_access["oa_url"] = open_access.get("oa_url") or europe_oa.get("oa_url")
+                refreshed["open_access"] = open_access
     return refreshed
 
 
@@ -4046,8 +4378,6 @@ def backfill_missing_pdfs_from_metadata(
                 stats.retried_existing_records += 1
                 refreshed = refresh_record_oa_metadata(record, session, config)
                 unpaywall = refreshed.get("unpaywall") if isinstance(refreshed.get("unpaywall"), dict) else None
-                candidates = iter_pdf_candidates(refreshed, unpaywall)
-                stats.pdf_candidates_found += len(candidates)
 
                 doi_or_url = (
                     normalize_doi(refreshed.get("doi") or refreshed.get("normalized_doi"))
@@ -4058,22 +4388,19 @@ def backfill_missing_pdfs_from_metadata(
                     or record_key(refreshed)
                     or "metadata-backfill"
                 )
-                if not candidates:
-                    result = DownloadResult(None, "no_candidate")
-                    status = backfill_download_status(refreshed, result, candidates, unpaywall)
-                    append_backfill_record(fout, refreshed, result, candidates, status, config)
-                    note_pdf_failure(stats, status, backfill=True)
-                    continue
 
+                storage_keyword = pdf_storage_keyword(refreshed)
+                storage_out_dir = keyword_pdf_dir(storage_keyword, config.out_dir) if storage_keyword else config.out_dir
                 result, candidates = download_first_available_pdf(
                     session,
                     refreshed,
                     unpaywall,
                     str(doi_or_url),
                     config,
-                    config.out_dir,
+                    storage_out_dir,
                     stats,
                 )
+                stats.pdf_candidates_found += len(candidates)
                 status = backfill_download_status(refreshed, result, candidates, unpaywall)
                 append_backfill_record(fout, refreshed, result, candidates, status, config)
                 if result.path:

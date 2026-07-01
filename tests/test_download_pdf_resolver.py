@@ -199,12 +199,17 @@ class PdfResolverTests(unittest.TestCase):
             "ids": {"arxiv": "https://arxiv.org/abs/2601.00001v1"},
             "open_access": {"is_oa": True},
         }
+        legacy_arxiv_record = {
+            "source_record_id": "arxiv:math/0301234v2",
+            "open_access": {"is_oa": True},
+        }
         pmc_record = {
             "ids": {"pmcid": "https://pmc.ncbi.nlm.nih.gov/articles/PMC1234567/"},
             "open_access": {"is_oa": True},
         }
 
         self.assertEqual(core.iter_pdf_candidates(arxiv_record, None), ["https://arxiv.org/pdf/2601.00001"])
+        self.assertEqual(core.iter_pdf_candidates(legacy_arxiv_record, None), ["https://arxiv.org/pdf/math/0301234v2"])
         self.assertEqual(
             core.iter_pdf_candidates(pmc_record, None),
             ["https://pmc.ncbi.nlm.nih.gov/articles/PMC1234567/pdf/"],
@@ -604,13 +609,17 @@ class PdfResolverTests(unittest.TestCase):
             def __init__(self) -> None:
                 self.head_timeout = None
                 self.get_timeout = None
+                self.head_headers: dict[str, str] = {}
+                self.get_headers: dict[str, str] = {}
 
             def head(self, *_args, **kwargs):
                 self.head_timeout = kwargs.get("timeout")
+                self.head_headers = kwargs.get("headers") or {}
                 return HeadResponse()
 
             def get(self, *_args, **kwargs):
                 self.get_timeout = kwargs.get("timeout")
+                self.get_headers = kwargs.get("headers") or {}
                 return Response()
 
         with tempfile.TemporaryDirectory() as temp:
@@ -626,6 +635,96 @@ class PdfResolverTests(unittest.TestCase):
         self.assertEqual(result.status, "downloaded")
         self.assertEqual(session.head_timeout, core.PDF_HEAD_TIMEOUT)
         self.assertEqual(session.get_timeout, core.PDF_DOWNLOAD_TIMEOUT)
+        self.assertIn("Mozilla/5.0", session.head_headers["User-Agent"])
+        self.assertIn("Mozilla/5.0", session.get_headers["User-Agent"])
+        self.assertEqual(session.get_headers["Referer"], "https://repo.test/")
+        self.assertIn("application/pdf", session.get_headers["Accept"])
+
+    def test_openalex_content_download_uses_api_key_and_short_timeout(self) -> None:
+        class Response:
+            status_code = 401
+            url = "https://content.openalex.org/works/W123456789.pdf?api_key=oa-secret"
+            headers = {"content-type": "application/json"}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return None
+
+        class Session:
+            def __init__(self) -> None:
+                self.calls: list[dict[str, object]] = []
+
+            def get(self, url, **kwargs):
+                self.calls.append({"url": url, **kwargs})
+                return Response()
+
+        with tempfile.TemporaryDirectory() as temp:
+            session = Session()
+            result = core.download_pdf(
+                session,
+                "https://content.openalex.org/works/W123456789.pdf",
+                "10.1/openalex-content",
+                core.CrawlConfig(
+                    out_dir=Path(temp),
+                    min_pdf_bytes=8,
+                    request_delay=0,
+                    api_settings=core.LiteratureApiSettings(openalex_api_key="oa-secret"),
+                ),
+                candidate_source="openalex_content_api",
+            )
+
+        self.assertEqual(result.status, "blocked_or_login")
+        self.assertEqual(result.reason, "http_401")
+        self.assertEqual(result.source_url, "https://content.openalex.org/works/W123456789.pdf")
+        self.assertEqual(result.candidate_source, "openalex_content_api")
+        self.assertEqual(len(session.calls), 1)
+        self.assertEqual(session.calls[0]["params"], {"api_key": "oa-secret"})
+        self.assertEqual(session.calls[0]["timeout"], core.OPENALEX_CONTENT_PDF_DOWNLOAD_TIMEOUT)
+        self.assertNotIn("oa-secret", result.final_url or "")
+        self.assertIn("api_key=***", result.final_url or "")
+
+    def test_openalex_content_stream_has_total_timeout(self) -> None:
+        class Response:
+            status_code = 200
+            url = "https://content.openalex.org/works/W123456789.pdf"
+            headers = {"content-type": "application/pdf"}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return None
+
+            @staticmethod
+            def iter_content(chunk_size):
+                del chunk_size
+                yield b"%PDF-1.4\n"
+                yield b"still streaming"
+
+        class Session:
+            @staticmethod
+            def get(*_args, **_kwargs):
+                return Response()
+
+        with tempfile.TemporaryDirectory() as temp, patch.object(
+            core,
+            "pdf_download_total_timeout",
+            return_value=1.0,
+        ), patch.object(core.time, "monotonic", side_effect=[0.0, 0.0, 0.0, 0.0, 2.0]):
+            result = core.download_pdf(
+                Session(),
+                "https://content.openalex.org/works/W123456789.pdf",
+                "10.1/slow-openalex-content",
+                core.CrawlConfig(out_dir=Path(temp), min_pdf_bytes=8, request_delay=0),
+                candidate_source="openalex_content_api",
+            )
+
+        self.assertEqual(result.status, "request_error")
+        self.assertEqual(result.reason, "download_timeout_1s")
+        self.assertEqual(result.failure_reason, "download_timeout")
+        self.assertEqual(result.candidate_source, "openalex_content_api")
 
     def test_resolver_extracts_pdf_from_oa_landing_page_metadata(self) -> None:
         class Response:
@@ -761,6 +860,46 @@ class PdfResolverTests(unittest.TestCase):
         self.assertIn("/DOI:10.1234%2Fsemantic", session.api_url)
         self.assertEqual(session.params["fields"], "paperId,title,isOpenAccess,openAccessPdf,externalIds,url")
         self.assertEqual(resolved.candidate_details[0]["candidate_source"], "semantic_scholar_openAccessPdf")
+
+    def test_resolver_prefers_semantic_pdf_before_openalex_content_probe(self) -> None:
+        class HeadResponse:
+            status_code = 200
+            headers = {"content-type": "application/pdf"}
+
+        class ApiResponse:
+            status_code = 200
+
+            @staticmethod
+            def json():
+                return {"isOpenAccess": True, "openAccessPdf": {"url": "https://repo.test/semantic.pdf"}}
+
+        class Session:
+            def __init__(self) -> None:
+                self.head_urls: list[str] = []
+                self.get_urls: list[str] = []
+
+            def head(self, url, **_kwargs):
+                self.head_urls.append(url)
+                return HeadResponse()
+
+            def get(self, url, **_kwargs):
+                self.get_urls.append(url)
+                return ApiResponse()
+
+        session = Session()
+        item = {
+            "id": "https://openalex.org/W123456789",
+            "doi": "10.1234/semantic-openalex",
+            "open_access": {"is_oa": True},
+        }
+
+        resolved = core.resolve_open_access_pdf(item, session, core.CrawlConfig(oa_only=True, request_delay=0))
+
+        self.assertEqual(resolved.url, "https://repo.test/semantic.pdf")
+        self.assertEqual(resolved.candidates[0], "https://repo.test/semantic.pdf")
+        self.assertEqual(resolved.candidates[1], "https://content.openalex.org/works/W123456789.pdf")
+        self.assertEqual(session.head_urls, ["https://repo.test/semantic.pdf"])
+        self.assertFalse(any("content.openalex.org" in url for url in session.head_urls))
 
     def test_html_response_enqueues_pdf_candidate(self) -> None:
         import fitz
