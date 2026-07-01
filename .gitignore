@@ -62,6 +62,7 @@ Workspace/extraction_eval/
 Workspace/task_state/
 Workspace/Translate/APIKey.enc
 Workspace/Translate/UserAPIKey.enc
+Workspace/Translate/snippet_translation_cache.json
 Workspace/Translate/glossary/
 Workspace/Translate/glossary.legacy-*/
 Workspace/Translate/pdf/
