@@ -129,11 +129,48 @@ class PdfExtractionControllerTests(unittest.TestCase):
             self.assertEqual(result["schemaVersion"], 1)
             self.assertTrue(result["analysis"]["needsReview"])
             self.assertIn("figure_1", controller.chartDataJson("figure_1"))
+            self.assertIn("record_id,element_id,page,subplot_id", controller.chartDataCsv("figure_1"))
 
             exported = Path(controller.exportChartData("figure_1"))
             self.assertTrue(exported.exists())
             payload = json.loads(exported.read_text(encoding="utf-8"))
             self.assertEqual(payload["source"]["elementId"], "figure_1")
+            exported_csv = Path(controller.exportChartCsv("figure_1"))
+            self.assertTrue(exported_csv.exists())
+            self.assertIn("record_id,element_id,page,subplot_id", exported_csv.read_text(encoding="utf-8-sig"))
+
+    def test_chart_analysis_request_does_not_run_ocr_on_calling_thread(self) -> None:
+        class FakePaths:
+            def __init__(self, root: Path) -> None:
+                self.root = root
+
+            def data(self, *parts: str) -> Path:
+                return self.root.joinpath(*parts)
+
+        class FakeWorker:
+            def __init__(self, *args, **kwargs) -> None:
+                self.target = kwargs["target"]
+
+            def start(self) -> None:
+                return None
+
+            def is_alive(self) -> bool:
+                return False
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            controller = PdfExtractionController(None, FakePaths(root), None, None)
+            controller._current_record_id = "record-chart-async"
+            controller._elements = [{"id": "figure_async", "type": "figure", "pngPath": str(root / "figure.png")}]
+
+            with patch("omnilit_qt.pdf_extraction_controller.ManagedWorker", FakeWorker), patch(
+                "omnilit_qt.pdf_extraction_controller.analyze_chart_element",
+                side_effect=AssertionError("OCR must run in worker"),
+            ):
+                self.assertTrue(controller.requestChartDataAnalysis("figure_async", 10))
+
+            self.assertIn("figure_async", controller._chart_analysis_workers)
+            self.assertIn("background", controller.statusText)
 
     def test_chart_calibration_merges_independent_subplots(self) -> None:
         class FakePaths:
@@ -256,6 +293,129 @@ class PdfExtractionControllerTests(unittest.TestCase):
             self.assertIn(record_id, controller._indexes)
             controller.clearPdfSession()
             self.assertFalse(controller.loadIndexForPdf(record_id, str(pdf_path)))
+
+    def test_reader_index_open_does_not_read_json_on_calling_thread(self) -> None:
+        class FakePaths:
+            def __init__(self, root: Path) -> None:
+                self.root = root
+
+            def data(self, *parts: str) -> Path:
+                return self.root.joinpath(*parts)
+
+        class FakeWorker:
+            def __init__(self, *args, **kwargs) -> None:
+                self.target = kwargs["target"]
+
+            def start(self) -> None:
+                return None
+
+            def is_alive(self) -> bool:
+                return False
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            pdf_path = root / "current.pdf"
+            pdf_path.write_bytes(b"current pdf bytes")
+            controller = PdfExtractionController(None, FakePaths(root), None, None)
+            controller._index_path("record-async").parent.mkdir(parents=True, exist_ok=True)
+            controller._index_path("record-async").write_text("{}", encoding="utf-8")
+
+            with patch("omnilit_qt.pdf_extraction_controller.ManagedWorker", FakeWorker), patch.object(
+                controller, "_load_index_file", side_effect=AssertionError("must run in worker")
+            ):
+                self.assertTrue(controller.openRecordAsync("record-async", str(pdf_path)))
+
+            self.assertTrue(controller.loading)
+            self.assertEqual(controller.progressText, "正在打开已缓存的解析结果...")
+
+    def test_reader_first_open_starts_analysis_when_no_cache_exists(self) -> None:
+        class FakePaths:
+            def __init__(self, root: Path) -> None:
+                self.root = root
+
+            def data(self, *parts: str) -> Path:
+                return self.root.joinpath(*parts)
+
+        class FakeWorker:
+            def __init__(self, *args, **kwargs) -> None:
+                return None
+
+            def start(self) -> None:
+                return None
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            pdf_path = root / "first.pdf"
+            pdf_path.write_bytes(b"current pdf bytes")
+            controller = PdfExtractionController(None, FakePaths(root), None, None)
+
+            with patch("omnilit_qt.pdf_extraction_controller.ManagedWorker", FakeWorker):
+                self.assertTrue(controller.openRecordAsync("record-first", str(pdf_path)))
+
+            self.assertTrue(controller.loading)
+            self.assertEqual(controller.progressText, "正在后台解析 PDF...")
+
+    def test_reader_reopens_memory_cached_index_without_worker(self) -> None:
+        class FakePaths:
+            def __init__(self, root: Path) -> None:
+                self.root = root
+
+            def data(self, *parts: str) -> Path:
+                return self.root.joinpath(*parts)
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            pdf_path = root / "current.pdf"
+            pdf_path.write_bytes(b"current pdf bytes")
+            controller = PdfExtractionController(None, FakePaths(root), None, None)
+            controller._indexes["record-memory"] = {
+                "version": 3,
+                "sourcePath": str(pdf_path),
+                "pageCount": 1,
+                "pages": [{"page": 0, "width": 100, "height": 100}],
+                "elements": [],
+            }
+
+            with patch("omnilit_qt.pdf_extraction_controller.ManagedWorker") as worker:
+                self.assertTrue(controller.openRecordAsync("record-memory", str(pdf_path)))
+
+            worker.assert_not_called()
+            self.assertFalse(controller.loading)
+            self.assertEqual(controller.pageCount, 1)
+
+    def test_reader_reopens_persistent_lightweight_index_after_restart(self) -> None:
+        class FakePaths:
+            def __init__(self, root: Path) -> None:
+                self.root = root
+
+            def data(self, *parts: str) -> Path:
+                return self.root.joinpath(*parts)
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            paths = FakePaths(root)
+            pdf_path = root / "current.pdf"
+            pdf_path.write_bytes(b"current pdf bytes")
+            index = {
+                "version": 3,
+                "sourcePath": str(pdf_path),
+                "pageCount": 1,
+                "pages": [{"page": 0, "width": 100, "height": 100, "textBlocks": [{"text": "large"}]}],
+                "elements": [{"id": "figure_1", "type": "figure", "page": 0, "bbox": [1, 2, 3, 4]}],
+            }
+            first_controller = PdfExtractionController(None, paths, None, None)
+            first_controller._write_reader_index("record-persisted", index)
+            saved = json.loads(first_controller._reader_index_path("record-persisted").read_text(encoding="utf-8"))
+            self.assertNotIn("textBlocks", saved["pages"][0])
+
+            restarted_controller = PdfExtractionController(None, paths, None, None)
+            with patch("omnilit_qt.pdf_extraction_controller.ManagedWorker") as worker:
+                self.assertTrue(restarted_controller.openRecordAsync("record-persisted", str(pdf_path)))
+
+            worker.assert_not_called()
+            self.assertFalse(restarted_controller.loading)
+            self.assertEqual(restarted_controller.pageCount, 1)
+            self.assertEqual(restarted_controller.elements[0]["id"], "figure_1")
 
     def test_stale_analysis_result_does_not_replace_current_pdf_session(self) -> None:
         class FakePaths:

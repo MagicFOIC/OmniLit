@@ -70,7 +70,7 @@ call "%PYTHON_CMD%" -m PyInstaller --version >nul 2>nul
 if errorlevel 1 goto dependency_fail
 
 echo [4/9] Checking runtime dependencies, including PySide6 and cryptography...
-call "%PYTHON_CMD%" -c "import PySide6, requests, fitz, openai, reportlab, tqdm; from cryptography.fernet import Fernet; from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC" >nul 2>nul
+call "%PYTHON_CMD%" -c "import PySide6, requests, fitz, openai, reportlab, rapidocr, onnxruntime, tqdm; from cryptography.fernet import Fernet; from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC" >nul 2>nul
 if errorlevel 1 goto dependency_fail
 
 echo [5/9] Syncing version metadata from update_manifest.json...
@@ -153,6 +153,8 @@ call "%PYTHON_CMD%" -m PyInstaller ^
   --hidden-import requests ^
   --hidden-import urllib3 ^
   --hidden-import fitz ^
+  --collect-all rapidocr ^
+  --collect-all onnxruntime ^
   --hidden-import openai ^
   --hidden-import reportlab ^
   --hidden-import reportlab.pdfgen ^

@@ -12,6 +12,7 @@ Item {
     property real initialZoom: 1.0
     property real fitWidthZoom: 1.0
     property real effectiveZoom: Math.max(0.1, root.fitWidthZoom * root.zoom)
+    property int renderZoomKey: Math.round(root.effectiveZoom * 100)
     property bool showAnnotations: true
     property int renderRevision: 0
     property int currentPage: 0
@@ -340,6 +341,8 @@ Item {
                                 property var sizeInfo: root.pageSize(index)
                                 property bool nearViewport: y + height > pageFlick.contentY - pageFlick.height && y < pageFlick.contentY + pageFlick.height * 2.0
                                 property string pageSource: ""
+                                property int sourceZoomKey: 0
+                                property bool renderPending: false
 
                                 width: root.pageWidth(index) * root.effectiveZoom + 20
                                 height: root.pageHeight(index) * root.effectiveZoom + 20
@@ -348,7 +351,7 @@ Item {
                                 border.color: index === root.currentPage ? theme.accent : theme.border
                                 anchors.horizontalCenter: parent.horizontalCenter
 
-                                Component.onCompleted: refreshSource()
+                                Component.onCompleted: Qt.callLater(pageFrame.refreshSource)
                                 onNearViewportChanged: refreshSource()
 
                                 Connections {
@@ -357,12 +360,36 @@ Item {
                                     function onDeferPageRenderingChanged() {
                                         if (!root.deferPageRendering)
                                             pageFrame.refreshSource()
+                                        else
+                                            pageFrame.renderPending = false
+                                    }
+                                }
+
+                                Connections {
+                                    target: pdfExtractionController
+                                    function onPageRenderReady(recordId, page, zoomKey, url) {
+                                        if (recordId === root.recordId && page === index && zoomKey === root.renderZoomKey) {
+                                            pageFrame.pageSource = url
+                                            pageFrame.sourceZoomKey = zoomKey
+                                            pageFrame.renderPending = false
+                                        }
                                     }
                                 }
 
                                 function refreshSource() {
-                                    if (pageFrame.nearViewport && !root.deferPageRendering && root.renderRevision >= 0)
-                                        pageFrame.pageSource = pdfExtractionController.renderPage(root.recordId, index, root.effectiveZoom)
+                                    if (!pageFrame.nearViewport || root.deferPageRendering || root.renderRevision < 0)
+                                        return
+                                    var cached = pdfExtractionController.cachedRenderedPage(root.recordId, index, root.effectiveZoom)
+                                    if (cached && cached.length > 0) {
+                                        pageFrame.pageSource = cached
+                                        pageFrame.sourceZoomKey = root.renderZoomKey
+                                        pageFrame.renderPending = false
+                                    } else {
+                                        pageFrame.pageSource = ""
+                                        pageFrame.sourceZoomKey = 0
+                                        pageFrame.renderPending = true
+                                        pdfExtractionController.renderPageAsync(root.recordId, index, root.effectiveZoom)
+                                    }
                                 }
 
                                 Image {
@@ -371,9 +398,16 @@ Item {
                                     width: root.pageWidth(index) * root.effectiveZoom
                                     height: root.pageHeight(index) * root.effectiveZoom
                                     source: pageFrame.pageSource
+                                    visible: pageFrame.sourceZoomKey === root.renderZoomKey && pageFrame.pageSource.length > 0
                                     fillMode: Image.Stretch
                                     asynchronous: true
-                                    cache: false
+                                    cache: true
+                                }
+
+                                BusyIndicator {
+                                    anchors.centerIn: parent
+                                    running: pageFrame.renderPending && pageFrame.nearViewport
+                                    visible: running
                                 }
 
                                 PdfElementOverlay {
@@ -471,10 +505,8 @@ Item {
         root.elementExportPaths = ({})
         root.elementFeedbackTexts = ({})
 
-        if (!pdfExtractionController.loadIndexForPdf(root.recordId, root.pdfPath)) {
-            root.operationStatus = "正在生成快速解析阅读视图..."
-            pdfExtractionController.analyzeRecordWithEngine(root.recordId, root.pdfPath, "fast")
-        }
+        root.operationStatus = "正在打开已缓存的解析结果..."
+        pdfExtractionController.openRecordAsync(root.recordId, root.pdfPath)
 
         root.renderRevision += 1
     }

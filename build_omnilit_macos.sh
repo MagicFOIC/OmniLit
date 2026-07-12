@@ -65,7 +65,7 @@ echo "[2/8] Checking pip and PyInstaller..."
 "$PYTHON_CMD" -m PyInstaller --version >/dev/null 2>&1 || dependency_error
 
 echo "[3/8] Checking runtime dependencies..."
-"$PYTHON_CMD" -c "import PySide6, requests, fitz, openai, reportlab, tqdm; from cryptography.fernet import Fernet" >/dev/null 2>&1 || dependency_error
+"$PYTHON_CMD" -c "import PySide6, requests, fitz, openai, reportlab, rapidocr, onnxruntime, tqdm; from cryptography.fernet import Fernet" >/dev/null 2>&1 || dependency_error
 
 echo "[4/8] Syncing version metadata..."
 APP_VERSION="$("$PYTHON_CMD" "$RELEASE_HELPER" prebuild)"
@@ -119,6 +119,8 @@ PYINSTALLER_ARGS=(
   --hidden-import requests
   --hidden-import urllib3
   --hidden-import fitz
+  --collect-all rapidocr
+  --collect-all onnxruntime
   --hidden-import openai
   --hidden-import reportlab
   --hidden-import reportlab.pdfgen

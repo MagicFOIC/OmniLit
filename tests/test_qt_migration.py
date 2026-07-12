@@ -1892,11 +1892,11 @@ class QtOnlyTests(unittest.TestCase):
         self.assertNotIn("auth.authenticated.connect(lambda: _schedule_window_frame_center(window))", app)
         self.assertIn("auth.loggedOut.connect(lambda: _schedule_window_frame_center(window))", app)
 
-    def test_login_resizes_window_before_switching_workspace(self) -> None:
+    def test_login_switches_preloaded_workspace_without_native_fade(self) -> None:
         main = (ROOT / "ui" / "qml" / "Main.qml").read_text(encoding="utf-8")
         self.assertIn("id: pageHost", main)
         self.assertIn("property bool workspaceActive: false", main)
-        self.assertIn("property bool windowTransitioning: false", main)
+        self.assertNotIn("property bool windowTransitioning", main)
         self.assertIn("id: workspacePage", main)
         self.assertIn("StackLayout {", main)
         self.assertIn("currentIndex: window.workspaceActive ? 1 : 0", main)
@@ -1910,14 +1910,10 @@ class QtOnlyTests(unittest.TestCase):
         self.assertIn("window.applyWindowMode()", auth_block)
         self.assertIn("window.workspaceActive = true", auth_block)
         self.assertIn("workspacePage.forceActiveFocus()", auth_block)
-        self.assertIn("Qt.callLater(function()", auth_block)
-        self.assertIn("window.opacity = 0", auth_block)
-        self.assertIn("window.opacity = 1", auth_block)
-        self.assertIn("window.windowTransitioning = true", auth_block)
-        self.assertIn("window.windowTransitioning = false", auth_block)
-        self.assertLess(auth_block.index("window.opacity = 0"), auth_block.index("window.applyWindowMode()"))
-        self.assertLess(auth_block.index("window.workspaceActive = true"), auth_block.index("window.opacity = 1"))
-        self.assertLess(auth_block.index("window.applyWindowMode()"), auth_block.index("window.workspaceActive = true"))
+        self.assertNotIn("Qt.callLater(function()", auth_block)
+        self.assertNotIn("window.opacity", auth_block)
+        self.assertNotIn("window.windowTransitioning", auth_block)
+        self.assertLess(auth_block.index("window.workspaceActive = true"), auth_block.index("window.applyWindowMode()"))
         logout_block = main[main.index("function onLoggedOut()") : main.index("id: pageHost")]
         self.assertIn("window.workspaceActive = false", logout_block)
         self.assertIn("window.applyWindowMode()", logout_block)

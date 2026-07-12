@@ -226,6 +226,30 @@ class KnowledgeGraphControllerTests(unittest.TestCase):
             self.assertLess(time.perf_counter() - started, 0.25)
             self.assertFalse(cached.loading)
 
+    def test_extraction_index_is_not_loaded_on_ui_thread(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            paths = FakePaths(Path(temp))
+            record = {"recordId": "p1", "title": "Cached", "keywordsText": "graph"}
+            original = KnowledgeGraphController(None, paths, None, None)
+            with patch("omnilit_qt.knowledge_graph_controller.ManagedWorker", InstantWorker):
+                original.generateGraph("p1", record, "paper.pdf")
+
+            controller = KnowledgeGraphController(None, paths, None, None)
+            loaded_paths = []
+            real_load_json = controller._load_json
+
+            def track_load(path):
+                loaded_paths.append(path)
+                return real_load_json(path)
+
+            with patch.object(controller, "_load_json", side_effect=track_load), \
+                    patch("omnilit_qt.knowledge_graph_controller.ManagedWorker", DeferredWorker):
+                self.assertTrue(controller.generateGraph("p1", record, "paper.pdf"))
+
+            self.assertEqual(loaded_paths, [controller._graph_path("p1")])
+            self.assertTrue(controller.loading)
+            self.assertEqual(controller.graph["title"], "Cached")
+
 
 if __name__ == "__main__":
     unittest.main()

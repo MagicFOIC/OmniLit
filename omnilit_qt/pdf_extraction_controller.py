@@ -16,7 +16,14 @@ from PySide6.QtWidgets import QApplication
 
 from .background_tasks import ManagedWorker, shutdown_workers
 from .chart_digitizer_core import analyze_chart_element
-from .chart_digitizer_schema import chart_result_to_json, normalize_sample_count, validate_chart_result, write_chart_result
+from .chart_digitizer_schema import (
+    chart_result_to_csv,
+    chart_result_to_json,
+    normalize_sample_count,
+    validate_chart_result,
+    write_chart_csv,
+    write_chart_result,
+)
 from .pdf_extraction_core import sha256_file
 from .pdf_extraction_engines import (
     HybridExtractionPipeline,
@@ -62,6 +69,8 @@ class PdfExtractionController(QObject):
     pageRenderReady = Signal(str, int, int, str)
     textWordsReady = Signal(str, str, int, "QVariantList")
     _taskFinished = Signal(int, str, object, str, bool)
+    _indexLoadFinished = Signal(int, str, str, object, bool, str)
+    _chartAnalysisFinished = Signal(str, str, object, str, bool)
     _pageRenderFinished = Signal(str, int, int, str, bool, str)
     _textWordsFinished = Signal(str, str, int, object, bool, str)
 
@@ -87,12 +96,16 @@ class PdfExtractionController(QObject):
         self._text_word_cache: dict[tuple[str, str, int], list[dict[str, Any]]] = {}
         self._pending_engines: dict[str, str] = {}
         self._worker: ManagedWorker | None = None
+        self._index_load_worker: ManagedWorker | None = None
         self._page_render_workers: dict[tuple[str, int, int], ManagedWorker] = {}
         self._text_word_workers: dict[tuple[str, str, int], ManagedWorker] = {}
+        self._chart_analysis_workers: dict[str, ManagedWorker] = {}
         self._analysis_request_id = 0
         self._stop = threading.Event()
         self._parser_settings_status = ""
         self._taskFinished.connect(self._on_task_finished)
+        self._indexLoadFinished.connect(self._on_index_load_finished)
+        self._chartAnalysisFinished.connect(self._on_chart_analysis_finished)
         self._pageRenderFinished.connect(self._on_page_render_finished)
         self._textWordsFinished.connect(self._on_text_words_finished)
 
@@ -118,6 +131,9 @@ class PdfExtractionController(QObject):
             return self._record_dir(record_id) / "engines" / self._engine_cache_key(engine) / "extraction_index.json"
         return self._record_dir(record_id) / "extraction_index.json"
 
+    def _reader_index_path(self, record_id: str) -> Path:
+        return self._record_dir(record_id) / "reader_index.json"
+
     def _engine_output_dir(self, record_id: str, engine: str) -> Path:
         return self._record_dir(record_id) / "engines" / self._engine_cache_key(engine)
 
@@ -129,6 +145,12 @@ class PdfExtractionController(QObject):
             return None
         safe_id = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(element_id or "element")).strip("._") or "element"
         return self._record_dir(record_id) / "charts" / f"{safe_id}.chart_data.json"
+
+    def _chart_csv_path(self, record_id: str, element_id: str) -> Path | None:
+        if not record_id or self.paths is None:
+            return None
+        safe_id = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(element_id or "element")).strip("._") or "element"
+        return self._record_dir(record_id) / "charts" / f"{safe_id}.chart_data.csv"
 
     def _chart_calibration_path(self, record_id: str, element_id: str) -> Path | None:
         if not record_id or self.paths is None:
@@ -186,6 +208,43 @@ class PdfExtractionController(QObject):
             return self._apply_element_overrides(record_id, fast_index) if isinstance(fast_index, dict) else {}
         return self._apply_element_overrides(record_id, index)
 
+    def _load_reader_index_file(self, record_id: str) -> dict[str, Any]:
+        path = self._reader_index_path(record_id)
+        if not path.exists():
+            return {}
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        if not isinstance(payload, dict) or int(payload.get("readerIndexVersion") or 0) != 1:
+            return {}
+        return self._apply_element_overrides(record_id, payload)
+
+    @staticmethod
+    def _reader_index_payload(index: dict[str, Any]) -> dict[str, Any]:
+        payload = dict(index)
+        payload["readerIndexVersion"] = 1
+        payload["pages"] = [
+            {
+                key: page[key]
+                for key in ("page", "width", "height", "rect")
+                if key in page
+            }
+            for page in index.get("pages") or []
+            if isinstance(page, dict)
+        ]
+        return payload
+
+    def _write_reader_index(self, record_id: str, index: dict[str, Any]) -> None:
+        path = self._reader_index_path(record_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(path.suffix + ".tmp")
+        temporary.write_text(
+            json.dumps(self._reader_index_payload(index), ensure_ascii=False, separators=(",", ":")),
+            encoding="utf-8",
+        )
+        temporary.replace(path)
+
     @staticmethod
     def _is_legacy_cloud_index(index: dict[str, Any]) -> bool:
         engines = {str(index.get("engine") or "")}
@@ -206,6 +265,7 @@ class PdfExtractionController(QObject):
             engine_path.parent.mkdir(parents=True, exist_ok=True)
             with engine_path.open("w", encoding="utf-8") as handle:
                 json.dump(index, handle, ensure_ascii=False, indent=2)
+        self._write_reader_index(record_id, index)
 
     def _load_element_overrides(self, record_id: str) -> dict[str, dict[str, Any]]:
         path = self._overrides_path(record_id)
@@ -453,6 +513,8 @@ class PdfExtractionController(QObject):
         if not self._loading:
             return False
         self._stop.set()
+        if self._index_load_worker is not None and self._index_load_worker.is_alive():
+            self._index_load_worker.request_cancel()
         self._status = "正在取消 PDF 云解析..."
         self.changed.emit()
         return True
@@ -628,6 +690,84 @@ class PdfExtractionController(QObject):
     @Slot(str, str, result=bool)
     def loadIndexForPdfQuick(self, record_id: str, pdf_path: str) -> bool:
         return self._load_index_for_pdf(record_id, pdf_path, verify_sha=False)
+
+    @Slot(str, str, result=bool)
+    def openRecordAsync(self, record_id: str, pdf_path: str) -> bool:
+        """Load a cached reader index without blocking the Qt UI thread.
+
+        A cache miss automatically starts the fast extraction pipeline after
+        the background index read finishes.
+        """
+        key = str(record_id or "").strip()
+        source = Path(str(pdf_path or "")).expanduser()
+        if not key or not source.exists():
+            self._status = "PDF extraction status updated."
+            self.changed.emit()
+            return False
+
+        memory_index = self._indexes.get(key)
+        if isinstance(memory_index, dict):
+            ok, _reason = self._index_matches_pdf(memory_index, source, verify_sha=False)
+            if ok:
+                self._pdf_paths[key] = str(source)
+                self._set_index(key, memory_index)
+                self._loading = False
+                self._progress = ""
+                self._status = "Opened cached extraction index."
+                self.changed.emit()
+                self.analysisReady.emit(key)
+                return True
+
+        reader_index = self._load_reader_index_file(key)
+        if reader_index:
+            ok, _reason = self._index_matches_pdf(reader_index, source, verify_sha=False)
+            if ok:
+                self._pdf_paths[key] = str(source)
+                self._set_index(key, reader_index)
+                self._loading = False
+                self._progress = ""
+                self._status = "Opened persistent reader index."
+                self.changed.emit()
+                self.analysisReady.emit(key)
+                return True
+
+        if not self._index_path(key).exists():
+            return self.analyzeRecordWithEngine(key, str(source), "fast")
+
+        if self._loading:
+            self.cancelAnalysis()
+        self._analysis_request_id += 1
+        request_id = self._analysis_request_id
+        cancel_event = threading.Event()
+        self._stop = cancel_event
+        self._loading = True
+        self._progress = "正在打开已缓存的解析结果..."
+        self._status = self._progress
+        self._pdf_paths[key] = str(source)
+        self._clear_current_index_state(key, str(source))
+        self.changed.emit()
+
+        def run() -> None:
+            try:
+                index = self._load_index_file(key)
+                if cancel_event.is_set():
+                    self._indexLoadFinished.emit(request_id, key, str(source), {}, False, "cancelled")
+                    return
+                ok, reason = self._index_matches_pdf(index, source, verify_sha=False) if index else (False, "cache miss")
+                self._indexLoadFinished.emit(request_id, key, str(source), index if ok else {}, ok, reason)
+            except Exception as exc:
+                self._indexLoadFinished.emit(request_id, key, str(source), {}, False, str(exc))
+
+        worker = ManagedWorker(
+            name=f"PdfIndexLoad-{self._safe_record_id(key)}",
+            target=run,
+            state_path=self._task_state_path(f"pdf_index_load_{self._safe_record_id(key)}.json"),
+            cancel_event=cancel_event,
+            metadata={"record_id": key, "pdf_path": str(source)},
+        )
+        self._index_load_worker = worker
+        worker.start()
+        return True
 
     @Slot(str, str, result=bool)
     def loadPdfPagesForTranslation(self, record_id: str, pdf_path: str) -> bool:
@@ -1185,6 +1325,65 @@ class PdfExtractionController(QObject):
         path = str(element.get("pngPath") or "") if element else ""
         return QUrl.fromLocalFile(path).toString() if path and Path(path).exists() else ""
 
+    @Slot(str, int, result=bool)
+    def requestChartDataAnalysis(self, element_id: str, sample_count: int = 10) -> bool:
+        key = str(element_id or "")
+        element = self._element_by_id(key)
+        if not element:
+            self._status = "Element not found for chart analysis."
+            self.changed.emit()
+            return False
+        existing = self._chart_analysis_workers.get(key)
+        if existing is not None and existing.is_alive():
+            return True
+
+        record_id = str(self._current_record_id)
+        index = dict(self.currentIndex)
+        calibration = deepcopy(self._load_chart_calibration(key))
+        count = normalize_sample_count(sample_count)
+        result_path = self._chart_result_path(record_id, key)
+        csv_path = self._chart_csv_path(record_id, key)
+        self._status = "Chart analysis is running in the background."
+        self.changed.emit()
+
+        def run() -> None:
+            try:
+                result = analyze_chart_element(
+                    dict(element),
+                    index,
+                    record_id=record_id,
+                    sample_count=count,
+                    calibration=calibration,
+                )
+                errors = validate_chart_result(result)
+                if errors:
+                    analysis = dict(result.get("analysis") or {})
+                    warnings = list(analysis.get("warnings") or [])
+                    warnings.extend(f"Schema warning: {error}" for error in errors)
+                    analysis["warnings"] = warnings
+                    analysis["needsReview"] = True
+                    analysis["status"] = "需要手动校准"
+                    result["analysis"] = analysis
+                if result_path is not None:
+                    write_chart_result(result_path, result)
+                if csv_path is not None:
+                    write_chart_csv(csv_path, result)
+                self._chartAnalysisFinished.emit(record_id, key, result, "", True)
+            except Exception as exc:
+                self._chartAnalysisFinished.emit(record_id, key, {}, str(exc), False)
+
+        worker = ManagedWorker(
+            name=f"ChartAnalysis-{self._safe_record_id(record_id)}-{key}",
+            target=run,
+            state_path=self._task_state_path(
+                f"chart_analysis_{self._safe_record_id(record_id)}_{self._safe_record_id(key)}.json"
+            ),
+            metadata={"record_id": record_id, "element_id": key, "sample_count": count},
+        )
+        self._chart_analysis_workers[key] = worker
+        worker.start()
+        return True
+
     @Slot(str, int, result="QVariantMap")
     def analyzeChartData(self, element_id: str, sample_count: int = 10) -> dict[str, Any]:
         try:
@@ -1215,8 +1414,15 @@ class PdfExtractionController(QObject):
             result_path = self._chart_result_path(self._current_record_id, key)
             if result_path is not None:
                 write_chart_result(result_path, result)
+            csv_path = self._chart_csv_path(self._current_record_id, key)
+            if csv_path is not None:
+                write_chart_csv(csv_path, result)
+            eligible = bool((result.get("analysis") or {}).get("eligible", True))
             needs_review = bool((result.get("analysis") or {}).get("needsReview"))
-            self._status = "Chart analysis needs manual calibration." if needs_review else "Chart analysis completed."
+            if not eligible:
+                self._status = "Chart skipped because no analyzable coordinate axes were detected."
+            else:
+                self._status = "Chart analysis needs manual calibration." if needs_review else "Chart analysis completed."
             self.changed.emit()
             self.chartDataReady.emit(key)
             return result
@@ -1247,6 +1453,11 @@ class PdfExtractionController(QObject):
         result = self.chartDataResult(element_id)
         return chart_result_to_json(result) if result else ""
 
+    @Slot(str, result=str)
+    def chartDataCsv(self, element_id: str) -> str:
+        result = self.chartDataResult(element_id)
+        return chart_result_to_csv(result) if result else ""
+
     @Slot(str, result=bool)
     def copyChartData(self, element_id: str) -> bool:
         text = self.chartDataJson(element_id)
@@ -1256,6 +1467,18 @@ class PdfExtractionController(QObject):
             return False
         QApplication.clipboard().setText(text)
         self._status = "Chart data JSON copied."
+        self.changed.emit()
+        return True
+
+    @Slot(str, result=bool)
+    def copyChartCsv(self, element_id: str) -> bool:
+        text = self.chartDataCsv(element_id)
+        if not text:
+            self._status = "No chart data to copy."
+            self.changed.emit()
+            return False
+        QApplication.clipboard().setText(text)
+        self._status = "Chart data CSV copied."
         self.changed.emit()
         return True
 
@@ -1275,6 +1498,25 @@ class PdfExtractionController(QObject):
             return ""
         write_chart_result(path, result)
         self._status = f"Exported chart data JSON: {path}"
+        self.changed.emit()
+        return str(path)
+
+    @Slot(str, result=str)
+    def exportChartCsv(self, element_id: str) -> str:
+        result = self.chartDataResult(element_id)
+        if not result:
+            result = self.analyzeChartData(element_id, 10)
+        if not result:
+            self._status = "No chart data to export."
+            self.changed.emit()
+            return ""
+        path = self._chart_csv_path(self._current_record_id, str(element_id))
+        if path is None:
+            self._status = "No active extraction directory for chart CSV export."
+            self.changed.emit()
+            return ""
+        write_chart_csv(path, result)
+        self._status = f"Exported chart data CSV: {path}"
         self.changed.emit()
         return str(path)
 
@@ -1363,6 +1605,62 @@ class PdfExtractionController(QObject):
             self._status = "PDF extraction status updated."
             self.changed.emit()
 
+    def _on_index_load_finished(
+        self,
+        request_id: int,
+        record_id: str,
+        pdf_path: str,
+        payload: object,
+        ok: bool,
+        message: str,
+    ) -> None:
+        if int(request_id) != self._analysis_request_id:
+            return
+        self._index_load_worker = None
+        if message == "cancelled":
+            self._loading = False
+            self._progress = ""
+            self._status = "PDF extraction status updated."
+            self.changed.emit()
+            return
+        if ok and isinstance(payload, dict):
+            self._loading = False
+            self._progress = ""
+            self._write_reader_index(record_id, payload)
+            self._set_index(record_id, payload)
+            self._status = "Loaded cached extraction index."
+            self.changed.emit()
+            self.analysisReady.emit(str(record_id))
+            return
+
+        self._loading = False
+        self._progress = ""
+        self.analyzeRecordWithEngine(str(record_id), str(pdf_path), "fast")
+
+    def _on_chart_analysis_finished(
+        self,
+        record_id: str,
+        element_id: str,
+        payload: object,
+        message: str,
+        ok: bool,
+    ) -> None:
+        key = str(element_id)
+        self._chart_analysis_workers.pop(key, None)
+        if ok and isinstance(payload, dict):
+            if str(record_id) == self._current_record_id:
+                self._chart_results[key] = payload
+            eligible = bool((payload.get("analysis") or {}).get("eligible", True))
+            needs_review = bool((payload.get("analysis") or {}).get("needsReview"))
+            if not eligible:
+                self._status = "Chart skipped because no analyzable coordinate axes were detected."
+            else:
+                self._status = "Chart analysis needs manual calibration." if needs_review else "Chart analysis completed."
+        else:
+            self._status = f"Chart analysis failed: {message}" if message else "Chart analysis failed."
+        self.changed.emit()
+        self.chartDataReady.emit(key)
+
     def _on_page_render_finished(self, record_id: str, page: int, scale_key: int, url: str, ok: bool, message: str) -> None:
         self._page_render_workers.pop((str(record_id), int(page), int(scale_key)), None)
         if ok and url:
@@ -1383,7 +1681,13 @@ class PdfExtractionController(QObject):
             self.changed.emit()
 
     def shutdown(self, timeout: float = 15.0) -> bool:
-        return shutdown_workers([self._worker] + list(self._page_render_workers.values()) + list(self._text_word_workers.values()), timeout)
+        return shutdown_workers(
+            [self._worker, self._index_load_worker]
+            + list(self._page_render_workers.values())
+            + list(self._text_word_workers.values())
+            + list(self._chart_analysis_workers.values()),
+            timeout,
+        )
 
 
 def _sanitize_override_fields(fields: dict[str, Any]) -> dict[str, Any]:

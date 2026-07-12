@@ -358,7 +358,6 @@ class KnowledgeGraphController(QObject):
         payload["recordId"] = key
         if pdf_path:
             payload["localPdfPath"] = str(pdf_path)
-        extraction_index = self._load_json(self._index_path(key))
         cached = {} if force else self._load_json(self._graph_path(key))
         if cached:
             self._current_record_id = key
@@ -366,13 +365,14 @@ class KnowledgeGraphController(QObject):
             self._remember_graph(key, cached)
             self._filter_mode = "all"
             self._search_text = ""
-            fresh = cache_is_fresh(cached, payload, extraction_index)
-            self._cache_state = "fresh" if fresh else "stale"
-            self._status = "已加载缓存知识图谱。" if fresh else "已显示旧图谱，正在后台更新..."
+            # Extraction indexes can contain the full text of a large PDF.
+            # Loading and fingerprinting one on the Qt thread freezes input.
+            # Display the compact graph cache immediately and validate it in
+            # the worker below.
+            self._cache_state = "refreshing"
+            self._status = "已显示缓存图谱，正在后台检查更新..."
             self.changed.emit()
             self.graphReady.emit(key)
-            if fresh:
-                return True
         self._loading = True
         self._current_record_id = key
         self._cache_state = "refreshing" if cached else "building"
@@ -384,6 +384,12 @@ class KnowledgeGraphController(QObject):
         def run() -> None:
             try:
                 if self._stop.is_set():
+                    return
+                extraction_index = self._load_json(self._index_path(key))
+                if cached and not force and cache_is_fresh(cached, payload, extraction_index):
+                    message = "已加载缓存知识图谱。"
+                    task.update_state("completed", detail=message)
+                    self._taskFinished.emit(key, cached, message, True)
                     return
                 effective_index, generated_fast_index = self._load_or_build_fast_index(key, str(pdf_path or payload.get("localPdfPath") or ""))
                 graph = build_knowledge_graph(payload, effective_index or extraction_index or None)

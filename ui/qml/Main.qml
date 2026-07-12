@@ -15,7 +15,6 @@ ApplicationWindow {
     property bool applyingWindowMode: false
     property bool lastLoggedIn: false
     property bool workspaceActive: false
-    property bool windowTransitioning: false
     width: authWindowWidth
     height: authWindowHeight
     minimumWidth: authWindowWidth
@@ -62,24 +61,13 @@ ApplicationWindow {
     Connections {
         target: authController
         function onAuthenticated() {
-            // Suppress the native backing store while changing from the compact
-            // login geometry to the workspace geometry. On Windows the old
-            // login frame can otherwise remain visible in the center of the
-            // resized window until the first Workspace frame is presented.
-            window.windowTransitioning = true
-            window.opacity = 0
             window.lastLoggedIn = true
+            // Workspace is already instantiated while the login page is shown.
+            // Switch to that prepared frame before resizing the native window,
+            // avoiding both the stretched login frame and a compositor fade.
+            window.workspaceActive = true
+            workspacePage.forceActiveFocus()
             window.applyWindowMode()
-            Qt.callLater(function() {
-                window.workspaceActive = true
-                workspacePage.forceActiveFocus()
-                // Give StackLayout one complete event turn to polish and paint
-                // Workspace before making the native window visible again.
-                Qt.callLater(function() {
-                    window.opacity = 1
-                    window.windowTransitioning = false
-                })
-            })
         }
         function onLoggedOut() {
             window.rememberWorkspaceSize()

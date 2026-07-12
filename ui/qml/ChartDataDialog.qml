@@ -1,8 +1,11 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Window
 
-Dialog {
+Window {
     id: root
 
     property string elementId: ""
@@ -17,18 +20,17 @@ Dialog {
     property string nextSeriesSeedName: ""
     property string feedbackText: ""
     property bool expanded: false
+    property int outputMode: 0
+    property real subplotPreviewZoom: 1.0
+    property bool analysisRunning: false
 
-    parent: Overlay.overlay
-    modal: true
     title: "分析图数据"
     width: root.dialogWidth()
     height: root.dialogHeight()
-    x: parent ? Math.max(12, Math.round((parent.width - width) / 2)) : 0
-    y: parent ? Math.max(12, Math.round((parent.height - height) / 2)) : 0
-    standardButtons: Dialog.NoButton
-    closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+    visible: false
+    modality: Qt.NonModal
+    flags: Qt.Window | Qt.WindowTitleHint | Qt.WindowSystemMenuHint | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint
 
-    onOpened: root.centerDialog()
     onExpandedChanged: Qt.callLater(root.centerDialog)
 
     Theme { id: theme }
@@ -36,12 +38,15 @@ Dialog {
     Connections {
         target: pdfExtractionController
         function onChartDataReady(elementId) {
-            if (String(elementId || "") === root.elementId)
+            if (String(elementId || "") === root.elementId) {
+                root.analysisRunning = false
                 root.refreshResult()
+                root.feedbackText = root.chartResult && root.chartResult.schemaVersion ? "分析完成。" : pdfExtractionController.statusText
+            }
         }
     }
 
-    contentItem: Rectangle {
+    Rectangle {
         color: theme.surface
         implicitWidth: root.width
         implicitHeight: root.height
@@ -54,6 +59,13 @@ Dialog {
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 8
+
+                BusyIndicator {
+                    visible: root.analysisRunning
+                    running: visible
+                    Layout.preferredWidth: 24
+                    Layout.preferredHeight: 24
+                }
 
                 Text {
                     Layout.fillWidth: true
@@ -85,6 +97,7 @@ Dialog {
                     Layout.preferredWidth: 118
                     model: ["5", "10", "15", "20", "自定义"]
                     currentIndex: 1
+                    enabled: !root.analysisRunning
                     onActivated: root.applySamplePreset(currentText)
                 }
 
@@ -125,8 +138,8 @@ Dialog {
 
                 Item { Layout.fillWidth: true }
 
-                PillButton { text: "重新分析"; onClicked: root.runAnalysis() }
-                PillButton { text: "手动校准"; onClicked: root.toggleCalibration() }
+                PillButton { text: root.analysisRunning ? "分析中..." : "重新分析"; enabled: !root.analysisRunning; onClicked: root.runAnalysis() }
+                PillButton { text: "手动校准"; enabled: !root.analysisRunning; onClicked: root.toggleCalibration() }
             }
 
             RowLayout {
@@ -148,6 +161,7 @@ Dialog {
                             id: figurePreview
                             anchors.fill: parent
                             source: root.elementId ? pdfExtractionController.cropElement(root.elementId) : ""
+                            sourceClipRect: root.calibrationVisible ? Qt.rect(0, 0, 0, 0) : root.currentSubplotClipRect()
                             fillMode: Image.PreserveAspectFit
                             asynchronous: true
                             cache: false
@@ -167,45 +181,19 @@ Dialog {
                             enabled: root.calibrationVisible
                             hoverEnabled: true
                             cursorShape: Qt.CrossCursor
-                            onClicked: root.captureCalibrationPoint(mouse.x, mouse.y)
+                            onClicked: (mouse) => root.captureCalibrationPoint(mouse.x, mouse.y)
                         }
-                    }
 
-                    Text {
-                        Layout.fillWidth: true
-                        text: root.axisStatusText()
-                        color: root.needsReview() ? theme.warning : theme.textSecondary
-                        wrapMode: Text.WordWrap
-                    }
-
-                    Text {
-                        Layout.fillWidth: true
-                        text: root.warningText()
-                        color: theme.warning
-                        visible: text.length > 0
-                        wrapMode: Text.WordWrap
-                        maximumLineCount: 5
-                        elide: Text.ElideRight
-                    }
-
-                    Text {
-                        Layout.fillWidth: true
-                        text: root.legendText()
-                        color: theme.textSecondary
-                        visible: text.length > 0
-                        wrapMode: Text.WordWrap
-                        maximumLineCount: 4
-                        elide: Text.ElideRight
-                    }
-
-                    Text {
-                        Layout.fillWidth: true
-                        text: root.seriesReviewText()
-                        color: text.indexOf("需要复核") >= 0 ? theme.warning : theme.textSecondary
-                        visible: text.length > 0
-                        wrapMode: Text.WordWrap
-                        maximumLineCount: 5
-                        elide: Text.ElideRight
+                        MouseArea {
+                            anchors.fill: parent
+                            visible: !root.calibrationVisible
+                            enabled: visible && figurePreview.status === Image.Ready
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                root.subplotPreviewZoom = 1.0
+                                subplotPreviewPopup.open()
+                            }
+                        }
                     }
 
                     ColumnLayout {
@@ -360,14 +348,85 @@ Dialog {
                         selectedSeriesId: root.selectedSeriesId
                     }
 
-                    TextArea {
+                    TabBar {
+                        id: outputTabs
+                        Layout.fillWidth: true
+                        currentIndex: root.outputMode
+                        onCurrentIndexChanged: root.outputMode = currentIndex
+                        TabButton { text: "结构化数据" }
+                        TabButton { text: "CSV 预览" }
+                        TabButton { text: "JSON 预览" }
+                    }
+
+                    StackLayout {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        readOnly: true
-                        wrapMode: TextArea.NoWrap
-                        text: root.jsonText()
-                        font.family: "Consolas"
-                        font.pixelSize: 11
+                        currentIndex: root.outputMode
+
+                        ScrollView {
+                            clip: true
+                            ScrollBar.horizontal: StyledScrollBar { orientation: Qt.Horizontal; policy: ScrollBar.AsNeeded }
+                            ScrollBar.vertical: StyledScrollBar { policy: ScrollBar.AsNeeded }
+
+                            TextArea {
+                                readOnly: true
+                                wrapMode: TextArea.NoWrap
+                                text: root.dataSummaryText()
+                                font.family: "Consolas"
+                                font.pixelSize: 11
+                            }
+                        }
+
+                        ScrollView {
+                            id: csvPreviewScroll
+                            clip: true
+                            ScrollBar.horizontal: StyledScrollBar { orientation: Qt.Horizontal; policy: ScrollBar.AsNeeded }
+                            ScrollBar.vertical: StyledScrollBar { policy: ScrollBar.AsNeeded }
+
+                            Grid {
+                                columns: root.csvPreviewColumnCount()
+                                spacing: 0
+
+                                Repeater {
+                                    model: root.csvPreviewCells()
+
+                                    delegate: Rectangle {
+                                        required property var modelData
+                                        width: root.csvColumnWidth(Number(modelData.column || 0))
+                                        height: 30
+                                        color: modelData.header ? theme.surfaceSoft : (Number(modelData.row || 0) % 2 ? theme.surface : theme.surfaceElevated)
+                                        border.width: 1
+                                        border.color: theme.border
+
+                                        Text {
+                                            anchors.fill: parent
+                                            anchors.leftMargin: 7
+                                            anchors.rightMargin: 7
+                                            verticalAlignment: Text.AlignVCenter
+                                            text: String(parent.modelData.text === undefined ? "" : parent.modelData.text)
+                                            color: theme.text
+                                            font.pixelSize: 11
+                                            font.weight: parent.modelData.header ? Font.DemiBold : Font.Normal
+                                            elide: Text.ElideRight
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        ScrollView {
+                            clip: true
+                            ScrollBar.horizontal: StyledScrollBar { orientation: Qt.Horizontal; policy: ScrollBar.AsNeeded }
+                            ScrollBar.vertical: StyledScrollBar { policy: ScrollBar.AsNeeded }
+
+                            TextArea {
+                                readOnly: true
+                                wrapMode: TextArea.NoWrap
+                                text: root.jsonText()
+                                font.family: "Consolas"
+                                font.pixelSize: 11
+                            }
+                        }
                     }
 
                     RowLayout {
@@ -379,6 +438,16 @@ Dialog {
                             text: root.feedbackText
                             color: theme.textMuted
                             elide: Text.ElideRight
+                        }
+
+                        PillButton {
+                            text: "复制 CSV"
+                            onClicked: root.copyCsv()
+                        }
+
+                        PillButton {
+                            text: "导出 CSV"
+                            onClicked: root.exportCsv()
                         }
 
                         PillButton {
@@ -396,6 +465,86 @@ Dialog {
         }
     }
 
+    Popup {
+        id: subplotPreviewPopup
+        parent: Overlay.overlay
+        modal: true
+        focus: true
+        width: parent ? Math.min(920, parent.width - 48) : 920
+        height: parent ? Math.min(720, parent.height - 48) : 720
+        x: parent ? Math.round((parent.width - width) / 2) : 0
+        y: parent ? Math.round((parent.height - height) / 2) : 0
+        padding: 0
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+
+        background: Rectangle {
+            color: theme.surface
+            radius: theme.radiusMedium
+            border.color: theme.border
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 0
+
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 52
+                Layout.leftMargin: 14
+                Layout.rightMargin: 10
+                spacing: 8
+
+                Text {
+                    Layout.fillWidth: true
+                    text: "子图 " + root.currentSubplotLabel()
+                    color: theme.text
+                    font.weight: Font.DemiBold
+                }
+                PillButton {
+                    text: "-"
+                    onClicked: root.subplotPreviewZoom = Math.max(0.5, root.subplotPreviewZoom - 0.25)
+                }
+                Text {
+                    text: Math.round(root.subplotPreviewZoom * 100) + "%"
+                    color: theme.textMuted
+                    Layout.preferredWidth: 48
+                    horizontalAlignment: Text.AlignHCenter
+                }
+                PillButton {
+                    text: "+"
+                    onClicked: root.subplotPreviewZoom = Math.min(4.0, root.subplotPreviewZoom + 0.25)
+                }
+                PillButton { text: "关闭"; onClicked: subplotPreviewPopup.close() }
+            }
+
+            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: theme.border }
+
+            Flickable {
+                id: subplotPreviewFlick
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                contentWidth: Math.max(width, previewLargeImage.width)
+                contentHeight: Math.max(height, previewLargeImage.height)
+                ScrollBar.horizontal: StyledScrollBar { orientation: Qt.Horizontal; policy: ScrollBar.AsNeeded }
+                ScrollBar.vertical: StyledScrollBar { policy: ScrollBar.AsNeeded }
+
+                Image {
+                    id: previewLargeImage
+                    x: Math.max(0, (subplotPreviewFlick.width - width) / 2)
+                    y: Math.max(0, (subplotPreviewFlick.height - height) / 2)
+                    width: Math.max(100, subplotPreviewFlick.width * root.subplotPreviewZoom)
+                    height: Math.max(100, subplotPreviewFlick.height * root.subplotPreviewZoom)
+                    source: root.elementId ? pdfExtractionController.cropElement(root.elementId) : ""
+                    sourceClipRect: root.currentSubplotClipRect()
+                    fillMode: Image.PreserveAspectFit
+                    asynchronous: true
+                    cache: true
+                }
+            }
+        }
+    }
+
     function openFor(elementId) {
         root.elementId = String(elementId || "")
         root.currentSubplotIndex = 0
@@ -403,43 +552,54 @@ Dialog {
         root.calibrationVisible = false
         root.seriesSeeds = []
         root.feedbackText = ""
+        root.analysisRunning = false
         root.expanded = false
-        root.open()
+        root.show()
         Qt.callLater(root.centerDialog)
         // Reuse a persisted result when the chart was analyzed before.  The
         // explicit re-analysis action remains available when fresh sampling is
         // wanted, while reopening a chart becomes immediate.
         root.refreshResult()
         if (!root.chartResult || !root.chartResult.schemaVersion)
-            root.runAnalysis()
+            Qt.callLater(root.runAnalysis)
     }
 
     function dialogWidth() {
-        var available = parent ? Math.max(360, parent.width - 32) : 980
+        var available = transientParent ? Math.max(360, transientParent.width - 32) : Math.max(360, Screen.width - 32)
         var desired = root.expanded ? 1280 : 980
         return Math.min(desired, available)
     }
 
+    function currentSubplotLabel() {
+        var subplot = root.currentSubplot()
+        return String(subplot.label || subplot.subplotId || (root.currentSubplotIndex + 1))
+    }
+
     function dialogHeight() {
-        var available = parent ? Math.max(420, parent.height - 32) : 760
+        var available = transientParent ? Math.max(420, transientParent.height - 32) : Math.max(420, Screen.height - 32)
         var desired = root.expanded ? 900 : 760
         return Math.min(desired, available)
     }
 
     function centerDialog() {
-        if (!parent)
-            return
-        root.x = Math.max(12, Math.round((parent.width - root.width) / 2))
-        root.y = Math.max(12, Math.round((parent.height - root.height) / 2))
+        if (transientParent) {
+            root.x = Math.round(transientParent.x + (transientParent.width - root.width) / 2)
+            root.y = Math.round(transientParent.y + (transientParent.height - root.height) / 2)
+        } else {
+            root.x = Math.round(Screen.virtualX + (Screen.width - root.width) / 2)
+            root.y = Math.round(Screen.virtualY + (Screen.height - root.height) / 2)
+        }
     }
 
     function runAnalysis() {
-        if (!root.elementId)
+        if (!root.elementId || root.analysisRunning)
             return
+        root.analysisRunning = true
         root.feedbackText = "正在分析…"
-        root.chartResult = pdfExtractionController.analyzeChartData(root.elementId, root.sampleCount)
-        root.refreshCombos()
-        root.feedbackText = root.chartResult && root.chartResult.schemaVersion ? "分析完成。" : pdfExtractionController.statusText
+        if (!pdfExtractionController.requestChartDataAnalysis(root.elementId, root.sampleCount)) {
+            root.analysisRunning = false
+            root.feedbackText = pdfExtractionController.statusText
+        }
     }
 
     function refreshResult() {
@@ -564,11 +724,48 @@ Dialog {
         root.feedbackText = path ? ("已导出：" + path) : pdfExtractionController.statusText
     }
 
+    function copyCsv() {
+        root.feedbackText = pdfExtractionController.copyChartCsv(root.elementId) ? "CSV 已复制。" : pdfExtractionController.statusText
+    }
+
+    function exportCsv() {
+        var path = pdfExtractionController.exportChartCsv(root.elementId)
+        root.feedbackText = path ? ("已导出：" + path) : pdfExtractionController.statusText
+    }
+
     function currentSubplot() {
         var items = root.chartResult && root.chartResult.subplots ? root.chartResult.subplots : []
         if (items.length === 0)
             return ({})
         return items[Math.max(0, Math.min(root.currentSubplotIndex, items.length - 1))]
+    }
+
+    function currentSubplotClipRect() {
+        var bbox = root.currentSubplot().bboxPx || []
+        if (bbox.length < 4)
+            return Qt.rect(0, 0, 0, 0)
+        var width = Math.max(1, Number(bbox[2]) - Number(bbox[0]))
+        var height = Math.max(1, Number(bbox[3]) - Number(bbox[1]))
+        var marginX = width * 0.035
+        var marginY = height * 0.035
+        return Qt.rect(
+            Math.max(0, Number(bbox[0]) - marginX),
+            Math.max(0, Number(bbox[1]) - marginY),
+            width + marginX * 2,
+            height + marginY * 2
+        )
+    }
+
+    function previewSeries() {
+        var items = root.currentSubplot().series || []
+        if (!root.selectedSeriesId)
+            return items
+        var filtered = []
+        for (var i = 0; i < items.length; i++) {
+            if (String(items[i].seriesId || "") === root.selectedSeriesId)
+                filtered.push(items[i])
+        }
+        return filtered
     }
 
     function subplotLabels() {
@@ -657,7 +854,101 @@ Dialog {
     function jsonText() {
         if (!root.chartResult || !root.chartResult.schemaVersion)
             return ""
-        return JSON.stringify(root.chartResult, null, 2)
+        var preview = {
+            schemaVersion: root.chartResult.schemaVersion,
+            source: root.chartResult.source || ({}),
+            analysis: root.chartResult.analysis || ({}),
+            subplots: []
+        }
+        var subplot = root.currentSubplot()
+        if (subplot && subplot.subplotId) {
+            var subplotCopy = ({})
+            for (var key in subplot)
+                subplotCopy[key] = subplot[key]
+            subplotCopy.series = root.previewSeries()
+            preview.subplots = [subplotCopy]
+        }
+        return JSON.stringify(preview, null, 2)
+    }
+
+    function csvText() {
+        return root.elementId ? pdfExtractionController.chartDataCsv(root.elementId) : ""
+    }
+
+    function csvPreviewColumns() {
+        return [
+            "record_id", "element_id", "page", "subplot_id", "series_id", "series_name",
+            "point_index", "x", "y", "pixel_x", "pixel_y", "confidence", "missing",
+            "x_axis_label", "x_axis_scale", "y_axis_label", "y_axis_scale"
+        ]
+    }
+
+    function csvPreviewColumnCount() {
+        return root.csvPreviewColumns().length
+    }
+
+    function csvPreviewRows() {
+        var rows = []
+        var source = root.chartResult.source || ({})
+        var subplot = root.currentSubplot()
+        var axes = subplot.axes || ({})
+        var xAxis = axes.x || ({})
+        var yAxis = axes.y || ({})
+        var series = root.previewSeries()
+        for (var i = 0; i < series.length; i++) {
+            var entry = series[i] || ({})
+            var points = entry.points || []
+            for (var p = 0; p < points.length; p++) {
+                var point = points[p] || ({})
+                var pixel = point.pixel || []
+                rows.push([
+                    source.recordId || "", source.elementId || "", source.page === undefined ? "" : source.page,
+                    subplot.subplotId || "", entry.seriesId || "", entry.name || "",
+                    point.index === undefined ? p : point.index,
+                    point.x === null || point.x === undefined ? "" : point.x,
+                    point.y === null || point.y === undefined ? "" : point.y,
+                    pixel.length > 1 ? pixel[0] : "", pixel.length > 1 ? pixel[1] : "",
+                    point.confidence === undefined ? 0 : point.confidence, !!point.missing,
+                    xAxis.label || "", xAxis.scale || "", yAxis.label || "", yAxis.scale || ""
+                ])
+            }
+        }
+        return rows
+    }
+
+    function csvPreviewCells() {
+        var columns = root.csvPreviewColumns()
+        var rows = root.csvPreviewRows()
+        var cells = []
+        for (var column = 0; column < columns.length; column++)
+            cells.push({ text: columns[column], column: column, row: 0, header: true })
+        for (var row = 0; row < rows.length; row++) {
+            for (column = 0; column < columns.length; column++)
+                cells.push({ text: rows[row][column], column: column, row: row + 1, header: false })
+        }
+        return cells
+    }
+
+    function csvColumnWidth(column) {
+        if (column === 0 || column === 1 || column === 5 || column >= 13)
+            return 132
+        return 96
+    }
+
+    function dataSummaryText() {
+        var subplot = root.currentSubplot()
+        var axes = subplot.axes || ({})
+        var lines = ["subplot_id\tseries_id\tseries_name\tpoints\tconfidence"]
+        var series = root.previewSeries()
+        for (var i = 0; i < series.length; i++) {
+            var item = series[i] || ({})
+            lines.push(String(subplot.subplotId || "") + "\t" + String(item.seriesId || "") + "\t" +
+                String(item.name || "") + "\t" + String((item.points || []).length) + "\t" +
+                String(Math.round(Number(item.confidence || 0) * 100)) + "%")
+        }
+        if (!series.length)
+            lines.push("当前子图没有可导出的曲线数据")
+        return lines.join("\n")
     }
 
     function calibrationPickLabel() {

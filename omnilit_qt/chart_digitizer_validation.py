@@ -17,6 +17,7 @@ except Exception:  # pragma: no cover - PySide6 is optional in headless test env
     QPen = None
 
 from .chart_digitizer_core import analyze_chart_element
+from .chart_digitizer_schema import CALIBRATED_AXIS_SOURCES
 
 
 @dataclass(frozen=True)
@@ -375,7 +376,7 @@ def _summarize_case(case: SyntheticChartCase | ValidationCaseSpec, result: dict[
     point_error = _point_error_summary(tuple(getattr(case, "expected_points", ())), extracted_series)
     subplot_ok = len(subplots) == case.expected_subplots
     series_ok = max_series >= case.expected_series
-    axis_ok = bool(axis_sources) and all(source in {"manual_calibration", "pdf_text"} for source in axis_sources)
+    axis_ok = bool(axis_sources) and all(source in CALIBRATED_AXIS_SOURCES for source in axis_sources)
     recognized = (result.get("analysis") or {}).get("chartType") == "line_chart" and bool(subplots)
     needs_review = bool((result.get("analysis") or {}).get("needsReview"))
     status = "pass" if recognized and subplot_ok and series_ok and (axis_ok or case.needs_review_expected) else "review"

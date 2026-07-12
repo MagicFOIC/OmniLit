@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+import io
 import json
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -11,6 +13,11 @@ SCHEMA_VERSION = 1
 ENGINE_NAME = "omnilit_chart_digitizer"
 DEFAULT_SAMPLE_COUNT = 10
 SUPPORTED_SAMPLE_COUNTS = (5, 10, 15, 20)
+CALIBRATED_AXIS_SOURCES = frozenset({
+    "manual_calibration", "pdf_text", "rapidocr", "rapidocr_enlarged", "image_template_ocr",
+    "normalized_arbitrary_units",
+    "shared_subplot_axis",
+})
 
 
 def utc_now_iso() -> str:
@@ -54,6 +61,7 @@ def make_empty_result(
     warning_list = [str(item) for item in (warnings or []) if str(item or "").strip()]
     if not warning_list:
         warning_list = ["需要手动校准。"]
+    rejected = str(chart_type or "unknown") == "unsupported"
     return {
         "schemaVersion": SCHEMA_VERSION,
         "source": build_source_metadata(element, index, record_id),
@@ -63,9 +71,17 @@ def make_empty_result(
             "engine": ENGINE_NAME,
             "sampleCount": normalize_sample_count(sample_count),
             "confidence": 0.0,
-            "needsReview": True,
-            "status": "需要手动校准",
+            "eligible": False,
+            "needsReview": not rejected,
+            "status": "已跳过（不符合曲线图分析条件）" if rejected else "需要手动校准",
             "warnings": warning_list,
+            "pipeline": [
+                {"stage": "axis_gate", "status": "rejected" if rejected else "review"},
+                {"stage": "subplot_split", "status": "blocked"},
+                {"stage": "axis_calibration", "status": "blocked"},
+                {"stage": "curve_sampling", "status": "blocked"},
+                {"stage": "data_export", "status": "blocked"},
+            ],
         },
         "subplots": [],
     }
@@ -164,6 +180,68 @@ def validate_chart_result(result: dict[str, Any]) -> list[str]:
 def chart_result_to_json(result: dict[str, Any]) -> str:
     stable = deepcopy(result) if isinstance(result, dict) else {}
     return json.dumps(stable, ensure_ascii=False, indent=2, sort_keys=False)
+
+
+CSV_FIELDS = (
+    "record_id", "element_id", "page", "subplot_id", "series_id", "series_name",
+    "point_index", "x", "y", "pixel_x", "pixel_y", "confidence", "missing",
+    "x_axis_label", "x_axis_scale", "y_axis_label", "y_axis_scale",
+)
+
+
+def chart_result_rows(result: dict[str, Any]) -> list[dict[str, Any]]:
+    """Flatten chart data into a stable, analysis-friendly long table."""
+    source = result.get("source") if isinstance(result, dict) else {}
+    source = source if isinstance(source, dict) else {}
+    rows: list[dict[str, Any]] = []
+    for subplot in result.get("subplots") or []:
+        if not isinstance(subplot, dict):
+            continue
+        axes = subplot.get("axes") if isinstance(subplot.get("axes"), dict) else {}
+        x_axis = axes.get("x") if isinstance(axes.get("x"), dict) else {}
+        y_axis = axes.get("y") if isinstance(axes.get("y"), dict) else {}
+        for series in subplot.get("series") or []:
+            if not isinstance(series, dict):
+                continue
+            for point in series.get("points") or []:
+                if not isinstance(point, dict):
+                    continue
+                pixel = point.get("pixel") if isinstance(point.get("pixel"), (list, tuple)) else []
+                rows.append({
+                    "record_id": source.get("recordId", ""),
+                    "element_id": source.get("elementId", ""),
+                    "page": source.get("page", ""),
+                    "subplot_id": subplot.get("subplotId", ""),
+                    "series_id": series.get("seriesId", ""),
+                    "series_name": series.get("name", ""),
+                    "point_index": point.get("index", ""),
+                    "x": "" if point.get("x") is None else point.get("x"),
+                    "y": "" if point.get("y") is None else point.get("y"),
+                    "pixel_x": pixel[0] if len(pixel) >= 2 else "",
+                    "pixel_y": pixel[1] if len(pixel) >= 2 else "",
+                    "confidence": point.get("confidence", 0.0),
+                    "missing": bool(point.get("missing")),
+                    "x_axis_label": x_axis.get("label", ""),
+                    "x_axis_scale": x_axis.get("scale", ""),
+                    "y_axis_label": y_axis.get("label", ""),
+                    "y_axis_scale": y_axis.get("scale", ""),
+                })
+    return rows
+
+
+def chart_result_to_csv(result: dict[str, Any]) -> str:
+    output = io.StringIO(newline="")
+    writer = csv.DictWriter(output, fieldnames=CSV_FIELDS, extrasaction="ignore", lineterminator="\n")
+    writer.writeheader()
+    writer.writerows(chart_result_rows(result))
+    return output.getvalue()
+
+
+def write_chart_csv(path: str | Path, result: dict[str, Any]) -> Path:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("\ufeff" + chart_result_to_csv(result), encoding="utf-8")
+    return target
 
 
 def write_chart_result(path: str | Path, result: dict[str, Any]) -> Path:

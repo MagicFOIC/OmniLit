@@ -277,7 +277,7 @@ class ChartDigitizerCoreTests(unittest.TestCase):
         self.assertEqual(len(result["subplots"]), 1)
         self.assertEqual(result["subplots"][0]["bboxPx"], [280.0, 0.0, 560.0, 180.0])
 
-    def test_non_line_or_low_confidence_image_needs_review(self) -> None:
+    def test_non_line_or_low_confidence_image_is_skipped_by_axis_gate(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             image_path = Path(temp) / "blank.png"
             image = QImage(160, 120, QImage.Format_RGB32)
@@ -285,9 +285,45 @@ class ChartDigitizerCoreTests(unittest.TestCase):
             image.save(str(image_path))
             result = analyze_chart_element(_figure_element(image_path, "SEM photo of sample"), _index(), sample_count=10)
 
-        self.assertTrue(result["analysis"]["needsReview"])
+        self.assertFalse(result["analysis"]["needsReview"])
+        self.assertFalse(result["analysis"]["eligible"])
         self.assertEqual(result["analysis"]["chartType"], "unsupported")
         self.assertEqual(result["subplots"], [])
+
+    def test_dense_text_rows_do_not_impersonate_coordinate_axes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            image_path = Path(temp) / "dense_text.png"
+            image = QImage(320, 220, QImage.Format_RGB32)
+            image.fill(QColor("#ffffff"))
+            painter = QPainter(image)
+            painter.setPen(QPen(QColor("#111111"), 2))
+            for y in range(18, 205, 13):
+                for x in range(16, 300, 34):
+                    painter.drawLine(x, y, min(310, x + 20), y)
+            painter.end()
+            image.save(str(image_path))
+            result = analyze_chart_element(_figure_element(image_path, "Fig. 1 line profile"), _index(), sample_count=10)
+
+        self.assertEqual(result["analysis"]["chartType"], "unsupported")
+        self.assertFalse(result["analysis"]["eligible"])
+
+    def test_table_grid_is_not_treated_as_multiple_chart_axes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            image_path = Path(temp) / "table.png"
+            image = QImage(360, 240, QImage.Format_RGB32)
+            image.fill(QColor("#ffffff"))
+            painter = QPainter(image)
+            painter.setPen(QPen(QColor("#111111"), 2))
+            for y in (20, 60, 100, 140, 180, 220):
+                painter.drawLine(15, y, 345, y)
+            for x in (15, 120, 240, 345):
+                painter.drawLine(x, 20, x, 220)
+            painter.end()
+            image.save(str(image_path))
+            result = analyze_chart_element(_figure_element(image_path, "Fig. line data"), _index())
+
+        self.assertEqual(result["analysis"]["chartType"], "unsupported")
+        self.assertIn("表格", " ".join(result["analysis"]["warnings"]))
 
     def test_review_warnings_use_readable_chinese(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

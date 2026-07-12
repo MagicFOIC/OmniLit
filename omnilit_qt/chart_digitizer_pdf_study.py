@@ -12,7 +12,7 @@ except Exception:  # pragma: no cover - PyMuPDF is optional outside the app runt
     fitz = None
 
 from .chart_digitizer_core import analyze_chart_element
-from .chart_digitizer_schema import chart_result_to_json
+from .chart_digitizer_schema import CALIBRATED_AXIS_SOURCES, chart_result_to_json
 
 
 DEFAULT_PDF_ROOT = Path("Workspace") / "data" / "downloads" / "pdfs"
@@ -36,10 +36,10 @@ def run_pdf_study(
         if not path.exists():
             continue
         candidates.append(_best_pdf_candidate(path, output_root, index, pages_per_pdf, sample_count, zoom))
-    ranked = sorted(candidates, key=_candidate_rank, reverse=True)
     total = max(0, case_count) + max(0, validation_count)
-    selected = ranked[:total]
-    case_items, validation_items = _balanced_case_validation_split(selected, max(0, case_count), max(0, validation_count))
+    selected = sorted(candidates, key=lambda item: (str(item.get("pdfName") or "").lower(), str(item.get("pdfPath") or "")))[:total]
+    case_items = selected[: max(0, case_count)]
+    validation_items = selected[max(0, case_count) : max(0, case_count) + max(0, validation_count)]
     return {
         "studyKind": "local_pdf_10_plus_10",
         "pdfCount": len(candidates),
@@ -50,6 +50,7 @@ def run_pdf_study(
         "cases": case_items,
         "validation": validation_items,
         "validationMetrics": _validation_metrics(validation_items),
+        "validationSetFingerprint": [str(item.get("pdfName") or "") for item in validation_items],
     }
 
 
@@ -148,7 +149,7 @@ def format_validation_markdown(report: dict[str, Any]) -> str:
                     "",
                     f"- Page: {int(item.get('page') or 0) + 1}",
                     f"- Result: {_md(item.get('autoResult') or '')}",
-                    f"- Warnings: {_md('; '.join(item.get('warnings') or []))}",
+                    f"- Warnings: {_md('; '.join(item.get('warnings') or []) or 'none')}",
                     "",
                 ]
             )
@@ -315,11 +316,17 @@ def _analysis_text_blocks(page: Any, blocks: list[dict[str, Any]]) -> list[dict[
 
 def _caption_hint(page_text: str) -> str:
     lines = [line.strip() for line in str(page_text or "").splitlines() if line.strip()]
+    figure_lines: list[str] = []
     for line in lines:
         lower = line.lower()
-        if lower.startswith(("fig.", "figure")) and any(token in lower for token in ("curve", "line", "voltage", "current", "capacity", "time", "rate", "spectrum")):
-            return line[:240]
-    return "Fig. line curve voltage current capacity time spectrum"
+        if lower.startswith(("fig.", "figure")):
+            figure_lines.append(line)
+            if any(token in lower for token in ("curve", "line", "voltage", "current", "capacity", "time", "rate", "spectrum")):
+                return line[:240]
+    if figure_lines:
+        return figure_lines[0][:240]
+    table_line = next((line for line in lines if line.lower().startswith("table")), "")
+    return table_line[:240]
 
 
 def _summarize_pdf_result(pdf_path: Path, pdf_index: int, page_index: int, image_path: Path, result: dict[str, Any]) -> dict[str, Any]:
@@ -338,7 +345,7 @@ def _summarize_pdf_result(pdf_path: Path, pdf_index: int, page_index: int, image
     chart_type = str(analysis.get("chartType") or "unknown")
     recognized = chart_type == "line_chart" and bool(subplots)
     needs_review = bool(analysis.get("needsReview"))
-    axis_calibrated = bool(axis_sources) and all(source in {"manual_calibration", "pdf_text"} for source in axis_sources)
+    axis_calibrated = bool(axis_sources) and all(source in CALIBRATED_AXIS_SOURCES for source in axis_sources)
     failure = _failure_attribution(recognized, axis_calibrated, series_count, needs_review, warnings)
     improvement = _next_improvement(axis_calibrated, series_count, needs_review, warnings)
     json_path = image_path.with_suffix(".chart.json")
@@ -486,7 +493,7 @@ def _sample_result(result: dict[str, Any]) -> dict[str, Any]:
 
 
 def _compact_json_sample(item: dict[str, Any]) -> str:
-    return json.dumps(item.get("jsonSample") or {}, ensure_ascii=False, indent=2)[:4000]
+    return json.dumps(item.get("jsonSample") or {}, ensure_ascii=False, indent=2)[:4000].rstrip()
 
 
 def _sha256(path: Path) -> str:

@@ -160,7 +160,7 @@ class LiteratureLibraryQmlTests(unittest.TestCase):
         self.assertIn("快速解析（PyMuPDF）", reader)
         self.assertIn("深度解析（MinerU）", reader)
         self.assertIn("高精度解析（PaddleOCR-VL）", reader)
-        self.assertIn('pdfExtractionController.analyzeRecordWithEngine(root.recordId, root.pdfPath, "fast")', reader)
+        self.assertIn("pdfExtractionController.openRecordAsync(root.recordId, root.pdfPath)", reader)
         self.assertIn("bbox.length >= 4", reader)
 
         panel = (qml_dir / "PdfExtractionPanel.qml").read_text(encoding="utf-8")
@@ -253,7 +253,6 @@ class LiteratureLibraryQmlTests(unittest.TestCase):
         self.assertIn("selectionTranslationController.translateSelection", reader)
         self.assertIn("selectionTranslationController.retranslateSelection", reader)
         self.assertIn("selectionTranslationController.copyText", reader)
-        self.assertIn('pdfExtractionController.analyzeRecordWithEngine(root.recordId, root.pdfPath, "fast")', reader)
         self.assertIn("root.selectRecord(index, record, true)", library)
         self.assertIn("if (root.translationReaderOpen)", library)
 
@@ -340,7 +339,13 @@ class LiteratureLibraryQmlTests(unittest.TestCase):
 
         self.assertIn("width: root.pageWidth(index) * root.effectiveZoom", reader)
         self.assertIn("height: root.pageHeight(index) * root.effectiveZoom", reader)
-        self.assertIn("pdfExtractionController.renderPage(root.recordId, index, root.effectiveZoom)", reader)
+        self.assertIn("pdfExtractionController.cachedRenderedPage(root.recordId, index, root.effectiveZoom)", reader)
+        self.assertIn("pdfExtractionController.renderPageAsync(root.recordId, index, root.effectiveZoom)", reader)
+        self.assertIn("function onPageRenderReady(recordId, page, zoomKey, url)", reader)
+        self.assertIn("pdfExtractionController.openRecordAsync(root.recordId, root.pdfPath)", reader)
+        self.assertNotIn("pdfExtractionController.loadIndexForPdfQuick(root.recordId, root.pdfPath)", reader)
+        self.assertIn("Component.onCompleted: Qt.callLater(pageFrame.refreshSource)", reader)
+        self.assertNotIn("pdfExtractionController.renderPage(root.recordId, index, root.effectiveZoom)", reader)
         self.assertIn("root.adjustZoomAt(event.angleDelta.y > 0 ? 0.10 : -0.10, point.x, point.y)", reader)
         self.assertIn("function adjustZoomAt(delta, viewportX, viewportY)", reader)
         self.assertIn("pageFlick.contentX = root.clampContentX(targetX)", reader)

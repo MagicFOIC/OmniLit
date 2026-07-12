@@ -1,12 +1,12 @@
 import QtQuick
-import QtQuick.Controls
 
 Item {
     id: root
 
+    Theme { id: theme }
+
     property var subplot: ({})
     property string selectedSeriesId: ""
-    property var hoveredPoint: ({})
     property real leftPad: 44
     property real rightPad: 16
     property real topPad: 18
@@ -23,45 +23,11 @@ Item {
         onPaint: root.paintPlot()
     }
 
-    MouseArea {
-        id: hoverArea
-        anchors.fill: parent
-        hoverEnabled: true
-        onPositionChanged: root.updateHover(mouse.x, mouse.y)
-        onExited: {
-            root.hoveredPoint = ({})
-            canvas.requestPaint()
-        }
-    }
-
-    Rectangle {
-        id: tooltip
-        visible: root.hoveredPoint && root.hoveredPoint.point
-        x: Math.min(parent.width - width - 8, Math.max(8, Number(root.hoveredPoint.screenX || 0) + 12))
-        y: Math.min(parent.height - height - 8, Math.max(8, Number(root.hoveredPoint.screenY || 0) - height - 8))
-        width: tooltipText.implicitWidth + 18
-        height: tooltipText.implicitHeight + 12
-        radius: 6
-        color: "#f8fafc"
-        border.color: "#cbd5e1"
-
-        Text {
-            id: tooltipText
-            anchors.centerIn: parent
-            text: root.tooltipText()
-            color: "#0f172a"
-            font.pixelSize: 11
-            lineHeight: 1.15
-        }
-    }
-
     onSubplotChanged: {
-        root.hoveredPoint = ({})
         root.cachedBounds = root.calculateDataBounds()
         canvas.requestPaint()
     }
     onSelectedSeriesIdChanged: {
-        root.hoveredPoint = ({})
         root.cachedBounds = root.calculateDataBounds()
         canvas.requestPaint()
     }
@@ -71,20 +37,40 @@ Item {
     function paintPlot() {
         var ctx = canvas.getContext("2d")
         ctx.clearRect(0, 0, canvas.width, canvas.height)
-        ctx.fillStyle = "#ffffff"
+        ctx.fillStyle = theme.surface
         ctx.fillRect(0, 0, canvas.width, canvas.height)
 
         var plot = root.plotRect()
-        ctx.strokeStyle = "#cbd5e1"
+        ctx.strokeStyle = theme.border
         ctx.lineWidth = 1
         ctx.strokeRect(plot.x, plot.y, plot.w, plot.h)
 
-        ctx.fillStyle = "#64748b"
-        ctx.font = "11px sans-serif"
-        ctx.fillText("x", plot.x + plot.w - 8, canvas.height - 8)
-        ctx.fillText("y", 8, plot.y + 12)
-
         var bounds = root.cachedBounds
+        ctx.fillStyle = theme.textMuted
+        ctx.font = "11px sans-serif"
+        var axes = root.subplot && root.subplot.axes ? root.subplot.axes : ({})
+        var xAxis = axes.x || ({})
+        var yAxis = axes.y || ({})
+        ctx.fillText(String(xAxis.label || "x"), plot.x + plot.w - 18, canvas.height - 8)
+        ctx.fillText(String(yAxis.label || "y"), 8, plot.y + 12)
+
+        ctx.strokeStyle = theme.divider
+        ctx.lineWidth = 0.6
+        for (var tick = 0; tick <= 4; tick++) {
+            var ratio = tick / 4
+            var gx = plot.x + ratio * plot.w
+            var gy = plot.y + ratio * plot.h
+            ctx.beginPath()
+            ctx.moveTo(gx, plot.y)
+            ctx.lineTo(gx, plot.y + plot.h)
+            ctx.moveTo(plot.x, gy)
+            ctx.lineTo(plot.x + plot.w, gy)
+            ctx.stroke()
+            ctx.fillStyle = theme.textMuted
+            ctx.fillText(root.formatNumber(bounds.minX + ratio * (bounds.maxX - bounds.minX)), gx - 8, plot.y + plot.h + 16)
+            ctx.fillText(root.formatNumber(bounds.maxY - ratio * (bounds.maxY - bounds.minY)), 2, gy + 4)
+        }
+
         var series = root.visibleSeries()
         for (var i = 0; i < series.length; i++) {
             var entry = series[i] || {}
@@ -122,40 +108,6 @@ Item {
         }
         ctx.globalAlpha = 1
 
-        if (root.hoveredPoint && root.hoveredPoint.point) {
-            ctx.strokeStyle = "#0f172a"
-            ctx.lineWidth = 1.5
-            ctx.beginPath()
-            ctx.arc(root.hoveredPoint.screenX, root.hoveredPoint.screenY, 6, 0, Math.PI * 2)
-            ctx.stroke()
-        }
-    }
-
-    function updateHover(mx, my) {
-        var plot = root.plotRect()
-        var bounds = root.cachedBounds
-        var best = null
-        var bestDistanceSquared = 999999
-        var series = root.visibleSeries()
-        for (var i = 0; i < series.length; i++) {
-            var entry = series[i] || {}
-            var points = entry.points || []
-            for (var p = 0; p < points.length; p++) {
-                var point = points[p] || {}
-                if (point.missing || point.x === null || point.y === null)
-                    continue
-                var pos = root.pointToScreen(point, bounds, plot)
-                var dx = pos.x - mx
-                var dy = pos.y - my
-                var distanceSquared = dx * dx + dy * dy
-                if (distanceSquared < bestDistanceSquared) {
-                    bestDistanceSquared = distanceSquared
-                    best = { point: point, series: entry, screenX: pos.x, screenY: pos.y }
-                }
-            }
-        }
-        root.hoveredPoint = best && bestDistanceSquared <= 196 ? best : ({})
-        canvas.requestPaint()
     }
 
     function plotRect() {
@@ -215,19 +167,6 @@ Item {
             x: plot.x + xRatio * plot.w,
             y: plot.y + plot.h - yRatio * plot.h
         }
-    }
-
-    function tooltipText() {
-        var item = root.hoveredPoint || {}
-        var point = item.point || {}
-        var series = item.series || {}
-        if (!point)
-            return ""
-        return "subplot: " + String((root.subplot || {}).subplotId || "") +
-            "\nseries: " + String(series.name || series.seriesId || "") +
-            "\nx: " + root.formatNumber(point.x) +
-            "\ny: " + root.formatNumber(point.y) +
-            "\nconfidence: " + Math.round(Number(point.confidence || 0) * 100) + "%"
     }
 
     function formatNumber(value) {
