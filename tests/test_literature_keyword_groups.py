@@ -54,7 +54,7 @@ class LiteratureKeywordGroupsTests(unittest.TestCase):
         self.assertFalse(controller.loading)
 
     def seed_records(self, root: Path, records: list[dict]) -> None:
-        download_root = root / "Download"
+        download_root = root / "data" / "downloads"
         download_root.mkdir(parents=True)
         (download_root / "metadata_battery.jsonl").write_text(
             "\n".join(json.dumps(record, ensure_ascii=False) for record in records) + "\n",

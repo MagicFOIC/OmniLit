@@ -49,23 +49,23 @@ Rectangle {
         RowLayout {
             Layout.fillWidth: true
             Text { Layout.fillWidth: true; text: i18n.text("graph_arrows"); color: theme.textMuted }
-            Switch { checked: root.showArrows; onToggled: root.showArrows = checked }
+            StyledSwitch { checked: root.showArrows; onToggled: root.showArrows = checked }
         }
 
         RowLayout {
             Layout.fillWidth: true
             Text { Layout.fillWidth: true; text: i18n.text("graph_labels"); color: theme.textMuted }
-            Switch { checked: root.showLabels; onToggled: root.showLabels = checked }
+            StyledSwitch { checked: root.showLabels; onToggled: root.showLabels = checked }
         }
 
         RowLayout {
             Layout.fillWidth: true
             Text { Layout.fillWidth: true; text: i18n.text("graph_dim_unrelated"); color: theme.textMuted }
-            Switch { checked: root.dimUnrelated; onToggled: root.dimUnrelated = checked }
+            StyledSwitch { checked: root.dimUnrelated; onToggled: root.dimUnrelated = checked }
         }
 
         Text { text: i18n.text("graph_text_fade_threshold"); color: theme.textMuted }
-        Slider {
+        StyledSlider {
             Layout.fillWidth: true
             from: 0.6
             to: 2.0
@@ -74,7 +74,7 @@ Rectangle {
         }
 
         Text { text: i18n.text("graph_node_size"); color: theme.textMuted }
-        Slider {
+        StyledSlider {
             Layout.fillWidth: true
             from: 0.6
             to: 2.0
@@ -83,7 +83,7 @@ Rectangle {
         }
 
         Text { text: i18n.text("graph_link_thickness"); color: theme.textMuted }
-        Slider {
+        StyledSlider {
             Layout.fillWidth: true
             from: 0.4
             to: 3.0
@@ -98,7 +98,7 @@ Rectangle {
         RowLayout {
             Layout.fillWidth: true
             Text { Layout.fillWidth: true; text: i18n.text("graph_animate"); color: theme.textMuted }
-            Switch { checked: root.animateLayout; onToggled: root.animateLayout = checked }
+            StyledSwitch { checked: root.animateLayout; onToggled: root.animateLayout = checked }
         }
 
         Item { Layout.fillHeight: true }

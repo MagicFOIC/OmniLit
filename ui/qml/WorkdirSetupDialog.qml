@@ -53,7 +53,7 @@ Dialog {
 
         RowLayout {
             Layout.fillWidth: true
-            TextField {
+            StyledTextField {
                 id: pathField
                 Layout.fillWidth: true
                 text: controller.workdir

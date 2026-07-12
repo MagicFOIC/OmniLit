@@ -31,6 +31,7 @@ class WordCloudController(QObject):
         self._current_key = ""
         self._worker: ManagedWorker | None = None
         self._knowledge_graph = None
+        self._cloud_exists_cache: dict[str, bool] = {}
         self._stop = threading.Event()
         self._taskFinished.connect(self._on_task_finished)
 
@@ -39,17 +40,27 @@ class WordCloudController(QObject):
         clean = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value or "record")).strip("._")[:72] or "record"
         return f"{clean}_{hashlib.sha1(str(value).encode('utf-8')).hexdigest()[:8]}"
 
+    def _content_path(self, *parts: str) -> Path:
+        if hasattr(self.paths, "content"):
+            return self.paths.content(*parts)
+        return self.paths.data(*parts)
+
+    def _runtime_path(self, *parts: str) -> Path:
+        if hasattr(self.paths, "runtime"):
+            return self.paths.runtime(*parts)
+        return self.paths.data(*parts)
+
     def _graph_path(self, record_id: str) -> Path:
-        return self.paths.data("Literature", "graphs", self._safe_id(record_id), "knowledge_graph.json")
+        return self._content_path("literature", "graphs", self._safe_id(record_id), "knowledge_graph.json")
 
     def _index_path(self, record_id: str) -> Path:
-        return self.paths.data("Literature", "extractions", self._safe_id(record_id), "extraction_index.json")
+        return self._content_path("literature", "extractions", self._safe_id(record_id), "extraction_index.json")
 
     def _record_cloud_path(self, record_id: str) -> Path:
-        return self.paths.data("Literature", "graphs", self._safe_id(record_id), "word_cloud.json")
+        return self._content_path("literature", "graphs", self._safe_id(record_id), "word_cloud.json")
 
     def _collection_path(self, key: str) -> Path:
-        return self.paths.data("Literature", "graphs", "word_cloud_collections", key, "word_cloud.json")
+        return self._content_path("literature", "graphs", "word_cloud_collections", key, "word_cloud.json")
 
     @Property(bool, notify=changed)
     def loading(self) -> bool: return self._loading
@@ -129,15 +140,21 @@ class WordCloudController(QObject):
             except Exception as exc:
                 message = f"词云生成失败：{exc}"; task.update_state("failed", detail=message); self._taskFinished.emit(key, {}, message, False)
 
-        task = ManagedWorker(name="WordCloudBuild", target=run, state_path=self.paths.data("task_state", f"word_cloud_{key}.json"), cancel_event=self._stop, metadata={"scope": scope, "key": key})
+        task = ManagedWorker(name="WordCloudBuild", target=run, state_path=self._runtime_path("task_state", f"word_cloud_{key}.json"), cancel_event=self._stop, metadata={"scope": scope, "key": key})
         self._worker = task; task.start(); return True
 
     def _set_cloud(self, key: str, cloud: dict[str, Any], status: str) -> None:
         self._current_key = key; self._scope = str(cloud.get("scope") or ""); self._cloud = cloud; self._selected = {}; self._status = status; self.changed.emit(); self.cloudReady.emit(key)
+        if self._scope != "library":
+            self._cloud_exists_cache[str(key)] = True
 
     def _on_task_finished(self, key: str, cloud: object, message: str, success: bool) -> None:
         self._loading = False; self._status = message
-        if success and isinstance(cloud, dict): self._cloud = cloud; self._selected = {}; self.cloudReady.emit(key)
+        if success and isinstance(cloud, dict):
+            self._cloud = cloud; self._selected = {}
+            if self._scope != "library":
+                self._cloud_exists_cache[str(key)] = True
+            self.cloudReady.emit(key)
         self.changed.emit()
 
     @Slot(str, result=bool)
@@ -149,7 +166,15 @@ class WordCloudController(QObject):
 
     @Slot(str, result=bool)
     def hasCloud(self, record_id: str) -> bool:
-        return bool(str(record_id or "")) and self._record_cloud_path(str(record_id)).is_file()
+        key = str(record_id or "")
+        if not key:
+            return False
+        cached = self._cloud_exists_cache.get(key)
+        if cached is not None:
+            return cached
+        exists = self._record_cloud_path(key).is_file()
+        self._cloud_exists_cache[key] = exists
+        return exists
 
     @Slot(str, result=bool)
     def selectTerm(self, normalized: str) -> bool:

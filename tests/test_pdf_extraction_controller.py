@@ -96,6 +96,95 @@ class PdfExtractionControllerTests(unittest.TestCase):
             self.assertEqual(controller.exportElement("table_1", "json"), str(json_path))
             self.assertEqual(controller.exportElement("figure_1", "png"), str(png_path))
 
+    def test_chart_data_slots_return_and_export_versioned_json(self) -> None:
+        class FakePaths:
+            def __init__(self, root: Path) -> None:
+                self.root = root
+
+            def data(self, *parts: str) -> Path:
+                return self.root.joinpath(*parts)
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            figure_path = root / "figure.png"
+            figure_path.write_bytes(b"not a readable image")
+            controller = PdfExtractionController(None, FakePaths(root), None, None)
+            controller._current_record_id = "record-chart"
+            controller._indexes["record-chart"] = {
+                "sourcePath": str(root / "paper.pdf"),
+                "sourceSha256": "sha",
+                "elements": [],
+            }
+            controller._elements = [
+                {
+                    "id": "figure_1",
+                    "type": "figure",
+                    "page": 0,
+                    "pngPath": str(figure_path),
+                    "caption": "Fig. 1 curve",
+                }
+            ]
+
+            result = controller.analyzeChartData("figure_1", 5)
+            self.assertEqual(result["schemaVersion"], 1)
+            self.assertTrue(result["analysis"]["needsReview"])
+            self.assertIn("figure_1", controller.chartDataJson("figure_1"))
+
+            exported = Path(controller.exportChartData("figure_1"))
+            self.assertTrue(exported.exists())
+            payload = json.loads(exported.read_text(encoding="utf-8"))
+            self.assertEqual(payload["source"]["elementId"], "figure_1")
+
+    def test_chart_calibration_merges_independent_subplots(self) -> None:
+        class FakePaths:
+            def __init__(self, root: Path) -> None:
+                self.root = root
+
+            def data(self, *parts: str) -> Path:
+                return self.root.joinpath(*parts)
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            controller = PdfExtractionController(None, FakePaths(root), None, None)
+            controller._current_record_id = "record-chart"
+
+            self.assertTrue(
+                controller.saveChartCalibration(
+                    "figure_1",
+                    {
+                        "subplotIndex": 0,
+                        "calibration": {
+                            "bboxPx": [0, 0, 110, 110],
+                            "plotAreaPx": [0, 0, 100, 100],
+                            "xAxis": {"calibration": [{"pixel": [0, 100], "value": 0}, {"pixel": [100, 100], "value": 10}]},
+                            "yAxis": {"calibration": [{"pixel": [0, 100], "value": 0}, {"pixel": [0, 0], "value": 1}]},
+                        },
+                    },
+                )
+            )
+            self.assertTrue(
+                controller.saveChartCalibration(
+                    "figure_1",
+                    {
+                        "subplotIndex": 1,
+                        "calibration": {
+                            "bboxPx": [115, 0, 225, 110],
+                            "plotAreaPx": [120, 0, 220, 100],
+                            "xAxis": {"calibration": [{"pixel": [120, 100], "value": 0}, {"pixel": [220, 100], "value": 20}]},
+                            "yAxis": {"calibration": [{"pixel": [120, 100], "value": 0}, {"pixel": [120, 0], "value": 2}]},
+                        },
+                    },
+                )
+            )
+
+            saved = controller._load_chart_calibration("figure_1")
+            self.assertEqual(saved["activeSubplotIndex"], 1)
+            self.assertEqual(len(saved["subplots"]), 2)
+            self.assertEqual(saved["subplots"][0]["bboxPx"], [0, 0, 110, 110])
+            self.assertEqual(saved["subplots"][1]["bboxPx"], [115, 0, 225, 110])
+            self.assertEqual(saved["subplots"][0]["xAxis"]["calibration"][1]["value"], 10)
+            self.assertEqual(saved["subplots"][1]["xAxis"]["calibration"][1]["value"], 20)
+
     def test_load_index_rejects_stale_source_sha(self) -> None:
         class FakePaths:
             def __init__(self, root: Path) -> None:
@@ -132,6 +221,84 @@ class PdfExtractionControllerTests(unittest.TestCase):
             self.assertIn("PDF extraction index is invalid", controller.statusText)
             self.assertNotIn(record_id, controller._indexes)
 
+    def test_quick_pdf_index_load_skips_expensive_sha_verification(self) -> None:
+        class FakePaths:
+            def __init__(self, root: Path) -> None:
+                self.root = root
+
+            def data(self, *parts: str) -> Path:
+                return self.root.joinpath(*parts)
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            pdf_path = root / "current.pdf"
+            pdf_path.write_bytes(b"current pdf bytes")
+            controller = PdfExtractionController(None, FakePaths(root), None, None)
+            record_id = "record-quick"
+            index_dir = controller._record_dir(record_id)
+            index_dir.mkdir(parents=True, exist_ok=True)
+            (index_dir / "extraction_index.json").write_text(
+                json.dumps(
+                    {
+                        "version": 2,
+                        "sourcePath": str(pdf_path),
+                        "sourceSha256": "not-the-current-sha",
+                        "engine": "pymupdf",
+                        "pageCount": 1,
+                        "pages": [{"page": 0, "width": 100, "height": 100}],
+                        "elements": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            self.assertTrue(controller.loadIndexForPdfQuick(record_id, str(pdf_path)))
+            self.assertIn(record_id, controller._indexes)
+            controller.clearPdfSession()
+            self.assertFalse(controller.loadIndexForPdf(record_id, str(pdf_path)))
+
+    def test_stale_analysis_result_does_not_replace_current_pdf_session(self) -> None:
+        class FakePaths:
+            def __init__(self, root: Path) -> None:
+                self.root = root
+
+            def data(self, *parts: str) -> Path:
+                return self.root.joinpath(*parts)
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            controller = PdfExtractionController(None, FakePaths(root), None, None)
+            controller._analysis_request_id = 2
+            controller._loading = True
+            stale_payload = {
+                "version": 3,
+                "sourcePath": str(root / "old.pdf"),
+                "engine": "pymupdf",
+                "pageCount": 1,
+                "pages": [{"page": 0, "width": 100, "height": 100}],
+                "elements": [],
+            }
+            current_payload = {
+                "version": 3,
+                "sourcePath": str(root / "new.pdf"),
+                "engine": "pymupdf",
+                "pageCount": 2,
+                "pages": [
+                    {"page": 0, "width": 100, "height": 100},
+                    {"page": 1, "width": 100, "height": 100},
+                ],
+                "elements": [],
+            }
+
+            controller._on_task_finished(1, "old-record", stale_payload, "old done", True)
+            self.assertTrue(controller.loading)
+            self.assertNotIn("old-record", controller._indexes)
+
+            controller._on_task_finished(2, "new-record", current_payload, "new done", True)
+            self.assertFalse(controller.loading)
+            self.assertEqual(controller.pageCount, 2)
+            self.assertIn("new-record", controller._indexes)
+
     def test_empty_engine_loads_fast_cached_result_without_starting_analysis(self) -> None:
         class FakePaths:
             def __init__(self, root: Path) -> None:
@@ -164,6 +331,101 @@ class PdfExtractionControllerTests(unittest.TestCase):
         self.assertEqual(controller.currentIndex["engine"], "pymupdf")
         self.assertEqual(controller.elements[0]["id"], "table_1")
         self.assertIn("cached extraction index", controller.statusText)
+
+    def test_text_blocks_for_pdf_returns_positioned_text(self) -> None:
+        try:
+            import fitz
+        except ModuleNotFoundError as exc:  # pragma: no cover - depends on local test runtime.
+            raise unittest.SkipTest("PyMuPDF is not installed in this environment") from exc
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            pdf_path = root / "text_blocks.pdf"
+            document = fitz.open()
+            page = document.new_page(width=300, height=200)
+            page.insert_text((36, 60), "Selection translation text block")
+            document.save(str(pdf_path))
+            document.close()
+
+            controller = PdfExtractionController(None, None, None, None)
+            blocks = controller.textBlocksForPdf("record-text", str(pdf_path))
+
+            self.assertTrue(blocks)
+            self.assertIn("Selection translation text block", blocks[0]["text"])
+            self.assertEqual(blocks[0]["page"], 0)
+            self.assertEqual(blocks[0]["pageSize"], [300.0, 200.0])
+            self.assertGreater(blocks[0]["bbox"][2], blocks[0]["bbox"][0])
+
+    def test_text_words_for_pdf_page_returns_word_level_boxes(self) -> None:
+        try:
+            import fitz
+        except ModuleNotFoundError as exc:  # pragma: no cover - depends on local test runtime.
+            raise unittest.SkipTest("PyMuPDF is not installed in this environment") from exc
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            pdf_path = root / "word_boxes.pdf"
+            document = fitz.open()
+            page = document.new_page(width=300, height=200)
+            page.insert_text((36, 60), "active site stability")
+            document.save(str(pdf_path))
+            document.close()
+
+            controller = PdfExtractionController(None, None, None, None)
+            words = controller.textWordsForPdfPage("record-text", str(pdf_path), 0)
+
+            self.assertGreaterEqual(len(words), 3)
+            self.assertEqual([item["text"] for item in words[:3]], ["active", "site", "stability"])
+            self.assertTrue(all(item["type"] == "word" for item in words))
+            self.assertTrue(all(item["bbox"][2] > item["bbox"][0] for item in words))
+            self.assertEqual(words[0]["pageSize"], [300.0, 200.0])
+
+    def test_translation_page_loads_pdf_pages_without_full_index(self) -> None:
+        try:
+            import fitz
+        except ModuleNotFoundError as exc:  # pragma: no cover - depends on local test runtime.
+            raise unittest.SkipTest("PyMuPDF is not installed in this environment") from exc
+
+        class FakePaths:
+            def __init__(self, root: Path) -> None:
+                self.root = root
+
+            def data(self, *parts: str) -> Path:
+                return self.root.joinpath(*parts)
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            pdf_path = root / "translation_pages.pdf"
+            document = fitz.open()
+            document.new_page(width=300, height=200)
+            document.new_page(width=320, height=240)
+            document.save(str(pdf_path))
+            document.close()
+
+            controller = PdfExtractionController(None, FakePaths(root), None, None)
+            record_id = "record-translation-pages"
+            index_dir = controller._record_dir(record_id)
+            index_dir.mkdir(parents=True, exist_ok=True)
+            (index_dir / "extraction_index.json").write_text(
+                json.dumps(
+                    {
+                        "version": 3,
+                        "sourcePath": str(pdf_path),
+                        "engine": "pymupdf",
+                        "pageCount": 99,
+                        "pages": [{"page": 0, "width": 999, "height": 999}],
+                        "elements": [{"id": "old", "type": "table"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            self.assertTrue(controller.loadPdfPagesForTranslation(record_id, str(pdf_path)))
+            self.assertEqual(controller.pageCount, 2)
+            self.assertEqual(controller.pages[0]["width"], 300.0)
+            self.assertEqual(controller.pages[1]["height"], 240.0)
+            self.assertEqual(controller.elements, [])
+            self.assertNotIn(record_id, controller._indexes)
 
     def test_cloud_engine_ignores_legacy_cache_without_config_marker(self) -> None:
         class FakePaths:

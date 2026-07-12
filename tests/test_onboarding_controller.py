@@ -98,7 +98,7 @@ class OnboardingControllerTests(unittest.TestCase):
             self.assertTrue(controller.saveWorkdirPreference(str(workdir)))
 
             settings = json.loads(store.setting("download_form_config"))
-            self.assertEqual(settings["outputDir"], str((workdir / "Download").resolve()))
+            self.assertEqual(settings["outputDir"], str((workdir / "data" / "downloads").resolve()))
             self.assertEqual(settings["keywords"], "battery")
 
     def test_finish_persists_completion_and_last_version(self) -> None:

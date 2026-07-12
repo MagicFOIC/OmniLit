@@ -23,6 +23,7 @@ Item {
         contentWidth: availableWidth
         clip: true
         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+        ScrollBar.vertical: StyledScrollBar { policy: ScrollBar.AsNeeded }
 
         Column {
             id: contentColumn

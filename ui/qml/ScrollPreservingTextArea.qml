@@ -15,6 +15,7 @@ ScrollView {
     contentWidth: availableWidth
     clip: true
     ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+    ScrollBar.vertical: StyledScrollBar { policy: ScrollBar.AsNeeded }
 
     SoftTextArea {
         id: area

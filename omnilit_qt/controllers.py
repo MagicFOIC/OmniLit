@@ -12,6 +12,7 @@ from .knowledge_graph_controller import KnowledgeGraphController
 from .onboarding_controller import OnboardingController
 from .pdf_extraction_controller import PdfExtractionController
 from .preferences_controller import PreferencesController
+from .selection_translation_controller import SelectionTranslationController
 from .translation_controller import TRANSLATION_FORM_SETTING, TranslationController
 from .update_controller import DEFAULT_UPDATE_MANIFEST_URL, UpdateController
 from .word_cloud_controller import WordCloudController
@@ -27,6 +28,7 @@ __all__ = [
     "OnboardingController",
     "PdfExtractionController",
     "PreferencesController",
+    "SelectionTranslationController",
     "TRANSLATION_FORM_SETTING",
     "TranslationController",
     "UpdateController",

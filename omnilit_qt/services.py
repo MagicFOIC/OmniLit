@@ -148,8 +148,24 @@ def workdir_data(paths: AppPaths, store: "AccountStore", *parts: str) -> Path:
     return configured_workdir(paths, store).joinpath(*parts)
 
 
+def workdir_config(paths: AppPaths, store: "AccountStore", *parts: str) -> Path:
+    return configured_workdir(paths, store).joinpath("config", *parts)
+
+
+def workdir_content(paths: AppPaths, store: "AccountStore", *parts: str) -> Path:
+    return configured_workdir(paths, store).joinpath("data", *parts)
+
+
+def workdir_cache(paths: AppPaths, store: "AccountStore", *parts: str) -> Path:
+    return configured_workdir(paths, store).joinpath("cache", *parts)
+
+
+def workdir_runtime(paths: AppPaths, store: "AccountStore", *parts: str) -> Path:
+    return configured_workdir(paths, store).joinpath("runtime", *parts)
+
+
 def default_download_dir(paths: AppPaths, store: "AccountStore") -> Path:
-    return workdir_data(paths, store, "Download")
+    return workdir_content(paths, store, "downloads")
 
 
 def _resolved_config_path(paths: AppPaths, value: Any) -> Path:
@@ -159,19 +175,33 @@ def _resolved_config_path(paths: AppPaths, value: Any) -> Path:
     return path.resolve()
 
 
+def _is_default_download_suffix(path: Path) -> bool:
+    parts = tuple(part.casefold() for part in path.parts)
+    return parts[-2:] == ("workspace", "download") or parts[-2:] == ("data", "downloads")
+
+
+def _path_anchor_exists(path: Path) -> bool:
+    anchor = path.anchor
+    return not anchor or Path(anchor).exists()
+
+
 def is_legacy_default_download_dir(paths: AppPaths, value: Any) -> bool:
     text = str(value or "").strip()
     if not text:
         return True
+    raw_path = Path(text).expanduser()
+    if raw_path.is_absolute() and _is_default_download_suffix(raw_path) and not _path_anchor_exists(raw_path):
+        return True
     try:
         candidate = _resolved_config_path(paths, text)
     except OSError:
-        return False
+        return _is_default_download_suffix(raw_path)
     defaults = {
         paths.resource("Download").resolve(),
         paths.data("Download").resolve(),
+        paths.content("downloads").resolve(),
     }
-    return candidate in defaults
+    return candidate in defaults or (_is_default_download_suffix(candidate) and not candidate.exists())
 
 
 def normalize_download_form_config(paths: AppPaths, store: "AccountStore", settings: dict[str, Any]) -> dict[str, Any]:
@@ -362,7 +392,7 @@ class AccountStore:
 def build_download_config(paths: AppPaths, raw: dict[str, Any], stop_callback, progress_callback, language: str = "zh", api_settings: Any | None = None):
     """构建下载核心配置。参数：路径、界面配置、回调和语言。返回值：核心模块与配置。"""
     core = import_resource_module(paths, "Download", "literature_download_core")
-    output_root = Path(str(raw.get("outputDir") or paths.data("Download"))).expanduser()
+    output_root = Path(str(raw.get("outputDir") or paths.content("downloads"))).expanduser()
     if not output_root.is_absolute():
         output_root = paths.data(output_root)
     keywords = parse_download_keywords(raw.get("keywords")) or None
@@ -401,7 +431,7 @@ def build_download_config(paths: AppPaths, raw: dict[str, Any], stop_callback, p
         email=str(raw.get("email") or "").strip(),
         out_dir=output_root / "pdfs",
         meta_path=output_root / "metadata_battery.jsonl",
-        state_path=output_root / "crawl_state.json",
+        state_path=paths.runtime("downloads", "crawl_state.json") if output_root.resolve() == paths.content("downloads").resolve() else output_root / "crawl_state.json",
         keywords=keywords,
         sources=sources,
         from_date=str(raw.get("fromDate") or core.DEFAULT_FROM_DATE).strip(),

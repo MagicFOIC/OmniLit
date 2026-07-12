@@ -37,7 +37,7 @@ from omnilit_qt.app import _center_window_frame_on_current_screen, _center_windo
 from omnilit_qt.background_tasks import ManagedWorker
 from omnilit_qt.date_utils import month_grid, parse_iso_date, shift_month
 from omnilit_qt.i18n import LocaleController, tr
-from omnilit_qt.paths import AppPaths, _macos_bundle_sibling
+from omnilit_qt.paths import AppPaths, _macos_bundle_sibling, _program_data_root
 from omnilit_qt.secrets import PLAIN_PREFIX, protect_secret, unprotect_secret
 from omnilit_qt.services import AccountStore, PASSWORD_SCHEME, build_download_config, import_resource_module
 from omnilit_qt.support import DEFAULT_KEY_AUTO_PASSWORD, decrypt_api_key, encrypt_api_key, glossary_catalog, load_encrypted_key, write_encrypted_key
@@ -73,26 +73,26 @@ class AppPathsTests(unittest.TestCase):
             (legacy / "Translate" / "glossary" / "custom.csv").write_text("source,target\nalpha,beta\n", encoding="utf-8")
             (legacy / "task_state" / "download.json").write_text("legacy-task", encoding="utf-8")
             (legacy / "ui" / "avatar-alice.jpg").write_text("legacy-avatar", encoding="utf-8")
-            data.mkdir()
-            (data / "accounts.sqlite3").write_text("existing-db", encoding="utf-8")
-            (data / "Download" / "pdfs").mkdir(parents=True)
-            (data / "Download" / "pdfs" / "keep.pdf").write_text("existing-pdf", encoding="utf-8")
             paths = AppPaths(resource, data, legacy)
+            paths.config().mkdir(parents=True)
+            paths.config("accounts.sqlite3").write_text("existing-db", encoding="utf-8")
+            paths.content("downloads", "pdfs").mkdir(parents=True)
+            paths.content("downloads", "pdfs", "keep.pdf").write_text("existing-pdf", encoding="utf-8")
 
             copied = paths.migrate_legacy_data()
 
-            self.assertEqual((data / "accounts.sqlite3").read_text(encoding="utf-8"), "existing-db")
-            self.assertEqual((data / "Download" / "crawl_state.json").read_text(encoding="utf-8"), "legacy-state")
-            self.assertEqual((data / "Download" / "metadata_battery.jsonl.bak").read_text(encoding="utf-8"), "legacy-jsonl")
-            self.assertEqual((data / "Download" / "library_cache.json").read_text(encoding="utf-8"), "legacy-cache")
-            self.assertEqual((data / "Download" / "journal_metrics.csv").read_text(encoding="utf-8"), "journal_title,issn\nBatteries,2313-0105\n")
-            self.assertEqual((data / "Download" / "library" / "legacy.pdf").read_text(encoding="utf-8"), "legacy-library")
-            self.assertEqual((data / "Download" / "pdfs" / "legacy.pdf").read_text(encoding="utf-8"), "legacy-pdf")
-            self.assertEqual((data / "Download" / "pdfs" / "keep.pdf").read_text(encoding="utf-8"), "existing-pdf")
-            self.assertEqual((data / "Download" / "library_previews" / "legacy.png").read_text(encoding="utf-8"), "legacy-preview")
-            self.assertEqual((data / "Translate" / "glossary" / "custom.csv").read_text(encoding="utf-8"), "source,target\nalpha,beta\n")
-            self.assertEqual((data / "task_state" / "download.json").read_text(encoding="utf-8"), "legacy-task")
-            self.assertEqual((data / "ui" / "avatar-alice.jpg").read_text(encoding="utf-8"), "legacy-avatar")
+            self.assertEqual(paths.config("accounts.sqlite3").read_text(encoding="utf-8"), "existing-db")
+            self.assertEqual(paths.runtime("downloads", "crawl_state.json").read_text(encoding="utf-8"), "legacy-state")
+            self.assertEqual(paths.content("downloads", "metadata_battery.jsonl.bak").read_text(encoding="utf-8"), "legacy-jsonl")
+            self.assertEqual(paths.cache("downloads", "library_cache.json").read_text(encoding="utf-8"), "legacy-cache")
+            self.assertEqual(paths.content("downloads", "journal_metrics.csv").read_text(encoding="utf-8"), "journal_title,issn\nBatteries,2313-0105\n")
+            self.assertEqual(paths.content("downloads", "library", "legacy.pdf").read_text(encoding="utf-8"), "legacy-library")
+            self.assertEqual(paths.content("downloads", "pdfs", "legacy.pdf").read_text(encoding="utf-8"), "legacy-pdf")
+            self.assertEqual(paths.content("downloads", "pdfs", "keep.pdf").read_text(encoding="utf-8"), "existing-pdf")
+            self.assertEqual(paths.cache("downloads", "library_previews", "legacy.png").read_text(encoding="utf-8"), "legacy-preview")
+            self.assertEqual(paths.glossary_dir.joinpath("custom.csv").read_text(encoding="utf-8"), "source,target\nalpha,beta\n")
+            self.assertEqual(paths.runtime("task_state", "download.json").read_text(encoding="utf-8"), "legacy-task")
+            self.assertEqual(paths.config("ui", "avatar-alice.jpg").read_text(encoding="utf-8"), "legacy-avatar")
             self.assertIn("Download/crawl_state.json", copied)
             self.assertIn("Download/metadata_battery.jsonl.bak", copied)
             self.assertIn("Download/library_cache.json", copied)
@@ -100,7 +100,33 @@ class AppPathsTests(unittest.TestCase):
             self.assertIn("Download/library", copied)
             self.assertIn("Translate/glossary", copied)
             self.assertIn("task_state", copied)
-            self.assertIn("ui/avatar-alice.jpg", copied)
+            self.assertIn("ui", copied)
+            self.assertEqual(paths.migrate_legacy_data(), [])
+
+    def test_migrate_current_workspace_moves_old_layout_and_removes_empty_roots(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            paths = AppPaths(root / "resource", root / "Workspace", ())
+            paths.data("Download", "pdfs").mkdir(parents=True)
+            paths.data("Download", "pdfs", "paper.pdf").write_text("pdf", encoding="utf-8")
+            paths.data("Download", "library_cache.json").write_text("cache", encoding="utf-8")
+            paths.data("Translate").mkdir(parents=True)
+            paths.data("Translate", "APIKey.enc").write_text("key", encoding="utf-8")
+            paths.data("task_state").mkdir(parents=True)
+            paths.data("task_state", "download.json").write_text("state", encoding="utf-8")
+            paths.data("Cache").mkdir(parents=True)
+
+            copied = paths.migrate_legacy_data()
+
+            self.assertIn("Download/pdfs", copied)
+            self.assertEqual(paths.content("downloads", "pdfs", "paper.pdf").read_text(encoding="utf-8"), "pdf")
+            self.assertEqual(paths.cache("downloads", "library_cache.json").read_text(encoding="utf-8"), "cache")
+            self.assertEqual(paths.config("secrets", "translate", "APIKey.enc").read_text(encoding="utf-8"), "key")
+            self.assertEqual(paths.runtime("task_state", "download.json").read_text(encoding="utf-8"), "state")
+            self.assertFalse(paths.data("Download").exists())
+            self.assertFalse(paths.data("Translate").exists())
+            self.assertFalse(paths.data("task_state").exists())
+            self.assertNotIn("Cache", {child.name for child in paths.data_root.iterdir()})
             self.assertEqual(paths.migrate_legacy_data(), [])
 
     def test_source_run_uses_workspace_data_root_by_default(self) -> None:
@@ -114,17 +140,36 @@ class AppPathsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp, patch.dict("os.environ", {"OMNILIT_DATA_DIR": temp}):
             self.assertEqual(AppPaths.discover().data_root, Path(temp).resolve())
 
+    def test_frozen_run_falls_back_to_user_data_when_app_dir_is_not_writable(self) -> None:
+        with tempfile.TemporaryDirectory() as temp, patch.dict("os.environ", {"OMNILIT_DATA_DIR": "", "LOCALAPPDATA": str(Path(temp) / "LocalAppData")}):
+            executable = Path(temp) / "Program Files" / "OmniLit" / "OmniLit.exe"
+            with patch.object(sys, "frozen", True, create=True), patch.object(sys, "executable", str(executable)), patch.object(sys, "platform", "win32"), patch("omnilit_qt.paths._path_parent_is_writable", return_value=False), patch(
+                "omnilit_qt.paths._is_windows_elevated", return_value=False
+            ):
+                self.assertEqual(_program_data_root(), Path(temp) / "LocalAppData" / "OmniLit" / "Workspace")
+
+    def test_frozen_admin_run_without_portable_workspace_uses_user_data(self) -> None:
+        with tempfile.TemporaryDirectory() as temp, patch.dict("os.environ", {"OMNILIT_DATA_DIR": "", "LOCALAPPDATA": str(Path(temp) / "LocalAppData")}):
+            executable = Path(temp) / "Program Files" / "OmniLit" / "OmniLit.exe"
+            with patch.object(sys, "frozen", True, create=True), patch.object(sys, "executable", str(executable)), patch.object(sys, "platform", "win32"), patch("omnilit_qt.paths._path_parent_is_writable", return_value=True), patch(
+                "omnilit_qt.paths._is_windows_elevated", return_value=True
+            ):
+                self.assertEqual(_program_data_root(), Path(temp) / "LocalAppData" / "OmniLit" / "Workspace")
+
     def test_data_directory_initialization_does_not_create_legacy_translation_out(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             paths = AppPaths(root / "resource", root / "data", ())
             paths.ensure_data_dirs()
-            self.assertTrue(paths.data("Translate", "pdf").is_dir())
-            self.assertTrue(paths.data("Download", "library_previews").is_dir())
-            self.assertTrue(paths.data("Download", "library").is_dir())
-            self.assertTrue(paths.data("Literature", "extractions").is_dir())
-            self.assertTrue(paths.data("task_state").is_dir())
-            self.assertTrue(paths.data("ui").is_dir())
+            self.assertTrue(paths.content("translate", "pdf").is_dir())
+            self.assertTrue(paths.cache("downloads", "library_previews").is_dir())
+            self.assertTrue(paths.content("downloads", "library").is_dir())
+            self.assertTrue(paths.content("literature", "extractions").is_dir())
+            self.assertTrue(paths.runtime("task_state").is_dir())
+            self.assertTrue(paths.config("ui").is_dir())
+            self.assertFalse(paths.data("Download").exists())
+            self.assertFalse(paths.data("Translate").exists())
+            self.assertFalse(paths.data("task_state").exists())
             self.assertFalse(paths.data("Translate", "out").exists())
 
     def test_macos_bundle_uses_app_sibling(self) -> None:
@@ -774,7 +819,7 @@ class TranslationDeploymentKeyTests(unittest.TestCase):
             paths = AppPaths(root / "resource", root / "data", ())
             store = AccountStore(paths.data("accounts.sqlite3"))
             locale = LocaleController(store)
-            key_path = paths.data("Translate", "APIKey.enc")
+            key_path = paths.config("secrets", "translate", "APIKey.enc")
             write_encrypted_key(key_path, "sk-bundled", DEFAULT_KEY_AUTO_PASSWORD)
 
             controller = TranslationController(AppController(paths, locale), paths, store, locale)
@@ -790,7 +835,7 @@ class TranslationDeploymentKeyTests(unittest.TestCase):
             store = AccountStore(paths.data("accounts.sqlite3"))
             locale = LocaleController(store)
             resource_key_path = paths.resource("Translate", "APIKey.enc")
-            app_key_path = paths.data("Translate", "APIKey.enc")
+            app_key_path = paths.config("secrets", "translate", "APIKey.enc")
             write_encrypted_key(resource_key_path, "sk-resource", DEFAULT_KEY_AUTO_PASSWORD)
 
             controller = TranslationController(AppController(paths, locale), paths, store, locale)
@@ -1575,7 +1620,7 @@ class QtOnlyTests(unittest.TestCase):
         self.assertIn("daemon=False", background)
         self.assertNotIn("daemon=True", active_sources)
         self.assertIn("app.aboutToQuit.connect", app)
-        self.assertIn("_shutdown_background_tasks(download, literature_library, pdf_extraction, knowledge_graph, word_cloud, translation, updater)", app)
+        self.assertIn("_shutdown_background_tasks(download, literature_library, pdf_extraction, knowledge_graph, word_cloud, translation, selection_translation, updater)", app)
 
     def test_active_sources_do_not_reference_tkinter(self) -> None:
         files = [
@@ -1758,6 +1803,7 @@ class QtOnlyTests(unittest.TestCase):
         self.assertIn("Layout.preferredHeight: root.logPanePreferredHeight", download)
         self.assertIn("Layout.minimumHeight: root.logPaneMinimumHeight", download)
         self.assertIn("id: pageScroll", translation)
+        self.assertGreaterEqual(translation.count("ScrollBar.vertical.policy: ScrollBar.AlwaysOff"), 4)
         self.assertIn("id: formScroll", translation)
         self.assertIn("literatureLibraryController.records", literature)
         self.assertIn("literatureLibraryController.organizeByRelevance()", literature)
@@ -1799,13 +1845,15 @@ class QtOnlyTests(unittest.TestCase):
         self.assertNotIn("maximumWidth = authWindowWidth", main)
         self.assertNotIn("maximumHeight = authWindowHeight", main)
         self.assertIn("visibility = Window.Windowed", main)
-        self.assertIn("x = Screen.desktopAvailableX", main)
-        self.assertIn("y = Screen.desktopAvailableY", main)
         self.assertIn("minimumWidth = Math.min(workspaceMinimumWidth, Screen.desktopAvailableWidth)", main)
         self.assertIn("minimumHeight = Math.min(workspaceMinimumHeight, Screen.desktopAvailableHeight)", main)
-        self.assertIn("width = Screen.desktopAvailableWidth", main)
-        self.assertIn("height = Screen.desktopAvailableHeight", main)
         self.assertNotIn("visibility = Window.Maximized", main)
+        self.assertIn("width = Math.min(workspaceMinimumWidth, Screen.desktopAvailableWidth)", main)
+        self.assertIn("height = Math.min(workspaceMinimumHeight, Screen.desktopAvailableHeight)", main)
+        self.assertNotIn("x = Screen.virtualX", main)
+        self.assertNotIn("y = Screen.virtualY", main)
+        self.assertNotIn("width = Screen.desktopAvailableWidth", main)
+        self.assertNotIn("height = Screen.desktopAvailableHeight", main)
         self.assertNotIn("registerMode ?", auth.split("height: Math.min(", 1)[1].split("\n", 1)[0])
         self.assertNotIn("GradientStop", auth)
         self.assertNotIn("radius: width / 2", auth)
@@ -1833,14 +1881,48 @@ class QtOnlyTests(unittest.TestCase):
         self.assertIn("color: modeSwitch.hovered ? theme.accentSoft : theme.surface", mode_switch)
         self.assertIn("border.color: modeSwitch.hovered ? theme.accent : theme.border", mode_switch)
 
-    def test_login_recenters_the_native_window_frame_from_python(self) -> None:
+    def test_compact_login_and_workspace_windows_are_recentered_from_python(self) -> None:
         main = (ROOT / "ui" / "qml" / "Main.qml").read_text(encoding="utf-8")
         app = (ROOT / "omnilit_qt" / "app.py").read_text(encoding="utf-8")
         self.assertNotIn("function centerWindow", main)
         self.assertIn("frame = window.frameGeometry()", app)
         self.assertIn("window.setFramePosition(", app)
         self.assertIn("QTimer.singleShot(120", app)
-        self.assertIn("auth.authenticated.connect(lambda: _schedule_window_frame_center(window))", app)
+        self.assertIn("auth.authenticated.connect(lambda: _center_window_frame_on_current_screen(window))", app)
+        self.assertNotIn("auth.authenticated.connect(lambda: _schedule_window_frame_center(window))", app)
+        self.assertIn("auth.loggedOut.connect(lambda: _schedule_window_frame_center(window))", app)
+
+    def test_login_resizes_window_before_switching_workspace(self) -> None:
+        main = (ROOT / "ui" / "qml" / "Main.qml").read_text(encoding="utf-8")
+        self.assertIn("id: pageHost", main)
+        self.assertIn("property bool workspaceActive: false", main)
+        self.assertIn("property bool windowTransitioning: false", main)
+        self.assertIn("id: workspacePage", main)
+        self.assertIn("StackLayout {", main)
+        self.assertIn("currentIndex: window.workspaceActive ? 1 : 0", main)
+        page_host = main[main.index("id: pageHost") : main.index("function rememberWorkspaceSize()")]
+        self.assertLess(page_host.index("AuthPage {"), page_host.index("Workspace {"))
+        self.assertNotIn("visible: window.workspaceActive", page_host)
+        self.assertNotIn("visible: !window.workspaceActive", page_host)
+        self.assertNotIn("sourceComponent: window.workspaceActive", main)
+        auth_block = main[main.index("function onAuthenticated()") : main.index("function onLoggedOut()")]
+        self.assertIn("window.lastLoggedIn = true", auth_block)
+        self.assertIn("window.applyWindowMode()", auth_block)
+        self.assertIn("window.workspaceActive = true", auth_block)
+        self.assertIn("workspacePage.forceActiveFocus()", auth_block)
+        self.assertIn("Qt.callLater(function()", auth_block)
+        self.assertIn("window.opacity = 0", auth_block)
+        self.assertIn("window.opacity = 1", auth_block)
+        self.assertIn("window.windowTransitioning = true", auth_block)
+        self.assertIn("window.windowTransitioning = false", auth_block)
+        self.assertLess(auth_block.index("window.opacity = 0"), auth_block.index("window.applyWindowMode()"))
+        self.assertLess(auth_block.index("window.workspaceActive = true"), auth_block.index("window.opacity = 1"))
+        self.assertLess(auth_block.index("window.applyWindowMode()"), auth_block.index("window.workspaceActive = true"))
+        logout_block = main[main.index("function onLoggedOut()") : main.index("id: pageHost")]
+        self.assertIn("window.workspaceActive = false", logout_block)
+        self.assertIn("window.applyWindowMode()", logout_block)
+        self.assertNotIn("function onChanged()", main)
+        self.assertNotIn("Qt.callLater(applyWindowMode)", main)
 
     def test_workspace_dashboard_is_removed(self) -> None:
         qml_dir = ROOT / "ui" / "qml"
@@ -1848,6 +1930,20 @@ class QtOnlyTests(unittest.TestCase):
         self.assertNotIn('"nav_home"', workspace)
         self.assertNotIn("HomePage", workspace)
         self.assertFalse((qml_dir / "HomePage.qml").exists())
+
+    def test_workspace_lazy_loads_literature_library_page(self) -> None:
+        qml_dir = ROOT / "ui" / "qml"
+        app = (ROOT / "omnilit_qt" / "app.py").read_text(encoding="utf-8")
+        workspace = (qml_dir / "Workspace.qml").read_text(encoding="utf-8")
+
+        self.assertIn("property bool libraryPageRequested: true", workspace)
+        self.assertIn("literatureLibraryController.preload()", workspace)
+        self.assertIn("id: literatureLibraryPageLoader", workspace)
+        self.assertIn("asynchronous: true", workspace)
+        self.assertIn("sourceComponent: literatureLibraryPageComponent", workspace)
+        self.assertIn("Component {\n        id: literatureLibraryPageComponent", workspace)
+        self.assertNotIn("正在打开文献库", workspace)
+        self.assertIn("QTimer.singleShot(250, literature_library.preload)", app)
 
     def test_default_key_page_is_merged_into_translation_advanced_options(self) -> None:
         qml_dir = ROOT / "ui" / "qml"
@@ -2189,7 +2285,7 @@ class PreferencesControllerTests(unittest.TestCase):
             self.assertEqual(restored.effectiveThemeMode, "dark")
             self.assertEqual(restored.accentName, "purple")
             copied = Path(QUrl(restored.workspaceBackgroundUrl).toLocalFile())
-            self.assertEqual(copied.parent, paths.data("ui"))
+            self.assertEqual(copied.parent, paths.config("ui"))
             self.assertTrue(copied.is_file())
 
             restored.clearWorkspaceBackground()

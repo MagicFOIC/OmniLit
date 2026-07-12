@@ -194,7 +194,7 @@ class UpdateController(QObject):
         task = ManagedWorker(
             name="UpdateCheck",
             target=worker,
-            state_path=self.paths.data("task_state", "update_check.json"),
+            state_path=self.paths.runtime("task_state", "update_check.json"),
         )
         self._workers["check"] = task
         task.start()
@@ -215,7 +215,7 @@ class UpdateController(QObject):
                 core = import_resource_module(self.paths, "Update", "update_core")
                 path = core.download_update(
                     self._manifest,
-                    self.paths.data("updates"),
+                    self.paths.runtime("updates"),
                     progress_callback=lambda a, b, c: self.downloadProgress.emit(a, b, c),
                     language=language,
                     stop_callback=lambda: task.cancel_event.is_set(),
@@ -232,7 +232,7 @@ class UpdateController(QObject):
         task = ManagedWorker(
             name="UpdateDownload",
             target=worker,
-            state_path=self.paths.data("task_state", "update_download.json"),
+            state_path=self.paths.runtime("task_state", "update_download.json"),
             metadata={"version": str(self._manifest.version)},
         )
         self._workers["download"] = task
@@ -264,7 +264,7 @@ class UpdateController(QObject):
         task = ManagedWorker(
             name="UpdateApply",
             target=worker,
-            state_path=self.paths.data("task_state", "update_apply.json"),
+            state_path=self.paths.runtime("task_state", "update_apply.json"),
         )
         self._workers["apply"] = task
         task.start()

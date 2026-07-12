@@ -42,6 +42,7 @@ class KnowledgeGraphController(QObject):
         self._current_record_id = ""
         self._graphs: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._graph_statuses: dict[str, str] = {}
+        self._graph_exists_cache: dict[str, bool] = {}
         self._cache_state = "missing"
         self._node_limit = 80
         self._density = "normal"
@@ -57,14 +58,24 @@ class KnowledgeGraphController(QObject):
         suffix = hashlib.sha1(str(record_id).encode("utf-8")).hexdigest()[:8]
         return f"{value}_{suffix}"
 
+    def _content_path(self, *parts: str) -> Path:
+        if hasattr(self.paths, "content"):
+            return self.paths.content(*parts)
+        return self.paths.data(*parts)
+
+    def _runtime_path(self, *parts: str) -> Path:
+        if hasattr(self.paths, "runtime"):
+            return self.paths.runtime(*parts)
+        return self.paths.data(*parts)
+
     def _graph_dir(self, record_id: str) -> Path:
-        return self.paths.data("Literature", "graphs", self._safe_record_id(record_id))
+        return self._content_path("literature", "graphs", self._safe_record_id(record_id))
 
     def _graph_path(self, record_id: str) -> Path:
         return self._graph_dir(record_id) / "knowledge_graph.json"
 
     def _index_path(self, record_id: str) -> Path:
-        return self.paths.data("Literature", "extractions", self._safe_record_id(record_id), "extraction_index.json")
+        return self._content_path("literature", "extractions", self._safe_record_id(record_id), "extraction_index.json")
 
     def _load_or_build_fast_index(self, record_id: str, pdf_path: str) -> tuple[dict[str, Any], bool]:
         index = self._load_json(self._index_path(record_id))
@@ -189,6 +200,7 @@ class KnowledgeGraphController(QObject):
     def _remember_graph(self, key: str, graph: dict[str, Any]) -> None:
         self._graphs.pop(key, None)
         self._graphs[key] = graph
+        self._graph_exists_cache[str(key)] = True
         while len(self._graphs) > 16:
             self._graphs.popitem(last=False)
 
@@ -281,7 +293,7 @@ class KnowledgeGraphController(QObject):
         task = ManagedWorker(
             name="KnowledgeGraphComparisonBuild",
             target=run,
-            state_path=self.paths.data("task_state", f"knowledge_graph_{self._safe_record_id(key)}.json"),
+            state_path=self._runtime_path("task_state", f"knowledge_graph_{self._safe_record_id(key)}.json"),
             cancel_event=self._stop,
             metadata={"record_ids": [str(record.get("recordId") or "") for record in payloads]},
         )
@@ -330,7 +342,7 @@ class KnowledgeGraphController(QObject):
         task = ManagedWorker(
             name="KnowledgeGraphBatchBuild",
             target=run,
-            state_path=self.paths.data("task_state", "knowledge_graph_batch.json"),
+            state_path=self._runtime_path("task_state", "knowledge_graph_batch.json"),
             cancel_event=self._stop,
             metadata={"record_ids": [str(record.get("recordId") or "") for record in payloads]},
         )
@@ -387,7 +399,7 @@ class KnowledgeGraphController(QObject):
         task = ManagedWorker(
             name="KnowledgeGraphBuild",
             target=run,
-            state_path=self.paths.data("task_state", f"knowledge_graph_{self._safe_record_id(key)}.json"),
+            state_path=self._runtime_path("task_state", f"knowledge_graph_{self._safe_record_id(key)}.json"),
             cancel_event=self._stop,
             metadata={"record_id": key, "pdf_path": str(pdf_path or "")},
         )
@@ -444,7 +456,15 @@ class KnowledgeGraphController(QObject):
 
     @Slot(str, result=bool)
     def hasGraph(self, record_id: str) -> bool:
-        return bool(str(record_id or "")) and self._graph_path(str(record_id)).is_file()
+        key = str(record_id or "")
+        if not key:
+            return False
+        cached = self._graph_exists_cache.get(key)
+        if cached is not None:
+            return cached
+        exists = self._graph_path(key).is_file()
+        self._graph_exists_cache[key] = exists
+        return exists
 
     @Slot(str, result=bool)
     def loadGraph(self, record_id: str) -> bool:
@@ -528,6 +548,7 @@ class KnowledgeGraphController(QObject):
         key = str(record_id or "")
         self._graph_statuses.pop(key, None)
         self._graphs.pop(key, None)
+        self._graph_exists_cache.pop(key, None)
         self.changed.emit()
 
     @Slot(str)

@@ -2,7 +2,26 @@ from __future__ import annotations
 
 import os
 import sys
+import ctypes
 from pathlib import Path
+
+from omnilit_qt.startup_diagnostics import write_startup_log
+
+
+def _prepare_frozen_dll_runtime() -> None:
+    if os.name != "nt" or not getattr(sys, "frozen", False):
+        return
+    bundle_root = Path(getattr(sys, "_MEIPASS", "") or "").resolve()
+    if not bundle_root.exists():
+        return
+    bundle_text = str(bundle_root)
+    os.environ["PATH"] = bundle_text + os.pathsep + os.environ.get("PATH", "")
+    if hasattr(os, "add_dll_directory"):
+        os.add_dll_directory(bundle_text)
+    try:
+        ctypes.windll.kernel32.SetDllDirectoryW(bundle_text)
+    except (AttributeError, OSError):
+        pass
 
 
 def _prepare_conda_qt_runtime() -> None:
@@ -29,11 +48,13 @@ def _prepare_conda_qt_runtime() -> None:
         os.environ.setdefault("QML2_IMPORT_PATH", str(qml_path))
 
 
+_prepare_frozen_dll_runtime()
 _prepare_conda_qt_runtime()
 
 try:
     from omnilit_qt.app import run
 except ImportError as exc:
+    write_startup_log("OmniLit import failed", exc=exc)
     raise SystemExit(
         "OmniLit Qt/QML dependencies are missing. Activate the OmniLit Conda "
         "environment and run: conda env update -n OmniLit -f environment.yml --prune"
@@ -41,7 +62,14 @@ except ImportError as exc:
 
 
 if __name__ == "__main__":
-    raise SystemExit(run())
+    try:
+        raise SystemExit(run())
+    except SystemExit:
+        raise
+    except BaseException as exc:
+        write_startup_log("OmniLit startup failed", exc=exc)
+        raise
 
 
 # TODO: 文献提取改进
+# TODO: 图分割，坐标轴的识别，点位数据

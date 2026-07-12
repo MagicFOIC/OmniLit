@@ -34,7 +34,7 @@ Item {
                 spacing: 8
                 PillButton { text: "返回"; onClicked: root.backRequested() }
                 Text { Layout.fillWidth: true; text: "核心概念 · " + root.title; color: theme.text; font.bold: true; font.pixelSize: 18; elide: Text.ElideRight }
-                ComboBox {
+                StyledComboBox {
                     Layout.preferredWidth: 126
                     model: ["All", "Method", "Dataset", "Metric", "Result", "Concept"]
                     onActivated: root.categoryFilter = String(currentText)
@@ -89,6 +89,8 @@ Item {
                 color: theme.surface
                 border.color: theme.border
                 ScrollView {
+                    ScrollBar.vertical: StyledScrollBar { policy: ScrollBar.AsNeeded }
+                    ScrollBar.horizontal: StyledScrollBar { policy: ScrollBar.AsNeeded }
                     anchors.fill: parent
                     anchors.margins: 12
                     contentWidth: availableWidth

@@ -559,7 +559,7 @@ class DownloadController(QObject):
         task = ManagedWorker(
             name="LiteratureDownload",
             target=worker,
-            state_path=self.paths.data("task_state", "literature_download.json"),
+            state_path=self.paths.runtime("task_state", "literature_download.json"),
             cancel_event=self._stop,
             metadata={"keywords": [str(item) for item in keywords]},
         )
@@ -618,7 +618,7 @@ class DownloadController(QObject):
         task = ManagedWorker(
             name="LiteraturePdfBackfill",
             target=worker,
-            state_path=self.paths.data("task_state", "literature_pdf_backfill.json"),
+            state_path=self.paths.runtime("task_state", "literature_pdf_backfill.json"),
             cancel_event=self._stop,
             metadata={"mode": "metadata_pdf_backfill"},
         )

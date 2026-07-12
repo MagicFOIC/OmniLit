@@ -9,7 +9,7 @@ from .app_controller import AppController
 from .paths import AppPaths
 from .services import AccountStore, WORKDIR_SETTING, as_bool, update_download_form_output_dir
 SHOW_EVERY_LOGIN_SETTING = "onboarding/show_every_login"
-WORKDIR_SUBDIRS = ("Download", "Translate", "Extract", "Library", "Cache")
+WORKDIR_SUBDIRS = ("config", "data", "cache", "runtime", "reports")
 
 
 class OnboardingController(QObject):
@@ -135,7 +135,7 @@ class OnboardingController(QObject):
             path.mkdir(parents=True, exist_ok=True)
             for name in WORKDIR_SUBDIRS:
                 (path / name).mkdir(parents=True, exist_ok=True)
-            probe = path / "Cache" / ".write-test"
+            probe = path / "cache" / ".write-test"
             probe.write_text("ok", encoding="utf-8")
             probe.unlink(missing_ok=True)
         except OSError:

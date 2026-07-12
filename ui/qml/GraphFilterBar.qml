@@ -35,7 +35,7 @@ RowLayout {
         }
     }
     Item { Layout.fillWidth: true }
-    TextField {
+    StyledTextField {
         Layout.preferredWidth: 220
         placeholderText: "搜索节点、标签或正文"
         selectByMouse: true

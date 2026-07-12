@@ -22,7 +22,7 @@ from Download.api_config import (
     settings_from_mapping,
 )
 
-from .services import AccountStore, workdir_data
+from .services import AccountStore, workdir_config
 from .support import load_encrypted_key, write_encrypted_key
 
 
@@ -44,7 +44,7 @@ SOURCE_LABELS = {
 
 
 def api_key_dir(paths: Any, store: AccountStore) -> Path:
-    return workdir_data(paths, store, "Download", "APIKeys")
+    return workdir_config(paths, store, "secrets", "download")
 
 
 def api_key_path(paths: Any, store: AccountStore, source: str) -> Path:

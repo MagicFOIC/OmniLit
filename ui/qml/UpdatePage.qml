@@ -3,6 +3,8 @@ import QtQuick.Controls
 import QtQuick.Layouts
 
 ScrollView {
+    ScrollBar.vertical: StyledScrollBar { policy: ScrollBar.AsNeeded }
+    ScrollBar.horizontal: StyledScrollBar { policy: ScrollBar.AsNeeded }
     id: scroll
     property var tourHost: null
     contentWidth: availableWidth

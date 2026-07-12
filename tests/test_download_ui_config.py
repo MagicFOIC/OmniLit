@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from omnilit_qt.paths import AppPaths
-from omnilit_qt.services import build_download_config
+from omnilit_qt.services import AccountStore, build_download_config, normalize_download_form_config
 
 try:
     from omnilit_qt.download_controller import DOWNLOAD_FORM_FIELDS, DownloadController
@@ -59,7 +59,7 @@ class DownloadUiConfigTests(unittest.TestCase):
 
     def test_build_download_config_uses_metrics_csv_from_output_dir(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
-            output_dir = Path(temp) / "data" / "Download"
+            output_dir = Path(temp) / "data" / "data" / "downloads"
             output_dir.mkdir(parents=True)
             metrics = output_dir / "journal_metrics.csv"
             metrics.write_text("journal_title,issn\nBatteries,2313-0105\n", encoding="utf-8")
@@ -67,6 +67,7 @@ class DownloadUiConfigTests(unittest.TestCase):
             _core, config = build_download_config(paths, {}, lambda: False, lambda _stats, _message: None)
 
             self.assertEqual(config.journal_metric_csv.resolve(), metrics.resolve())
+            self.assertEqual(config.state_path.resolve(), (Path(temp) / "data" / "runtime" / "downloads" / "crawl_state.json").resolve())
 
     def test_build_download_config_treats_empty_selected_journals_as_none(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -135,6 +136,29 @@ class DownloadUiConfigTests(unittest.TestCase):
             )
 
             self.assertEqual(config.keywords, ["lithium-sulfur batteries", "polysulfides"])
+
+    def test_saved_legacy_workspace_download_dir_rebases_when_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            paths = AppPaths(ROOT, root / "current", ROOT)
+            store = AccountStore(paths.config("accounts.sqlite3"))
+            old_default = root / "old-install" / "Workspace" / "Download"
+
+            normalized = normalize_download_form_config(paths, store, {"outputDir": str(old_default)})
+
+            self.assertEqual(normalized["outputDir"], str(paths.content("downloads")))
+
+    def test_custom_download_dir_is_preserved(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            paths = AppPaths(ROOT, root / "current", ROOT)
+            store = AccountStore(paths.config("accounts.sqlite3"))
+            custom = root / "projects" / "Download"
+            custom.mkdir(parents=True)
+
+            normalized = normalize_download_form_config(paths, store, {"outputDir": str(custom)})
+
+            self.assertEqual(normalized["outputDir"], str(custom))
 
     def test_qml_uses_unified_quality_and_research_keyword_tags(self) -> None:
         qml = (ROOT / "ui" / "qml" / "DownloadPage.qml").read_text(encoding="utf-8")

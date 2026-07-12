@@ -18,6 +18,7 @@ from .controllers import (
     OnboardingController,
     PdfExtractionController,
     PreferencesController,
+    SelectionTranslationController,
     TranslationController,
     UpdateController,
     WordCloudController,
@@ -26,6 +27,7 @@ from .i18n import LocaleController
 from .paths import AppPaths
 from .pymupdf_tools import silence_mupdf_diagnostics
 from .services import AccountStore
+from .startup_diagnostics import write_startup_log
 
 
 def _shutdown_background_tasks(*controllers, timeout: float = 15.0) -> bool:
@@ -83,7 +85,7 @@ def run() -> int:
 
     paths = AppPaths.discover()
     copied = paths.migrate_legacy_data()
-    store = AccountStore(paths.data("accounts.sqlite3"))
+    store = AccountStore(paths.config("accounts.sqlite3"))
     locale = LocaleController(store)
     shell = AppController(paths, locale)
     auth = AuthController(shell, store, locale)
@@ -98,12 +100,15 @@ def run() -> int:
     word_cloud = WordCloudController(shell, paths, store, locale)
     word_cloud.setKnowledgeGraphController(knowledge_graph)
     translation = TranslationController(shell, paths, store, locale)
+    selection_translation = SelectionTranslationController(shell, paths, store, locale)
+    selection_translation.setTranslationController(translation)
     updater = UpdateController(shell, paths, store, locale)
     onboarding = OnboardingController(shell, paths, store)
     shell.set_migration_summary(copied)
     auth.authenticated.connect(updater.check)
     auth.authenticated.connect(lambda: onboarding.onAuthenticated(auth.username))
-    app.aboutToQuit.connect(lambda: _shutdown_background_tasks(download, literature_library, pdf_extraction, knowledge_graph, word_cloud, translation, updater))
+    app.aboutToQuit.connect(lambda: _shutdown_background_tasks(download, literature_library, pdf_extraction, knowledge_graph, word_cloud, translation, selection_translation, updater))
+    QTimer.singleShot(250, literature_library.preload)
 
     icon_path = paths.resource("assets", "omnilit_logo.ico")
     if icon_path.exists():
@@ -122,6 +127,7 @@ def run() -> int:
         "knowledgeGraphController": knowledge_graph,
         "wordCloudController": word_cloud,
         "translationController": translation,
+        "selectionTranslationController": selection_translation,
         "updateController": updater,
         "onboardingController": onboarding,
         "localeController": locale,
@@ -131,14 +137,25 @@ def run() -> int:
     qml_path = paths.resource("ui", "qml", "Main.qml")
     if not qml_path.exists():
         print(f"QML file not found: {qml_path}", file=sys.stderr)
+        write_startup_log("OmniLit QML file was not found", [f"qml_path={qml_path}", f"data_root={paths.data_root}", f"resource_root={paths.resource_root}"])
         return 1
     engine.load(QUrl.fromLocalFile(str(qml_path)))
     if not engine.rootObjects():
         for warning in qml_warnings:
             print(warning, file=sys.stderr)
+        write_startup_log(
+            "OmniLit QML load failed",
+            [
+                f"qml_path={qml_path}",
+                f"data_root={paths.data_root}",
+                f"resource_root={paths.resource_root}",
+                "warnings:",
+                *qml_warnings,
+            ],
+        )
         return 1
     window = engine.rootObjects()[0]
     _center_window_on_cursor_screen(app, window)
-    auth.authenticated.connect(lambda: _schedule_window_frame_center(window))
+    auth.authenticated.connect(lambda: _center_window_frame_on_current_screen(window))
     auth.loggedOut.connect(lambda: _schedule_window_frame_center(window))
     return app.exec()

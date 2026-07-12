@@ -229,9 +229,11 @@ class LiteratureLibraryController(QObject):
         self._thumbnail_urls: dict[str, str] = {}
         self._preview_workers: dict[str, ManagedWorker] = {}
         self._preview_urls: dict[str, str] = {}
+        self._has_extraction_cache: dict[str, bool] = {}
         self._cleanup_candidates: list[dict[str, Any]] = []
         self._cleanup_summary: dict[str, Any] = self._empty_cleanup_summary()
         self._cleanup_pending = False
+        self._filter_signature: tuple[Any, ...] | None = None
         self._stop = threading.Event()
         self._taskFinished.connect(self._on_task_finished)
         self.thumbnailReady.connect(self._on_thumbnail_ready)
@@ -278,9 +280,18 @@ class LiteratureLibraryController(QObject):
     def _pdf_root(self) -> Path:
         return self._output_root() / "pdfs"
 
-    @staticmethod
-    def _library_cache_path(output_root: Path) -> Path:
-        return output_root / "library_cache.json"
+    def _uses_default_output_root(self, output_root: Path) -> bool:
+        try:
+            return output_root.resolve() == self.paths.content("downloads").resolve()
+        except OSError:
+            return False
+
+    def _download_cache_root(self, output_root: Path | None = None) -> Path:
+        root = output_root or self._output_root()
+        return self.paths.cache("downloads") if self._uses_default_output_root(root) else root
+
+    def _library_cache_path(self, output_root: Path) -> Path:
+        return self._download_cache_root(output_root) / "library_cache.json"
 
     @staticmethod
     def _safe_record_id(record_id: str) -> str:
@@ -290,7 +301,7 @@ class LiteratureLibraryController(QObject):
         return f"{value}_{suffix}"
 
     def _extraction_index_path(self, record_id: str) -> Path:
-        return self.paths.data("Literature", "extractions", self._safe_record_id(record_id), "extraction_index.json")
+        return self.paths.content("literature", "extractions", self._safe_record_id(record_id), "extraction_index.json")
 
     @staticmethod
     def _is_usable_extraction_index(path: Path) -> bool:
@@ -311,8 +322,13 @@ class LiteratureLibraryController(QObject):
         key = str(record_id or "").strip()
         if not key:
             return False
+        if self._has_extraction_cache.get(key):
+            return True
         path = self._extraction_index_path(key)
-        return path.exists() and self._is_usable_extraction_index(path)
+        exists = path.exists() and self._is_usable_extraction_index(path)
+        if exists:
+            self._has_extraction_cache[key] = True
+        return exists
 
     @staticmethod
     def _metadata_signature(meta_path: Path) -> dict[str, Any]:
@@ -380,6 +396,20 @@ class LiteratureLibraryController(QObject):
         if payload.get("version") != LIBRARY_CACHE_VERSION:
             return None
         if payload.get("signature") != expected_signature:
+            return None
+        records = payload.get("records")
+        if not isinstance(records, list):
+            return None
+        return [dict(record) for record in records if isinstance(record, dict)]
+
+    @staticmethod
+    def _read_library_cache_snapshot(cache_path: Path) -> list[dict[str, Any]] | None:
+        try:
+            with cache_path.open("r", encoding="utf-8") as fin:
+                payload = json.load(fin)
+        except Exception:
+            return None
+        if not isinstance(payload, dict) or payload.get("version") != LIBRARY_CACHE_VERSION:
             return None
         records = payload.get("records")
         if not isinstance(records, list):
@@ -639,6 +669,13 @@ class LiteratureLibraryController(QObject):
 
     def _enrich_record(self, core: Any, record: dict[str, Any], config: Any, meta_path: Path) -> dict[str, Any]:
         enriched = dict(record)
+        # Re-clean at the library boundary so metadata written by older app
+        # versions does not keep leaking raw JATS tags into list/detail views.
+        enriched["title"] = core.clean_markup_text(enriched.get("title") or enriched.get("display_name"))
+        if enriched.get("abstract"):
+            enriched["abstract"] = core.clean_markup_text(enriched.get("abstract"))
+        if enriched.get("extracted_abstract"):
+            enriched["extracted_abstract"] = core.clean_markup_text(enriched.get("extracted_abstract"))
         keyword = str(enriched.get("keyword") or (config.effective_keywords[0] if config.effective_keywords else "")).strip()
         info = core.build_relevance_info(keyword, enriched, config)
         for key, value in info.items():
@@ -882,8 +919,9 @@ class LiteratureLibraryController(QObject):
         meta_path = output_root / "metadata_battery.jsonl"
         pdf_root = output_root / "pdfs"
         library_root = output_root / "library"
-        thumbnail_root = output_root / "library_thumbnails"
-        preview_root = output_root / "library_previews"
+        cache_root = self._download_cache_root(output_root)
+        thumbnail_root = cache_root / "library_thumbnails"
+        preview_root = cache_root / "library_previews"
         core = import_resource_module(self.paths, "Download", "literature_download_core")
         raw_records = self._read_metadata_records(meta_path)
         config = self._core_config(raw_records, settings)
@@ -1130,6 +1168,7 @@ class LiteratureLibraryController(QObject):
         urls: dict[str, str],
         ready_signal: Signal,
         state_prefix: str,
+        generate: bool = True,
     ) -> str:
         key = str(record_id)
         if key in urls and urls[key]:
@@ -1143,7 +1182,7 @@ class LiteratureLibraryController(QObject):
         pdf_path = Path(str(record["localPdfPath"]))
         if not pdf_path.exists():
             return ""
-        cache_dir = self._output_root() / cache_folder
+        cache_dir = self._download_cache_root() / cache_folder
         image_path = cache_dir / f"{key}.png"
         failure_path = cache_dir / f"{key}.failed.json"
         if image_path.exists() and image_path.stat().st_mtime >= pdf_path.stat().st_mtime:
@@ -1151,6 +1190,8 @@ class LiteratureLibraryController(QObject):
             urls[key] = url
             self._clear_page_image_failure(failure_path)
             return url
+        if not generate:
+            return ""
         if self._read_page_image_failure(failure_path, pdf_path):
             urls[key] = ""
             return ""
@@ -1169,7 +1210,7 @@ class LiteratureLibraryController(QObject):
         task = ManagedWorker(
             name=state_prefix,
             target=run,
-            state_path=self.paths.data("task_state", f"{state_prefix.lower()}_{key}.json"),
+            state_path=self.paths.runtime("task_state", f"{state_prefix.lower()}_{key}.json"),
             metadata={"record_id": key},
         )
         workers[key] = task
@@ -1196,7 +1237,7 @@ class LiteratureLibraryController(QObject):
         pdf_path = Path(str(record["localPdfPath"]))
         if not pdf_path.exists():
             return "missing_pdf"
-        cache_dir = self._output_root() / cache_folder
+        cache_dir = self._download_cache_root() / cache_folder
         image_path = cache_dir / f"{key}.png"
         if image_path.exists() and image_path.stat().st_mtime >= pdf_path.stat().st_mtime:
             return "ready"
@@ -1208,20 +1249,64 @@ class LiteratureLibraryController(QObject):
 
     def _apply_loaded_records(self, records: list[dict[str, Any]]) -> None:
         self._ensure_state_store()
-        self._records = records
+        prepared: list[dict[str, Any]] = []
+        for record in records:
+            item = dict(record)
+            item["_librarySearchText"] = self._record_search_text(item)
+            item["_keywordGroupKeySet"] = {str(key) for key in item.get("keywordGroupKeys") or []}
+            prepared.append(item)
+        self._records = prepared
         self._record_by_id = {str(record["recordId"]): record for record in self._records}
         self._keyword_group_options = self._build_keyword_group_options(self._records)
         valid_keys = {str(option.get("key") or "") for option in self._keyword_group_options}
         self._keyword_group_filter = {key for key in self._keyword_group_filter if key in valid_keys}
         self._apply_filters()
 
+    @staticmethod
+    def _record_search_text(record: dict[str, Any]) -> str:
+        return " ".join(
+            str(record.get(name) or "")
+            for name in (
+                "title",
+                "abstract",
+                "contentSummary",
+                "keywordsText",
+                "authorsText",
+                "doi",
+                "normalized_doi",
+                "keyword",
+                "journalTitle",
+                "journalName",
+                "journalTypeLabel",
+            )
+        ).casefold()
+
     def _reset_visible_limit(self) -> None:
         self._visible_limit = VISIBLE_RECORD_BATCH_SIZE
 
-    def _list_record(self, record: dict[str, Any]) -> dict[str, Any]:
+    def _project_name_map(self) -> dict[str, str]:
+        projects = self._library_state.get("projects") if isinstance(self._library_state, dict) else []
+        return {
+            str(project.get("id") or ""): str(project.get("name") or "")
+            for project in projects
+            if isinstance(project, dict) and str(project.get("id") or "") and str(project.get("name") or "")
+        }
+
+    @staticmethod
+    def _favorite_project_names_from_ids(project_ids: list[str], project_names: dict[str, str]) -> str:
+        return "、".join(project_names[item] for item in project_ids if item in project_names)
+
+    def _list_record(
+        self,
+        record: dict[str, Any],
+        *,
+        compare_ids: set[str] | None = None,
+        project_names: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         record_id = str(record.get("recordId") or "")
         favorite_project_ids = self._favorite_project_ids(record_id)
-        compare_ids = set(self._compare_ids())
+        compare_ids = compare_ids if compare_ids is not None else set(self._compare_ids())
+        project_names = project_names if project_names is not None else self._project_name_map()
         return {
             "recordId": record.get("recordId", ""),
             "title": record.get("title", ""),
@@ -1255,10 +1340,15 @@ class LiteratureLibraryController(QObject):
             "keywordGroupKeys": record.get("keywordGroupKeys", []),
             "isFavorite": bool(favorite_project_ids),
             "favoriteProjectIds": favorite_project_ids,
-            "favoriteProjectNamesText": self._favorite_project_names_text(record_id),
+            "favoriteProjectNamesText": self._favorite_project_names_from_ids(favorite_project_ids, project_names),
             "inCompare": record_id in compare_ids,
             "hasExtraction": self._has_extraction_index(record_id),
         }
+
+    def _list_records(self, records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        compare_ids = set(self._compare_ids())
+        project_names = self._project_name_map()
+        return [self._list_record(record, compare_ids=compare_ids, project_names=project_names) for record in records]
 
     @staticmethod
     def _year_value(record: dict[str, Any]) -> int:
@@ -1305,6 +1395,8 @@ class LiteratureLibraryController(QObject):
         query = self._query.casefold().strip()
         relevance_floor = LEVEL_ORDER.get(self._relevance_filter, -999)
         filtered: list[dict[str, Any]] = []
+        favorite_filter = self._project_id_filter not in {"", "all"}
+        favorites = self._library_state.get("favorites") if favorite_filter and isinstance(self._library_state, dict) else {}
         for record in self._records:
             if self._relevance_filter != "all":
                 if LEVEL_ORDER.get(str(record.get("relevance_level") or "unmatched"), -1) < relevance_floor:
@@ -1317,32 +1409,21 @@ class LiteratureLibraryController(QObject):
                 elif status != self._pdf_status_filter:
                     continue
             if self._keyword_group_filter:
-                record_groups = {str(key) for key in record.get("keywordGroupKeys") or []}
+                record_groups = record.get("_keywordGroupKeySet")
+                if not isinstance(record_groups, set):
+                    record_groups = {str(key) for key in record.get("keywordGroupKeys") or []}
                 if not record_groups.intersection(self._keyword_group_filter):
                     continue
             if self._journal_type_filter != "all":
                 if str(record.get("journalType") or "unknown") != self._journal_type_filter:
                     continue
-            if self._project_id_filter not in {"", "all"}:
-                if self._project_id_filter not in self._favorite_project_ids(str(record.get("recordId") or "")):
+            if favorite_filter:
+                record_id = str(record.get("recordId") or "")
+                project_ids = favorites.get(record_id, []) if isinstance(favorites, dict) else []
+                if self._project_id_filter not in project_ids:
                     continue
             if query:
-                haystack = " ".join(
-                    str(record.get(name) or "")
-                    for name in (
-                        "title",
-                        "abstract",
-                        "contentSummary",
-                        "keywordsText",
-                        "authorsText",
-                        "doi",
-                        "normalized_doi",
-                        "keyword",
-                        "journalTitle",
-                        "journalName",
-                        "journalTypeLabel",
-                    )
-                ).casefold()
+                haystack = str(record.get("_librarySearchText") or "")
                 if query not in haystack:
                     continue
             filtered.append(record)
@@ -1383,7 +1464,7 @@ class LiteratureLibraryController(QObject):
         task = ManagedWorker(
             name=name,
             target=run,
-            state_path=self.paths.data("task_state", state_file),
+            state_path=self.paths.runtime("task_state", state_file),
             cancel_event=self._stop,
             metadata={"action": action},
         )
@@ -1403,6 +1484,51 @@ class LiteratureLibraryController(QObject):
         records = self._load_records(rewrite_metadata=rewrite_metadata, settings=settings, output_root=output_root)
         self._write_current_library_cache(settings, output_root, records)
         return {"records": records}, f"已加载 {len(records)} 条文献记录。"
+
+    def _load_cached_snapshot_now(self) -> bool:
+        settings = self._download_settings()
+        output_root = self._output_root_from_settings(settings)
+        records = self._read_library_cache_snapshot(self._library_cache_path(output_root))
+        if records is None:
+            return False
+        self._apply_loaded_records(records)
+        self._has_loaded = True
+        self._last_loaded_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self._status = (
+            f"已从缓存显示 {len(records)} 条文献记录。"
+            if self.locale.language == "zh"
+            else f"Showing {len(records)} cached literature records."
+        )
+        self._progress_text = ""
+        self._busy_action = ""
+        self._loading = False
+        self.changed.emit()
+        self._start_silent_cache_validation()
+        return True
+
+    def _start_silent_cache_validation(self) -> None:
+        if self._worker is not None and self._worker.is_alive():
+            return
+
+        def run() -> None:
+            try:
+                payload, message = self._load_task(False, force=False)
+                task.update_state("completed", detail=message)
+                self._taskFinished.emit("warm_refresh", payload, message, True)
+            except Exception as exc:
+                message = f"{type(exc).__name__}: {exc}"
+                task.update_state("failed", detail=message)
+                self._taskFinished.emit("warm_refresh", {}, message, False)
+
+        task = ManagedWorker(
+            name="LiteratureLibraryWarmRefresh",
+            target=run,
+            state_path=self.paths.runtime("task_state", "literature_library_warm_refresh.json"),
+            cancel_event=self._stop,
+            metadata={"action": "warm_refresh"},
+        )
+        self._worker = task
+        task.start()
 
     def _organize_task(self, records: list[dict[str, Any]]) -> tuple[object, str]:
         settings = self._download_settings()
@@ -1449,11 +1575,11 @@ class LiteratureLibraryController(QObject):
 
     @Property("QVariantList", notify=changed)
     def records(self) -> list[dict[str, Any]]:
-        return [self._list_record(record) for record in self._filtered]
+        return self._list_records(self._filtered)
 
     @Property("QVariantList", notify=changed)
     def visibleRecords(self) -> list[dict[str, Any]]:
-        return [self._list_record(record) for record in self._filtered[: self._visible_limit]]
+        return self._list_records(self._filtered[: self._visible_limit])
 
     @Property(int, notify=changed)
     def visibleCount(self) -> int:
@@ -1503,7 +1629,10 @@ class LiteratureLibraryController(QObject):
 
     @Slot(str)
     def notifyExtractionReady(self, record_id: str) -> None:
-        if str(record_id or "") in self._record_by_id:
+        key = str(record_id or "")
+        if key:
+            self._has_extraction_cache[key] = True
+        if key in self._record_by_id:
             self.changed.emit()
 
     @Property(str, notify=changed)
@@ -1543,9 +1672,22 @@ class LiteratureLibraryController(QObject):
         return self._cleanup_pending
 
     @Slot(result=bool)
+    def preload(self) -> bool:
+        if self._has_loaded:
+            return False
+        if self._worker is not None and self._worker.is_alive():
+            return False
+        self._start_silent_cache_validation()
+        return True
+
+    @Slot(result=bool)
     def ensureLoaded(self) -> bool:
         if self._has_loaded:
             return False
+        if self._worker is not None and self._worker.is_alive():
+            return False
+        if self._load_cached_snapshot_now():
+            return True
         message = "正在后台加载文献库..." if self.locale.language == "zh" else "Loading literature library in the background..."
         return self._start_worker(
             action="refresh",
@@ -1607,24 +1749,51 @@ class LiteratureLibraryController(QObject):
     @Slot(str, str, str)
     @Slot(str, str, str, "QVariantList")
     def setFilters(self, relevance: str, pdf_status: str, query: str, keyword_groups: list[Any] | None = None) -> None:
-        self._relevance_filter = relevance or "all"
-        self._pdf_status_filter = pdf_status or "all"
-        self._query = query or ""
-        self._keyword_group_filter = {str(item) for item in (keyword_groups or []) if str(item)}
+        relevance = relevance or "all"
+        pdf_status = pdf_status or "all"
+        query = query or ""
+        keyword_filter = {str(item) for item in (keyword_groups or []) if str(item)}
+        signature = (relevance, pdf_status, query, self._sort_mode, self._journal_type_filter, self._project_id_filter, tuple(sorted(keyword_filter)))
+        if signature == self._filter_signature:
+            return
+        self._relevance_filter = relevance
+        self._pdf_status_filter = pdf_status
+        self._query = query
+        self._keyword_group_filter = keyword_filter
+        self._filter_signature = signature
         self._apply_filters()
         self.changed.emit()
 
     @Slot("QVariantMap")
     def setLibraryFilters(self, filters: dict[str, Any]) -> None:
         filters = filters if isinstance(filters, dict) else {}
-        self._relevance_filter = str(filters.get("relevance") or "all")
-        self._pdf_status_filter = str(filters.get("pdf_status") or "all")
-        self._query = str(filters.get("query") or "")
-        self._sort_mode = str(filters.get("sort") or "relevance_desc")
-        self._journal_type_filter = str(filters.get("journal_type") or "all")
-        self._project_id_filter = str(filters.get("project_id") or "all")
+        relevance_filter = str(filters.get("relevance") or "all")
+        pdf_status_filter = str(filters.get("pdf_status") or "all")
+        query = str(filters.get("query") or "")
+        sort_mode = str(filters.get("sort") or "relevance_desc")
+        journal_type_filter = str(filters.get("journal_type") or "all")
+        project_id_filter = str(filters.get("project_id") or "all")
         keyword_groups = filters.get("keyword_groups") or filters.get("keywordGroups") or []
-        self._keyword_group_filter = {str(item) for item in keyword_groups if str(item)} if isinstance(keyword_groups, list) else set()
+        keyword_filter = {str(item) for item in keyword_groups if str(item)} if isinstance(keyword_groups, list) else set()
+        signature = (
+            relevance_filter,
+            pdf_status_filter,
+            query,
+            sort_mode,
+            journal_type_filter,
+            project_id_filter,
+            tuple(sorted(keyword_filter)),
+        )
+        if signature == self._filter_signature:
+            return
+        self._relevance_filter = relevance_filter
+        self._pdf_status_filter = pdf_status_filter
+        self._query = query
+        self._sort_mode = sort_mode
+        self._journal_type_filter = journal_type_filter
+        self._project_id_filter = project_id_filter
+        self._keyword_group_filter = keyword_filter
+        self._filter_signature = signature
         self._apply_filters()
         self.changed.emit()
 
@@ -1795,6 +1964,19 @@ class LiteratureLibraryController(QObject):
         )
 
     @Slot(str, result=str)
+    def cachedThumbnailFor(self, record_id: str) -> str:
+        return self._cached_page_image_url(
+            record_id=str(record_id),
+            cache_folder="library_thumbnails",
+            max_width=960,
+            workers=self._thumbnail_workers,
+            urls=self._thumbnail_urls,
+            ready_signal=self.thumbnailReady,
+            state_prefix="LiteratureThumbnail",
+            generate=False,
+        )
+
+    @Slot(str, result=str)
     def thumbnailStateFor(self, record_id: str) -> str:
         return self._cached_page_image_state(
             record_id=str(record_id),
@@ -1909,6 +2091,9 @@ class LiteratureLibraryController(QObject):
                 self._cleanup_pending = False
             self._status = message
         else:
+            if action == "warm_refresh":
+                self.changed.emit()
+                return
             if self.locale.language == "zh":
                 labels = {
                     "refresh": "刷新",

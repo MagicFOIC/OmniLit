@@ -32,6 +32,7 @@ Rectangle {
     radius: theme.radiusMedium
 
     Theme { id: theme }
+    ChartDataDialog { id: chartDataDialog }
 
     Connections {
         target: translationController
@@ -66,7 +67,7 @@ Rectangle {
         anchors.fill: parent
         anchors.margins: 12
         clip: true
-        ScrollBar.vertical.policy: ScrollBar.AsNeeded
+        ScrollBar.vertical: StyledScrollBar { policy: ScrollBar.AsNeeded }
         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
         ColumnLayout {
@@ -334,8 +335,11 @@ Rectangle {
                     }
 
                     PillButton {
-                        text: "图数据提取（实验）"
-                        onClicked: root.feedbackText = "需要手动坐标轴标定，后续 PR 实现。"
+                        text: "分析图数据"
+                        onClicked: {
+                            if (root.element && root.element.id)
+                                chartDataDialog.openFor(root.element.id)
+                        }
                     }
                 }
             }

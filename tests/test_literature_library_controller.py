@@ -93,8 +93,8 @@ class LiteratureLibraryPureLogicTests(unittest.TestCase):
 class LiteratureLibraryControllerTests(unittest.TestCase):
     def make_controller(self, root: Path) -> LiteratureLibraryController:
         QCoreApplication.instance() or QCoreApplication([])
-        paths = AppPaths(ROOT, root, ())
-        store = AccountStore(paths.data("accounts.sqlite3"))
+        paths = AppPaths(ROOT, root / "Workspace", ())
+        store = AccountStore(paths.config("accounts.sqlite3"))
         store.set_setting(
             "download_form_config",
             json.dumps(
@@ -116,6 +116,15 @@ class LiteratureLibraryControllerTests(unittest.TestCase):
             time.sleep(0.01)
         QCoreApplication.processEvents()
         self.assertFalse(controller.loading)
+
+    def wait_for_condition(self, condition, timeout: float = 5.0) -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            QCoreApplication.processEvents()
+            if condition():
+                return
+            time.sleep(0.01)
+        self.fail("condition was not met in time")
 
     def wait_for_thumbnail(self, controller: LiteratureLibraryController, record_id: str, timeout: float = 5.0) -> str:
         deadline = time.monotonic() + timeout
@@ -225,7 +234,7 @@ class LiteratureLibraryControllerTests(unittest.TestCase):
         )
 
         controller = self.make_controller(root)
-        core = import_resource_module(AppPaths(ROOT, root, ()), "Download", "literature_download_core")
+        core = import_resource_module(AppPaths(ROOT, root / "Workspace", ()), "Download", "literature_download_core")
         invalid_id = controller._record_identity(core, invalid_record)
         library_dir = download_root / "library" / "keyword_only"
         library_dir.mkdir(parents=True)
@@ -274,6 +283,7 @@ class LiteratureLibraryControllerTests(unittest.TestCase):
             self.assertEqual(details["publicationDate"], "2024-05-06")
             self.assertEqual(details["journalTitle"], "Batteries")
             self.assertEqual(details["impactFactorText"], "IF 7.1")
+
             self.assertEqual(details["impactFactorSource"], "local_csv")
             self.assertEqual(details["impactFactorMetric"], "impact_factor")
             self.assertEqual(details["impactFactorYear"], "2025")
@@ -295,6 +305,26 @@ class LiteratureLibraryControllerTests(unittest.TestCase):
             self.assertEqual(controller.filteredCount, 1)
             controller.setFilters("strict", "downloaded", "", ["not present"])
             self.assertEqual(controller.filteredCount, 0)
+            self.assertIn("_librarySearchText", controller._records[0])
+
+            with mock.patch.object(controller, "_apply_filters", wraps=controller._apply_filters) as apply_filters:
+                controller.setFilters("strict", "downloaded", "", ["not present"])
+            apply_filters.assert_not_called()
+
+    def test_refresh_cleans_jats_markup_from_legacy_metadata_titles(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:
+            root = Path(temp)
+            metadata_path, _ = self.seed_metadata(root)
+            record = json.loads(metadata_path.read_text(encoding="utf-8").strip())
+            record["title"] = "Synergistic <scp>S</scp> n <scp>S</scp> e <sub>2</sub> @Ti <sub>3</sub> C <sub>2</sub> T <sub>x</sub> / <scp>MX</scp> ene separator"
+            metadata_path.write_text(json.dumps(record, ensure_ascii=False) + "\n", encoding="utf-8")
+
+            controller = self.make_controller(root)
+            self.assertTrue(controller.refresh())
+            self.wait_for_idle(controller)
+
+            self.assertEqual(controller.records[0]["title"], "Synergistic SnSe₂ @Ti₃C₂Tₓ/MXene separator")
+            self.assertNotIn("<scp>", controller.detailsFor(controller.records[0]["recordId"])["title"])
 
     def test_records_mark_existing_extraction_index(self) -> None:
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:
@@ -327,6 +357,28 @@ class LiteratureLibraryControllerTests(unittest.TestCase):
             self.assertTrue(controller.hasExtraction(record["recordId"]))
             self.assertTrue(controller.records[0]["hasExtraction"])
 
+    def test_visible_records_cache_extraction_index_state(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:
+            root = Path(temp)
+            self.seed_metadata(root)
+            controller = self.make_controller(root)
+            self.assertTrue(controller.refresh())
+            self.wait_for_idle(controller)
+            record = controller.records[0]
+            extraction_dir = controller._extraction_index_path(record["recordId"]).parent
+            extraction_dir.mkdir(parents=True, exist_ok=True)
+            controller._extraction_index_path(record["recordId"]).write_text(
+                json.dumps({"pageCount": 1, "pages": [{"page": 0}]}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            controller._has_extraction_cache.clear()
+
+            with mock.patch.object(controller, "_is_usable_extraction_index", wraps=controller._is_usable_extraction_index) as usable:
+                self.assertTrue(controller.visibleRecords[0]["hasExtraction"])
+                self.assertTrue(controller.visibleRecords[0]["hasExtraction"])
+
+            self.assertEqual(usable.call_count, 1)
+
     def test_ensure_loaded_uses_cache_when_signatures_match(self) -> None:
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:
             root = Path(temp)
@@ -341,11 +393,23 @@ class LiteratureLibraryControllerTests(unittest.TestCase):
             cached_controller = self.make_controller(root)
             with mock.patch.object(cached_controller, "_load_records", side_effect=AssertionError("cache miss")) as load_records:
                 self.assertTrue(cached_controller.ensureLoaded())
+                self.assertFalse(cached_controller.loading)
                 self.wait_for_idle(cached_controller)
 
             load_records.assert_not_called()
             self.assertEqual(cached_controller.totalCount, 1)
             self.assertTrue(cached_controller.hasLoaded)
+
+    def test_preload_warms_library_without_loading_spinner(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:
+            root = Path(temp)
+            self.seed_metadata(root)
+            controller = self.make_controller(root)
+
+            self.assertTrue(controller.preload())
+            self.assertFalse(controller.loading)
+            self.wait_for_condition(lambda: controller.hasLoaded and controller.totalCount == 1)
+            self.assertFalse(controller.loading)
 
     def test_metadata_change_invalidates_library_cache(self) -> None:
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:
@@ -376,7 +440,9 @@ class LiteratureLibraryControllerTests(unittest.TestCase):
             changed_controller = self.make_controller(root)
             with mock.patch.object(changed_controller, "_load_records", wraps=changed_controller._load_records) as load_records:
                 self.assertTrue(changed_controller.ensureLoaded())
-                self.wait_for_idle(changed_controller)
+                self.assertFalse(changed_controller.loading)
+                self.assertEqual(changed_controller.totalCount, 1)
+                self.wait_for_condition(lambda: load_records.called and changed_controller.totalCount == 2)
 
             self.assertTrue(load_records.called)
             self.assertEqual(changed_controller.totalCount, 2)
@@ -395,7 +461,9 @@ class LiteratureLibraryControllerTests(unittest.TestCase):
             changed_controller = self.make_controller(root)
             with mock.patch.object(changed_controller, "_load_records", wraps=changed_controller._load_records) as load_records:
                 self.assertTrue(changed_controller.ensureLoaded())
-                self.wait_for_idle(changed_controller)
+                self.assertFalse(changed_controller.loading)
+                self.assertEqual(changed_controller.totalCount, 1)
+                self.wait_for_condition(lambda: load_records.called and changed_controller.totalCount == 2)
 
             self.assertTrue(load_records.called)
             self.assertEqual(changed_controller.totalCount, 2)
@@ -666,6 +734,11 @@ class LiteratureLibraryControllerTests(unittest.TestCase):
             release = threading.Event()
             original_render = LiteratureLibraryController._render_pdf_first_page
 
+            with mock.patch.object(LiteratureLibraryController, "_render_pdf_first_page", return_value="file:///unused.png") as cached_render:
+                self.assertEqual(controller.cachedThumbnailFor(record_id), "")
+                self.assertEqual(controller.thumbnailStateFor(record_id), "idle")
+                cached_render.assert_not_called()
+
             def delayed_render(path: Path, image_path: Path, max_width: int) -> str:
                 started.set()
                 release.wait(timeout=5.0)
@@ -680,6 +753,7 @@ class LiteratureLibraryControllerTests(unittest.TestCase):
 
             self.assertTrue(thumbnail.startswith("file:"))
             self.assertEqual(controller.thumbnailStateFor(record_id), "ready")
+            self.assertEqual(controller.cachedThumbnailFor(record_id), thumbnail)
 
             missing_record_id = "missing"
             controller._record_by_id[missing_record_id] = {"recordId": missing_record_id, "localPdfPath": ""}

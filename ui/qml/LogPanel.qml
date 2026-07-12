@@ -32,7 +32,7 @@ Item {
                 elide: Text.ElideRight
             }
 
-            ComboBox {
+            StyledComboBox {
                 id: levelFilter
                 Layout.preferredWidth: 128
                 textRole: "label"
@@ -48,7 +48,7 @@ Item {
                 onActivated: root.refreshFilter()
             }
 
-            TextField {
+            StyledTextField {
                 id: searchField
                 Layout.preferredWidth: 180
                 placeholderText: i18n.text("search_logs")

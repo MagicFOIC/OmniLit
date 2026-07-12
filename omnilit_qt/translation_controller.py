@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import hashlib
 import re
 import shutil
 import threading
@@ -174,6 +175,7 @@ class TranslationController(QObject):
         self._failed_documents: list[str] = []
         self._skipped_documents: list[str] = []
         self._default_key = self._default_key_source = self._user_key = ""
+        self._snippet_translator_cache: dict[tuple[str, str, str, str, str], tuple[object, object, str]] = {}
         self.progress.connect(self._on_progress)
         self.log.connect(self._append_log)
         self.document.connect(self._on_document)
@@ -195,7 +197,7 @@ class TranslationController(QObject):
     @Property(str, constant=True)
     def defaultInputDir(self) -> str:
         """返回默认输入目录。参数：无。返回值：目录文本。"""
-        return str(self.paths.data("Translate", "pdf"))
+        return str(self.paths.content("translate", "pdf"))
 
     @Property(str, constant=True)
     def defaultOutputDir(self) -> str:
@@ -327,7 +329,7 @@ class TranslationController(QObject):
     @Property(str, constant=True)
     def defaultKeyPath(self) -> str:
         """返回可写部署 Key 路径。参数：无。返回值：路径文本。"""
-        return str(self.paths.data("Translate", DEFAULT_KEY_FILE_NAME))
+        return str(self.paths.config("secrets", "translate", DEFAULT_KEY_FILE_NAME))
 
     @Property(bool, notify=changed)
     def defaultKeyExists(self) -> bool:
@@ -337,7 +339,7 @@ class TranslationController(QObject):
     @Property(bool, notify=changed)
     def rememberedKeyExists(self) -> bool:
         """返回用户 Key 文件状态。参数：无。返回值：是否存在。"""
-        return self.paths.data("Translate", USER_KEY_FILE_NAME).exists()
+        return self.paths.config("secrets", "translate", USER_KEY_FILE_NAME).exists()
 
     @staticmethod
     def _stage_fraction(stage: str, current: int, total: int) -> float:
@@ -393,7 +395,7 @@ class TranslationController(QObject):
         """Try to make the bundled service available without user interaction."""
         try:
             self._default_key, self._default_key_source = load_bundled_default_key(
-                self.paths.data("Translate"),
+                self.paths.config("secrets", "translate"),
                 self.paths.resource("Translate"),
             )
         except Exception as exc:
@@ -485,7 +487,7 @@ class TranslationController(QObject):
     @Slot(str, str, result=str)
     def chooseDirectory(self, title: str, initial_dir: str) -> str:
         """选择目录。参数：标题和初始目录。返回值：所选目录。"""
-        return str(QFileDialog.getExistingDirectory(None, title, initial_dir or str(self.paths.data("Translate"))) or "")
+        return str(QFileDialog.getExistingDirectory(None, title, initial_dir or str(self.paths.content("translate", "pdf"))) or "")
 
     @Slot(str)
     def openDirectory(self, path: str) -> None:
@@ -561,7 +563,7 @@ class TranslationController(QObject):
     def unlockDefaultKey(self, password: str) -> bool:
         """解锁部署 Key。参数：加密密码。返回值：是否成功。"""
         try:
-            self._default_key, self._default_key_source = load_default_key(self.paths.data("Translate"), self.paths.resource("Translate"), password)
+            self._default_key, self._default_key_source = load_default_key(self.paths.config("secrets", "translate"), self.paths.resource("Translate"), password)
             if not self._default_key:
                 raise ValueError(self.locale.textf("default_key_unconfigured"))
         except Exception as exc:
@@ -578,7 +580,7 @@ class TranslationController(QObject):
         """Load bundled APIKey.enc without exposing the key in the UI."""
         try:
             self._default_key, self._default_key_source = load_bundled_default_key(
-                self.paths.data("Translate"),
+                self.paths.config("secrets", "translate"),
                 self.paths.resource("Translate"),
             )
             if not self._default_key:
@@ -616,7 +618,7 @@ class TranslationController(QObject):
     def unlockRememberedKey(self, password: str) -> bool:
         """解锁用户 Key。参数：加密密码。返回值：是否成功。"""
         try:
-            self._user_key = load_encrypted_key(self.paths.data("Translate", USER_KEY_FILE_NAME), password)
+            self._user_key = load_encrypted_key(self.paths.config("secrets", "translate", USER_KEY_FILE_NAME), password)
         except Exception as exc:
             self._status = self.locale.textf("user_key_unlock_failed", error=exc)
             self.changed.emit()
@@ -633,7 +635,7 @@ class TranslationController(QObject):
             self.changed.emit()
             return False
         try:
-            write_encrypted_key(self.paths.data("Translate", USER_KEY_FILE_NAME), api_key, password)
+            write_encrypted_key(self.paths.config("secrets", "translate", USER_KEY_FILE_NAME), api_key, password)
         except Exception as exc:
             self._status = self.locale.textf("user_key_save_failed", error=exc)
             self.changed.emit()
@@ -645,9 +647,49 @@ class TranslationController(QObject):
     @Slot()
     def clearRememberedKey(self) -> None:
         """清除用户 Key。参数：无。返回值：无。"""
-        self.paths.data("Translate", USER_KEY_FILE_NAME).unlink(missing_ok=True)
+        self.paths.config("secrets", "translate", USER_KEY_FILE_NAME).unlink(missing_ok=True)
         self._user_key, self._status = "", self.locale.textf("user_key_cleared")
+        self._snippet_translator_cache.clear()
         self.changed.emit()
+
+    def _snippet_translator_bundle(self, target_lang: str) -> tuple[object, object, str, str]:
+        core = import_resource_module(self.paths, "Translate", "literature_translate_core")
+        raw = dict(self._saved_config or {})
+        normalized_target = "en" if str(target_lang or "").strip().lower() == "en" else "zh"
+        glossary_paths = self._glossary_paths(raw.get("glossaryPaths"))
+        api_key = (
+                str(raw.get("apiKey") or "").strip()
+                or self._user_key
+                or self._default_key
+                or None
+        )
+        base_url = str(raw.get("baseUrl") or "https://api.deepseek.com").strip()
+        model = str(raw.get("model") or "deepseek-v4-flash").strip()
+        key_digest = hashlib.sha1(str(api_key or "").encode("utf-8")).hexdigest()[:12]
+        glossary_key = ";".join(str(path) for path in glossary_paths)
+        cache_key = (normalized_target, model, base_url, glossary_key, key_digest)
+        cached = self._snippet_translator_cache.get(cache_key)
+        if cached is not None:
+            cached_core, cached_translator, cached_glossary = cached
+            return cached_core, cached_translator, cached_glossary, normalized_target
+
+        glossary_text = core.load_glossary(glossary_paths, target_lang=normalized_target)
+        args = argparse.Namespace(
+            translator="deepseek",
+            target_lang=normalized_target,
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            temperature=0.15,
+            max_retries=2,
+            disable_json_mode=False,
+        )
+        translator = core.make_translator(args, glossary_text)
+        self._snippet_translator_cache[cache_key] = (core, translator, glossary_text)
+        while len(self._snippet_translator_cache) > 4:
+            first_key = next(iter(self._snippet_translator_cache))
+            self._snippet_translator_cache.pop(first_key, None)
+        return core, translator, glossary_text, normalized_target
 
     @Slot(str, str, result=str)
     def translateSnippet(self, text: str, target_lang: str = "zh") -> str:
@@ -659,35 +701,7 @@ class TranslationController(QObject):
             return ""
 
         try:
-            core = import_resource_module(self.paths, "Translate", "literature_translate_core")
-
-            raw = dict(self._saved_config or {})
-            normalized_target = "en" if str(target_lang or "").strip().lower() == "en" else "zh"
-
-            glossary_text = core.load_glossary(
-                self._glossary_paths(raw.get("glossaryPaths")),
-                target_lang=normalized_target,
-            )
-
-            api_key = (
-                    str(raw.get("apiKey") or "").strip()
-                    or self._user_key
-                    or self._default_key
-                    or None
-            )
-
-            args = argparse.Namespace(
-                translator="deepseek",
-                target_lang=normalized_target,
-                api_key=api_key,
-                base_url=str(raw.get("baseUrl") or "https://api.deepseek.com").strip(),
-                model=str(raw.get("model") or "deepseek-v4-flash").strip(),
-                temperature=0.15,
-                max_retries=2,
-                disable_json_mode=False,
-            )
-
-            translator = core.make_translator(args, glossary_text)
+            core, translator, glossary_text, normalized_target = self._snippet_translator_bundle(target_lang)
 
             segment = core.Segment(
                 sid="snippet_1",
@@ -699,7 +713,7 @@ class TranslationController(QObject):
             )
 
             cache = core.TranslationCache(
-                self.paths.data("Translate", "snippet_translation_cache.json"),
+                self.paths.cache("translate", "snippet_translation_cache.json"),
                 enabled=True,
             )
             cache_key = cache.key(
@@ -884,7 +898,7 @@ class TranslationController(QObject):
         task = ManagedWorker(
             name="AcademicPdfTranslation",
             target=worker,
-            state_path=self.paths.data("task_state", "literature_translation.json"),
+            state_path=self.paths.runtime("task_state", "literature_translation.json"),
             cancel_event=self._stop,
             metadata={"documents": [pdf.name for pdf in pdfs]},
         )

@@ -6,6 +6,8 @@ Item {
     id: root
     property var tourHost: null
 
+    PageMotion { target: root }
+
     property int selectedIndex: literatureList.currentIndex
     property string selectedRecordId: ""
     property var selectedRecord: ({})
@@ -22,6 +24,11 @@ Item {
     property string readerTitle: ""
     property real readerLastZoom: 1.0
     property string readerReturnTarget: ""
+    property bool translationReaderOpen: false
+    property string translationReaderRecordId: ""
+    property string translationReaderPdfPath: ""
+    property string translationReaderTitle: ""
+    property real translationReaderLastZoom: 1.0
     property bool graphOpen: false
     property string graphRecordId: ""
     property string graphPdfPath: ""
@@ -88,6 +95,20 @@ Item {
         }
     }
 
+    Timer {
+        id: thumbnailGenerationTimer
+        interval: 450
+        repeat: false
+        onTriggered: root.requestSelectedThumbnailGeneration()
+    }
+
+    Timer {
+        id: filterApplyTimer
+        interval: 180
+        repeat: false
+        onTriggered: root.applyFiltersNow()
+    }
+
     Connections {
         target: knowledgeGraphController
         function onGraphReady(recordId) {
@@ -107,7 +128,7 @@ Item {
         anchors.fill: parent
         anchors.margins: metrics.pageMargin
         spacing: metrics.sectionSpacing
-        visible: !root.readerOpen && !root.graphOpen && !root.wordCloudOpen
+        visible: !root.readerOpen && !root.graphOpen && !root.wordCloudOpen && !root.translationReaderOpen
 
         PageHeading {
             Layout.fillWidth: true
@@ -130,13 +151,13 @@ Item {
                 anchors.margins: 10
                 spacing: 8
 
-                Flow {
+                RowLayout {
                     Layout.fillWidth: true
-                    spacing: 8
-                    width: parent.width
-                    TextField {
+                    spacing: metrics.toolbarSpacing
+                    StyledTextField {
                         id: query
-                        width: Math.min(360, Math.max(220, parent.width - 380))
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: 220
                         placeholderText: "搜索标题、摘要、作者或 DOI"
                         selectByMouse: true
                         onTextChanged: root.applyFilters()
@@ -144,12 +165,25 @@ Item {
                     PillButton {
                         text: root.libraryFiltersOpen ? "收起筛选" : "筛选"
                         enabled: !literatureLibraryController.loading
-                        onClicked: root.libraryFiltersOpen = !root.libraryFiltersOpen
+                        onClicked: {
+                            root.libraryFiltersOpen = !root.libraryFiltersOpen
+                            if (root.libraryFiltersOpen)
+                                root.libraryToolsOpen = false
+                        }
                     }
-                    Text {
-                        text: "已筛选 " + literatureLibraryController.filteredCount + " / " + literatureLibraryController.totalCount
-                        color: theme.textMuted
-                        verticalAlignment: Text.AlignVCenter
+                    Rectangle {
+                        Layout.preferredWidth: filterCountText.implicitWidth + 18
+                        Layout.preferredHeight: theme.controlHeight
+                        radius: theme.radiusMedium
+                        color: theme.surfaceSoft
+                        border.color: theme.border
+                        Text {
+                            id: filterCountText
+                            anchors.centerIn: parent
+                            text: literatureLibraryController.filteredCount + " / " + literatureLibraryController.totalCount
+                            color: theme.textMuted
+                            font.pixelSize: theme.baseFontSize - 1
+                        }
                     }
                     PillButton {
                         text: literatureLibraryController.loading && literatureLibraryController.busyAction === "refresh" ? "刷新中..." : i18n.text("refresh")
@@ -159,114 +193,230 @@ Item {
                     PillButton {
                         text: root.libraryToolsOpen ? "收起更多" : "更多"
                         enabled: !literatureLibraryController.loading
-                        onClicked: root.libraryToolsOpen = !root.libraryToolsOpen
-                    }
-                }
-
-                GridLayout {
-                    Layout.fillWidth: true
-                    visible: root.libraryFiltersOpen
-                    columns: metrics.narrow ? 1 : 3
-                    columnSpacing: 8
-                    rowSpacing: 8
-                    ComboBox {
-                        id: relevanceFilter
-                        Layout.fillWidth: true
-                        model: root.relevanceLabels
-                        currentIndex: 0
-                        enabled: !literatureLibraryController.loading
-                        onCurrentIndexChanged: root.applyFilters()
-                    }
-                    ComboBox {
-                        id: pdfStatusFilter
-                        Layout.fillWidth: true
-                        model: root.statusLabels
-                        currentIndex: 0
-                        enabled: !literatureLibraryController.loading
-                        onCurrentIndexChanged: root.applyFilters()
-                    }
-                    ComboBox {
-                        id: sortFilter
-                        Layout.fillWidth: true
-                        model: root.sortLabels
-                        currentIndex: 0
-                        enabled: !literatureLibraryController.loading
-                        onCurrentIndexChanged: root.applyFilters()
-                    }
-                    ComboBox {
-                        id: journalTypeFilter
-                        Layout.fillWidth: true
-                        model: root.journalTypeLabels
-                        currentIndex: 0
-                        enabled: !literatureLibraryController.loading
-                        onCurrentIndexChanged: root.applyFilters()
-                    }
-                    ComboBox {
-                        id: projectFilter
-                        Layout.fillWidth: true
-                        model: root.favoriteProjectFilterLabels()
-                        currentIndex: 0
-                        enabled: !literatureLibraryController.loading
-                        onCurrentIndexChanged: root.applyFilters()
-                    }
-                    PillButton {
-                        id: keywordGroupButton
-                        text: root.selectedKeywordGroupsText()
-                        enabled: !literatureLibraryController.loading && literatureLibraryController.keywordGroupOptions.length > 0
-                        onClicked: keywordGroupPopup.open()
-                        ModernToolTip {
-                            placement: "bottom"
-                            delay: 350
-                            shown: parent.hovered && literatureLibraryController.keywordGroupOptions.length === 0
-                            text: i18n.text("no_keyword_groups")
+                        onClicked: {
+                            root.libraryToolsOpen = !root.libraryToolsOpen
+                            if (root.libraryToolsOpen)
+                                root.libraryFiltersOpen = false
                         }
                     }
                 }
 
-                Flow {
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    visible: root.libraryFiltersOpen
+                    spacing: 8
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Text {
+                            text: "筛选条件"
+                            color: theme.text
+                            font.weight: Font.DemiBold
+                        }
+                        Rectangle {
+                            visible: root.activeFilterCount() > 0
+                            implicitWidth: activeFilterLabel.implicitWidth + 14
+                            implicitHeight: activeFilterLabel.implicitHeight + 6
+                            radius: implicitHeight / 2
+                            color: theme.accentSofter
+                            border.color: theme.accentSoft
+                            Text {
+                                id: activeFilterLabel
+                                anchors.centerIn: parent
+                                text: root.activeFilterCount() + " 项生效"
+                                color: theme.accentStrong
+                                font.pixelSize: theme.baseFontSize - 2
+                                font.weight: Font.DemiBold
+                            }
+                        }
+                        Item { Layout.fillWidth: true }
+                        PillButton {
+                            text: "重置条件"
+                            enabled: root.activeFilterCount() > 0 || sortFilter.currentIndex !== 0
+                            onClicked: root.resetAdvancedFilters()
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: filterConditionGrid.implicitHeight + 20
+                        radius: 10
+                        color: theme.surfaceSoft
+                        border.color: theme.border
+
+                        GridLayout {
+                            id: filterConditionGrid
+                            anchors.fill: parent
+                            anchors.margins: 10
+                            columns: metrics.narrow ? 1 : 3
+                            columnSpacing: 12
+                            rowSpacing: 10
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 4
+                                Text { text: "相关性"; color: theme.textMuted; font.pixelSize: theme.baseFontSize - 2 }
+                                StyledComboBox { id: relevanceFilter; Layout.fillWidth: true; model: root.relevanceLabels; currentIndex: 0; enabled: !literatureLibraryController.loading; onCurrentIndexChanged: root.applyFilters() }
+                            }
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 4
+                                Text { text: "PDF 状态"; color: theme.textMuted; font.pixelSize: theme.baseFontSize - 2 }
+                                StyledComboBox { id: pdfStatusFilter; Layout.fillWidth: true; model: root.statusLabels; currentIndex: 0; enabled: !literatureLibraryController.loading; onCurrentIndexChanged: root.applyFilters() }
+                            }
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 4
+                                Text { text: "排序方式"; color: theme.textMuted; font.pixelSize: theme.baseFontSize - 2 }
+                                StyledComboBox { id: sortFilter; Layout.fillWidth: true; model: root.sortLabels; currentIndex: 0; enabled: !literatureLibraryController.loading; onCurrentIndexChanged: root.applyFilters() }
+                            }
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 4
+                                Text { text: "期刊类型"; color: theme.textMuted; font.pixelSize: theme.baseFontSize - 2 }
+                                StyledComboBox { id: journalTypeFilter; Layout.fillWidth: true; model: root.journalTypeLabels; currentIndex: 0; enabled: !literatureLibraryController.loading; onCurrentIndexChanged: root.applyFilters() }
+                            }
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 4
+                                Text { text: "收藏分类"; color: theme.textMuted; font.pixelSize: theme.baseFontSize - 2 }
+                                StyledComboBox { id: projectFilter; Layout.fillWidth: true; model: root.favoriteProjectFilterLabels(); currentIndex: 0; enabled: !literatureLibraryController.loading; onCurrentIndexChanged: root.applyFilters() }
+                            }
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 4
+                                Text { text: "关键词组"; color: theme.textMuted; font.pixelSize: theme.baseFontSize - 2 }
+                                PillButton {
+                                    id: keywordGroupButton
+                                    Layout.fillWidth: true
+                                    text: root.selectedKeywordGroupsText()
+                                    enabled: !literatureLibraryController.loading && literatureLibraryController.keywordGroupOptions.length > 0
+                                    onClicked: keywordGroupPopup.open()
+                                    ModernToolTip {
+                                        placement: "bottom"
+                                        delay: 350
+                                        shown: parent.hovered && literatureLibraryController.keywordGroupOptions.length === 0
+                                        text: i18n.text("no_keyword_groups")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                ColumnLayout {
                     Layout.fillWidth: true
                     visible: root.libraryToolsOpen
                     spacing: 8
-                    width: parent.width
-                    PillButton {
-                        text: "新建收藏分类"
-                        enabled: !literatureLibraryController.loading
-                        onClicked: createProjectPopup.open()
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+                        Text {
+                            Layout.fillWidth: true
+                            text: "批量工具"
+                            color: theme.text
+                            font.weight: Font.DemiBold
+                        }
+                        Text {
+                            text: "作用于当前文献库"
+                            color: theme.textMuted
+                            font.pixelSize: theme.baseFontSize - 2
+                        }
                     }
-                    PillButton {
-                        text: literatureLibraryController.loading && literatureLibraryController.busyAction === "refresh" ? "刷新中..." : i18n.text("refresh")
-                        visible: false
-                        enabled: !literatureLibraryController.loading
-                        onClicked: literatureLibraryController.refresh()
-                    }
-                    PillButton {
-                        text: literatureLibraryController.loading && literatureLibraryController.busyAction === "recompute" ? "重算中..." : "重算相关性"
-                        enabled: !literatureLibraryController.loading
-                        onClicked: literatureLibraryController.recomputeRelevance()
-                    }
-                    PillButton {
-                        text: literatureLibraryController.loading && literatureLibraryController.busyAction === "organize" ? "归档中..." : "按相关性归档"
-                        enabled: !literatureLibraryController.loading
-                        primary: true
-                        onClicked: literatureLibraryController.organizeByRelevance()
-                    }
-                    PillButton {
-                        text: knowledgeGraphController.loading && knowledgeGraphController.currentRecordId === "__batch__" ? "批量生成中..." : "批量生成图谱"
-                        enabled: !knowledgeGraphController.loading && literatureLibraryController.records.length > 0
-                        onClicked: knowledgeGraphController.generateGraphs(literatureLibraryController.records)
-                    }
-                    PillButton {
-                        text: wordCloudController.loading && wordCloudController.currentScope === "library" ? "词云生成中..." : "筛选词云"
-                        enabled: !wordCloudController.loading && literatureLibraryController.records.length > 0
-                        onClicked: root.openLibraryWordCloud()
-                    }
-                    PillButton {
-                        text: literatureLibraryController.loading && literatureLibraryController.busyAction === "preview_cleanup" ? "扫描中..." :
-                              literatureLibraryController.loading && literatureLibraryController.busyAction === "confirm_cleanup" ? "删除中..." : "清理旧 PDF"
-                        enabled: !literatureLibraryController.loading
-                        onClicked: {
-                            cleanupPopup.open()
-                            literatureLibraryController.previewCleanup()
+
+                    GridLayout {
+                        Layout.fillWidth: true
+                        columns: metrics.narrow ? 1 : 3
+                        columnSpacing: 8
+                        rowSpacing: 8
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 104
+                            radius: 10
+                            color: theme.surfaceSoft
+                            border.color: theme.border
+                            ColumnLayout {
+                                anchors.fill: parent
+                                anchors.margins: 10
+                                spacing: 6
+                                Text { text: "文献整理"; color: theme.text; font.weight: Font.DemiBold }
+                                Text { text: "分类、重算并按相关性整理"; color: theme.textMuted; font.pixelSize: theme.baseFontSize - 2 }
+                                Flow {
+                                    Layout.fillWidth: true
+                                    spacing: 6
+                                    PillButton { text: "新建分类"; enabled: !literatureLibraryController.loading; onClicked: createProjectPopup.open() }
+                                    PillButton {
+                                        text: literatureLibraryController.loading && literatureLibraryController.busyAction === "recompute" ? "重算中..." : "重算相关性"
+                                        enabled: !literatureLibraryController.loading
+                                        onClicked: literatureLibraryController.recomputeRelevance()
+                                    }
+                                    PillButton {
+                                        text: literatureLibraryController.loading && literatureLibraryController.busyAction === "organize" ? "归档中..." : "相关性归档"
+                                        enabled: !literatureLibraryController.loading
+                                        primary: true
+                                        onClicked: literatureLibraryController.organizeByRelevance()
+                                    }
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 104
+                            radius: 10
+                            color: theme.surfaceSoft
+                            border.color: theme.border
+                            ColumnLayout {
+                                anchors.fill: parent
+                                anchors.margins: 10
+                                spacing: 6
+                                Text { text: "分析工具"; color: theme.text; font.weight: Font.DemiBold }
+                                Text { text: "从文献库生成结构化洞察"; color: theme.textMuted; font.pixelSize: theme.baseFontSize - 2 }
+                                Flow {
+                                    Layout.fillWidth: true
+                                    spacing: 6
+                                    PillButton {
+                                        text: knowledgeGraphController.loading && knowledgeGraphController.currentRecordId === "__batch__" ? "批量生成中..." : "批量生成图谱"
+                                        enabled: !knowledgeGraphController.loading && literatureLibraryController.records.length > 0
+                                        onClicked: knowledgeGraphController.generateGraphs(literatureLibraryController.records)
+                                    }
+                                    PillButton {
+                                        text: wordCloudController.loading && wordCloudController.currentScope === "library" ? "生成中..." : "筛选结果词云"
+                                        enabled: !wordCloudController.loading && literatureLibraryController.records.length > 0
+                                        onClicked: root.openLibraryWordCloud()
+                                    }
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 104
+                            radius: 10
+                            color: theme.surfaceSoft
+                            border.color: theme.border
+                            ColumnLayout {
+                                anchors.fill: parent
+                                anchors.margins: 10
+                                spacing: 6
+                                Text { text: "存储维护"; color: theme.text; font.weight: Font.DemiBold }
+                                Text { text: "先扫描预览，再确认清理旧文件"; color: theme.textMuted; font.pixelSize: theme.baseFontSize - 2 }
+                                Flow {
+                                    Layout.fillWidth: true
+                                    spacing: 6
+                                    PillButton {
+                                        text: literatureLibraryController.loading && literatureLibraryController.busyAction === "preview_cleanup" ? "扫描中..." :
+                                              literatureLibraryController.loading && literatureLibraryController.busyAction === "confirm_cleanup" ? "删除中..." : "扫描旧 PDF"
+                                        enabled: !literatureLibraryController.loading
+                                        onClicked: {
+                                            cleanupPopup.open()
+                                            literatureLibraryController.previewCleanup()
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -341,7 +491,7 @@ Item {
                         Layout.fillHeight: true
                         clip: true
                         model: literatureLibraryController.visibleRecords
-                        ScrollBar.vertical: ScrollBar {
+                        ScrollBar.vertical: StyledScrollBar {
                             policy: ScrollBar.AsNeeded
                         }
                         onAtYEndChanged: {
@@ -482,6 +632,11 @@ Item {
                                         onClicked: root.openWordCloud(index, modelData, false)
                                     }
                                     PillButton {
+                                        text: "翻译"
+                                        enabled: !!modelData.localPdfPath
+                                        onClicked: root.openTranslationReader(index, modelData)
+                                    }
+                                    PillButton {
                                         property bool parsed: modelData.hasExtraction || literatureLibraryController.hasExtraction(String(modelData.recordId || ""))
                                         text: parsed ? "解析阅读 ✓" : "解析阅读"
                                         visible: !!modelData.localPdfPath
@@ -552,7 +707,7 @@ Item {
                     anchors.fill: parent
                     anchors.margins: 14
                     clip: true
-                    ScrollBar.vertical.policy: ScrollBar.AsNeeded
+                    ScrollBar.vertical: StyledScrollBar { policy: ScrollBar.AsNeeded }
                     ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
                     ColumnLayout {
@@ -718,6 +873,23 @@ Item {
         }
     }
 
+    LiteratureTranslationReaderPage {
+        id: translationReaderPage
+        anchors.fill: parent
+        anchors.margins: metrics.pageMargin
+        visible: root.translationReaderOpen
+        recordId: root.translationReaderRecordId
+        pdfPath: root.translationReaderPdfPath
+        title: root.translationReaderTitle
+        initialZoom: root.translationReaderLastZoom
+
+        onBackRequested: root.closeTranslationReader()
+
+        onZoomPersistRequested: function(value) {
+            root.translationReaderLastZoom = value
+        }
+    }
+
     KnowledgeGraphPage {
         anchors.fill: parent
         anchors.margins: metrics.pageMargin
@@ -777,6 +949,10 @@ Item {
     }
 
     function applyFilters() {
+        filterApplyTimer.restart()
+    }
+
+    function applyFiltersNow() {
         literatureLibraryController.setLibraryFilters({
             "relevance": root.relevanceValues[relevanceFilter.currentIndex],
             "pdf_status": root.statusValues[pdfStatusFilter.currentIndex],
@@ -786,6 +962,27 @@ Item {
             "project_id": root.favoriteProjectFilterId(),
             "keyword_groups": root.selectedKeywordGroups
         })
+    }
+
+    function activeFilterCount() {
+        var count = 0
+        if (relevanceFilter.currentIndex > 0) count++
+        if (pdfStatusFilter.currentIndex > 0) count++
+        if (journalTypeFilter.currentIndex > 0) count++
+        if (projectFilter.currentIndex > 0) count++
+        if (root.selectedKeywordGroups.length > 0) count++
+        return count
+    }
+
+    function resetAdvancedFilters() {
+        filterApplyTimer.stop()
+        relevanceFilter.currentIndex = 0
+        pdfStatusFilter.currentIndex = 0
+        sortFilter.currentIndex = 0
+        journalTypeFilter.currentIndex = 0
+        projectFilter.currentIndex = 0
+        root.selectedKeywordGroups = []
+        root.applyFiltersNow()
     }
 
     function containsValue(values, value) {
@@ -841,7 +1038,8 @@ Item {
         root.applyFilters()
     }
 
-    function selectRecord(index, record) {
+    function selectRecord(index, record, skipPreviewRefresh) {
+        thumbnailGenerationTimer.stop()
         root.selectedRecord = record || ({})
         root.selectedRecordId = root.selectedRecord.recordId || ""
         root.selectedDetails = ({})
@@ -853,7 +1051,7 @@ Item {
             knowledgeGraphController.prefetchGraph(String(root.selectedRecordId))
         if(literatureList.currentIndex !== index)
             literatureList.currentIndex = index
-        else
+        else if (!skipPreviewRefresh)
             root.updateSelection()
     }
 
@@ -868,20 +1066,47 @@ Item {
     }
 
     function updateSelection() {
+        if (root.translationReaderOpen)
+            return
         if(root.selectedRecordId !== "") {
             var recordId = root.selectedRecordId
             root.selectedDetails = literatureLibraryController.detailsFor(recordId)
-            root.thumbnailUrl = literatureLibraryController.thumbnailFor(recordId)
+            root.thumbnailUrl = literatureLibraryController.cachedThumbnailFor(recordId)
             root.thumbnailState = literatureLibraryController.thumbnailStateFor(recordId)
+            if(root.thumbnailUrl !== "")
+                root.thumbnailState = "ready"
+            else if(root.thumbnailState === "idle" && root.selectedRecord.localPdfPath)
+                thumbnailGenerationTimer.restart()
             if(previewPopup.opened)
                 root.requestPreview()
         } else {
+            thumbnailGenerationTimer.stop()
             root.selectedDetails = ({})
             root.thumbnailUrl = ""
             root.previewUrl = ""
             root.thumbnailState = "missing_pdf"
             root.previewState = "missing_pdf"
         }
+    }
+
+    function requestSelectedThumbnailGeneration() {
+        if(root.selectedRecordId === "" || !root.selectedRecord.localPdfPath)
+            return
+        var recordId = root.selectedRecordId
+        var state = literatureLibraryController.thumbnailStateFor(recordId)
+        if(state === "ready") {
+            root.thumbnailUrl = literatureLibraryController.cachedThumbnailFor(recordId)
+            root.thumbnailState = "ready"
+            return
+        }
+        if(state === "generating" || state === "failed" || state === "missing_pdf") {
+            root.thumbnailState = state
+            return
+        }
+        var url = literatureLibraryController.thumbnailFor(recordId)
+        root.thumbnailState = literatureLibraryController.thumbnailStateFor(recordId)
+        if(url !== "")
+            root.thumbnailUrl = url
     }
 
     function openPreview() {
@@ -907,6 +1132,8 @@ Item {
     function thumbnailStatusText() {
         if(root.thumbnailState === "generating")
             return "PDF首页预览正在生成"
+        if(root.thumbnailState === "idle")
+            return "PDF 首页预览将在空闲时生成"
         if(root.thumbnailState === "failed")
             return "PDF首页预览生成失败"
         return root.selectedRecord.localPdfPath ? "PDF首页预览正在生成" : "这条记录没有可预览的本地 PDF。"
@@ -939,6 +1166,9 @@ Item {
         root.readerTitle = String(record.title || "解析阅读")
         root.readerReturnTarget = ""
         readerPage.clearEvidenceFocus()
+        root.graphOpen = false
+        root.wordCloudOpen = false
+        root.translationReaderOpen = false
         root.readerOpen = true
     }
 
@@ -951,10 +1181,29 @@ Item {
         else if (target === "graph" || target === "comparison")
             root.graphOpen = true
     }
+    function openTranslationReader(index, record) {
+        if (!record || !record.localPdfPath)
+            return
+        root.readerOpen = false
+        root.graphOpen = false
+        root.wordCloudOpen = false
+        root.translationReaderRecordId = String(record.recordId || "")
+        root.translationReaderPdfPath = String(record.localPdfPath || "")
+        root.translationReaderTitle = String(record.title || "翻译阅读")
+        root.translationReaderOpen = true
+        root.selectRecord(index, record, true)
+    }
+    function closeTranslationReader() {
+        root.translationReaderOpen = false
+        root.updateSelection()
+    }
     function openKnowledgeGraph(index, record) {
         if (!record || !record.localPdfPath)
             return
         root.selectRecord(index, record)
+        root.readerOpen = false
+        root.wordCloudOpen = false
+        root.translationReaderOpen = false
         root.graphRecordId = String(record.recordId || "")
         root.graphPdfPath = String(record.localPdfPath || "")
         root.graphTitle = String(record.title || "知识图谱")
@@ -971,6 +1220,7 @@ Item {
         root.selectRecord(index, record)
         root.readerOpen = false
         root.graphOpen = false
+        root.translationReaderOpen = false
         root.wordCloudRecordId = String(record.recordId || "")
         root.wordCloudTitle = String(record.title || "文献词云")
         root.wordCloudScope = "record"
@@ -990,6 +1240,9 @@ Item {
         root.wordCloudRecord = ({})
         root.wordCloudRecords = records
         root.wordCloudReturnToReader = false
+        root.readerOpen = false
+        root.graphOpen = false
+        root.translationReaderOpen = false
         root.wordCloudOpen = true
         wordCloudController.generateForRecords(records)
     }
@@ -1007,6 +1260,8 @@ Item {
         if (!target)
             return
         root.wordCloudOpen = false
+        root.readerOpen = false
+        root.translationReaderOpen = false
         root.pendingGraphKeyword = String(keyword || "")
         root.pendingGraphNodeId = String(nodeId || "")
         root.graphRecordId = String(target.recordId || "")
@@ -1039,6 +1294,8 @@ Item {
         root.graphIsComparison = true
         root.graphComparisonRecords = records
         root.readerOpen = false
+        root.wordCloudOpen = false
+        root.translationReaderOpen = false
         root.graphOpen = true
     }
     function openEvidenceInReader(recordId, page, bbox, elementId) {
@@ -1067,6 +1324,7 @@ Item {
         root.readerReturnTarget = root.wordCloudOpen ? "wordcloud" : (root.graphIsComparison ? "comparison" : "graph")
         root.graphOpen = false
         root.wordCloudOpen = false
+        root.translationReaderOpen = false
         root.readerRecordId = String(target.recordId || "")
         root.readerPdfPath = String(target.localPdfPath || "")
         root.readerTitle = String(target.title || "解析阅读")
@@ -1150,7 +1408,7 @@ Item {
                 clip: true
                 model: literatureLibraryController.keywordGroupOptions
                 visible: literatureLibraryController.keywordGroupOptions.length > 0
-                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                ScrollBar.vertical: StyledScrollBar { policy: ScrollBar.AsNeeded }
                 delegate: ModernCheckBox {
                     width: ListView.view.width
                     text: modelData.label + " (" + modelData.count + ")"
@@ -1199,7 +1457,7 @@ Item {
                 color: theme.text
                 font.weight: Font.Bold
             }
-            TextField {
+            StyledTextField {
                 id: newProjectName
                 Layout.fillWidth: true
                 placeholderText: "分类名称"
@@ -1285,6 +1543,7 @@ Item {
                 Layout.fillHeight: true
                 clip: true
                 ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                ScrollBar.vertical: StyledScrollBar { policy: ScrollBar.AsNeeded }
                 ColumnLayout {
                     width: comparePopup.width - 32
                     spacing: 8

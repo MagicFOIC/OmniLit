@@ -20,6 +20,8 @@ Rectangle {
     ]
 
     ScrollView {
+        ScrollBar.vertical: StyledScrollBar { policy: ScrollBar.AsNeeded }
+        ScrollBar.horizontal: StyledScrollBar { policy: ScrollBar.AsNeeded }
         anchors.fill: parent
         anchors.margins: 8
         contentWidth: matrixColumn.implicitWidth

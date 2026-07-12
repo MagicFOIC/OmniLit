@@ -27,7 +27,7 @@ Rectangle {
             font.weight: Font.Bold
         }
 
-        ComboBox {
+        StyledComboBox {
             id: filterBox
             Layout.fillWidth: true
             model: ["全部", "公式数据", "图数据", "表格数据"]
@@ -44,7 +44,7 @@ Rectangle {
             clip: true
             model: root.filteredElements()
             spacing: 5
-            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+            ScrollBar.vertical: StyledScrollBar { policy: ScrollBar.AsNeeded }
 
             delegate: Button {
                 id: itemButton

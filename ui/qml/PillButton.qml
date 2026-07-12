@@ -9,8 +9,8 @@ Button {
     property string iconName: ""
     Theme { id: theme }
     Motion { id: motion }
-    implicitHeight: 42
-    padding: 13
+    implicitHeight: theme.controlHeight
+    padding: theme.controlPadding
     font.pixelSize: theme.baseFontSize
     font.weight: Font.DemiBold
     enabled: !busy

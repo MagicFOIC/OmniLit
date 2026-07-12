@@ -41,6 +41,7 @@ Item {
         if (iconName === "calendar") return "M5 4 L19 4 L19 20 L5 20 Z M8 2 L8 6 M16 2 L16 6 M5 9 L19 9"
         if (iconName === "chevron-left") return "M15 5 L8 12 L15 19"
         if (iconName === "chevron-right") return "M9 5 L16 12 L9 19"
+        if (iconName === "chevron-down") return "M5 9 L12 16 L19 9"
         if (iconName === "image") return "M4 5 L20 5 L20 19 L4 19 Z M7 15 L10.5 11.5 L13 14 L15 12 L20 17 M8 9 L8.1 9"
         if (iconName === "status") return "M12 4 A8 8 0 1 0 12 20 A8 8 0 1 0 12 4 M8 12 L11 15 L16 9"
         if (iconName === "user") return "M12 12 A4 4 0 1 0 12 4 A4 4 0 1 0 12 12 M4.5 21 C5.2 16.8 7.7 15 12 15 C16.3 15 18.8 16.8 19.5 21"

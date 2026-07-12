@@ -45,6 +45,8 @@ Rectangle {
         }
 
         ScrollView {
+            ScrollBar.vertical: StyledScrollBar { policy: ScrollBar.AsNeeded }
+            ScrollBar.horizontal: StyledScrollBar { policy: ScrollBar.AsNeeded }
             Layout.fillWidth: true
             Layout.fillHeight: true
             contentWidth: availableWidth

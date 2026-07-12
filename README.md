@@ -82,7 +82,7 @@ macOS:   OmniLit.app 同级目录\Workspace
 
 首次启动新版 Qt 时，应用会从旧 `%LOCALAPPDATA%\magicfoic\OmniLit`、旧项目根目录等位置补齐已有运行数据。只复制目标目录中不存在的文件，不删除旧数据，也不覆盖 `Workspace` 中已有内容。需要隔离测试时可设置 `OMNILIT_DATA_DIR` 覆盖数据目录。
 
-`Workspace/Translate/glossary` 是可写术语表目录。应用启动时会创建该目录，并动态扫描用户新增的 CSV、TSV、TXT、JSON 和 Markdown 文件。
+`Workspace/config/glossary` 是可写术语表目录。应用启动时会创建该目录，并动态扫描用户新增的 CSV、TSV、TXT、JSON 和 Markdown 文件。
 
 翻译页只使用一个“文献翻译目录”。每个 PDF 的新译文、报告和缓存写入该目录下以文献名命名的子目录；旧版 `Translate/out` 不会被删除，但新任务不再创建或依赖它。
 
@@ -139,9 +139,9 @@ conda run -n OmniLit python -m compileall -q omnilit_qt_app.py omnilit_qt Downlo
 下载页的“数据源 API 设置”用于管理 OpenAlex、arXiv、Europe PMC、Crossref、DOAJ 以及 Semantic Scholar PDF 补查的访问配置。敏感 Key 不会写入普通下载表单配置；用户界面保存的 Key 使用 PBKDF2 + Fernet 加密，默认位于：
 
 ```text
-Workspace\Download\APIKeys\openalex.enc
-Workspace\Download\APIKeys\doaj.enc
-Workspace\Download\APIKeys\semantic_scholar.enc
+Workspace\config\secrets\download\openalex.enc
+Workspace\config\secrets\download\doaj.enc
+Workspace\config\secrets\download\semantic_scholar.enc
 ```
 
 - OpenAlex：小规模匿名测试可用；生产或规模化调用推荐配置 API Key，实际请求会附加 `api_key`。
@@ -202,7 +202,7 @@ OMNILIT_DOAJ_PREMIUM_VIA_PROXY=1
 翻译页中默认收起的“部署 Key 高级选项”可以复用翻译表单里的 API Key 输入，生成部署用的：
 
 ```text
-Workspace\Translate\APIKey.enc
+Workspace\config\secrets\translate\APIKey.enc
 ```
 
 保存成功后，该 Key 会立即载入当前会话。部署 Key 高级区也可解锁已有文件，并显示文件状态、路径和当前解锁来源。
@@ -210,13 +210,13 @@ Workspace\Translate\APIKey.enc
 发布前也可以使用纯命令行工具：
 
 ```bat
-conda run -n OmniLit python encrypt_default_key.py --output Workspace\Translate\APIKey.enc
+conda run -n OmniLit python encrypt_default_key.py --output Workspace\config\secrets\translate\APIKey.enc
 ```
 
 翻译页中用户自行输入的 Key 默认只在当前会话使用。用户主动选择“加密记住”后，应用会保存：
 
 ```text
-Workspace\Translate\UserAPIKey.enc
+Workspace\config\secrets\translate\UserAPIKey.enc
 ```
 
 ## Windows 打包
@@ -261,6 +261,28 @@ macOS 打包说明见 [README_macOS.md](README_macOS.md)。
 
 Copyright (c) 2026 magicfoic. All rights reserved.
 
+## Workspace v2 layout
+
+Runtime files are grouped by data type under `Workspace`:
+
+```text
+Workspace/
+  config/accounts.sqlite3
+  config/secrets/download/*.enc
+  config/secrets/translate/*.enc
+  config/glossary/
+  config/ui/
+  data/downloads/{pdfs,library,metadata_battery.jsonl,journal_metrics.csv,library_state.json}
+  data/literature/{extractions,graphs}
+  data/translate/pdf
+  cache/downloads/{library_cache.json,library_previews,library_thumbnails,pdf_cache}
+  cache/translate/snippet_translation_cache.json
+  runtime/{task_state,logs,updates}
+  reports/extraction_eval
+```
+
+On startup, OmniLit migrates the old `Workspace/Download`, `Workspace/Translate`, `Workspace/Literature`, `Workspace/task_state`, `Workspace/logs`, `Workspace/updates`, `Workspace/ui`, and `Workspace/extraction_eval` locations into this layout. Existing destination files are not overwritten; conflicting source files are preserved under `Workspace/runtime/migration_hold/<timestamp>/`.
+
 
 ## Bidirectional Literature Translation
 
@@ -287,7 +309,7 @@ OmniLit supports filtering download results by a minimum journal metric before P
 - OpenAlex fallback uses `summary_stats.2yr_mean_citedness` as an open approximate metric.
 - OpenAlex-derived values are displayed as `IF≈`, for example `IF≈4.3`.
 - `IF≈` is not the official Clarivate JCR Journal Impact Factor.
-- Users can maintain their own metrics in `Workspace/Download/journal_metrics.csv` or select a custom CSV in the download page.
+- Users can maintain their own metrics in `Workspace/data/downloads/journal_metrics.csv` or select a custom CSV in the download page.
 - Records with unknown impact factor are kept by default.
 - Users can turn off “无影响因子记录仍保留” / “Keep records with unknown impact factor” to skip unknown-metric records.
 

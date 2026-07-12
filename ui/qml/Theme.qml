@@ -15,6 +15,8 @@ QtObject {
     readonly property int radiusSmall: Math.max(2, radiusBase - 4)
     readonly property int radiusMedium: radiusBase
     readonly property int radiusLarge: radiusBase + 6
+    readonly property int controlHeight: Math.max(36, Math.round(40 * densityScale))
+    readonly property int controlPadding: Math.max(9, Math.round(11 * densityScale))
     readonly property real translationLineHeight: dynamic && preferencesAvailable ? preferencesController.translationLineHeightValue : 1.55
     readonly property color pdfBackground: dynamic && preferencesAvailable ? preferencesController.pdfBackgroundColor : "#faf6ed"
 
@@ -31,6 +33,7 @@ QtObject {
     readonly property color borderStrong: highContrast ? preset.textMuted : preset.borderStrong
     readonly property color divider: mix(accent, border, dark ? 0.12 : 0.055)
     readonly property color text: preset.text
+    readonly property color textSecondary: preset.textSecondary
     readonly property color textMuted: highContrast ? preset.textSecondary : preset.textMuted
     readonly property color disabledText: preset.disabledText
     readonly property color accent: dynamic && preferencesAvailable ? preferencesController.accentColor : preset.accent

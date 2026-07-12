@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Layouts
 import QtQuick.Window
 
 ApplicationWindow {
@@ -13,6 +14,8 @@ ApplicationWindow {
     property int savedWorkspaceHeight: 0
     property bool applyingWindowMode: false
     property bool lastLoggedIn: false
+    property bool workspaceActive: false
+    property bool windowTransitioning: false
     width: authWindowWidth
     height: authWindowHeight
     minimumWidth: authWindowWidth
@@ -53,28 +56,55 @@ ApplicationWindow {
     Component.onCompleted: {
         lastLoggedIn = authController.loggedIn
         applyWindowMode()
+        workspaceActive = lastLoggedIn
     }
 
     Connections {
         target: authController
-        function onChanged() {
-            const loggedIn = authController.loggedIn
-            if (loggedIn === lastLoggedIn)
-                return
-            if (!loggedIn)
-                rememberWorkspaceSize()
-            lastLoggedIn = loggedIn
-            applyWindowMode()
+        function onAuthenticated() {
+            // Suppress the native backing store while changing from the compact
+            // login geometry to the workspace geometry. On Windows the old
+            // login frame can otherwise remain visible in the center of the
+            // resized window until the first Workspace frame is presented.
+            window.windowTransitioning = true
+            window.opacity = 0
+            window.lastLoggedIn = true
+            window.applyWindowMode()
+            Qt.callLater(function() {
+                window.workspaceActive = true
+                workspacePage.forceActiveFocus()
+                // Give StackLayout one complete event turn to polish and paint
+                // Workspace before making the native window visible again.
+                Qt.callLater(function() {
+                    window.opacity = 1
+                    window.windowTransitioning = false
+                })
+            })
+        }
+        function onLoggedOut() {
+            window.rememberWorkspaceSize()
+            window.lastLoggedIn = false
+            window.workspaceActive = false
+            window.applyWindowMode()
         }
     }
 
-    Loader {
+    StackLayout {
+        id: pageHost
         anchors.fill: parent
-        sourceComponent: authController.loggedIn ? workspace : authPage
-    }
+        currentIndex: window.workspaceActive ? 1 : 0
 
-    Component { id: authPage; AuthPage {} }
-    Component { id: workspace; Workspace {} }
+        // Both roots stay instantiated, while StackLayout changes their
+        // visibility as one mutually-exclusive state. This prevents a frame
+        // where AuthPage is painted on top of the Workspace.
+        AuthPage {
+            id: authPage
+        }
+
+        Workspace {
+            id: workspacePage
+        }
+    }
 
     function rememberWorkspaceSize() {
         savedWorkspaceWidth = Math.max(workspaceMinimumWidth, width)
@@ -84,15 +114,16 @@ ApplicationWindow {
     function applyWindowMode() {
         applyingWindowMode = true
         if (lastLoggedIn) {
-            visibility = Window.Windowed
             maximumWidth = 16777215
             maximumHeight = 16777215
             minimumWidth = Math.min(workspaceMinimumWidth, Screen.desktopAvailableWidth)
             minimumHeight = Math.min(workspaceMinimumHeight, Screen.desktopAvailableHeight)
-            x = Screen.desktopAvailableX
-            y = Screen.desktopAvailableY
-            width = Screen.desktopAvailableWidth
-            height = Screen.desktopAvailableHeight
+            // Keep the workspace windowed at its compact usable size. Python
+            // centers the native frame on this window's current screen after
+            // the resize has reached the window manager.
+            visibility = Window.Windowed
+            width = Math.min(workspaceMinimumWidth, Screen.desktopAvailableWidth)
+            height = Math.min(workspaceMinimumHeight, Screen.desktopAvailableHeight)
         } else {
             visibility = Window.Windowed
             minimumWidth = authWindowWidth
@@ -104,4 +135,5 @@ ApplicationWindow {
         }
         applyingWindowMode = false
     }
+
 }

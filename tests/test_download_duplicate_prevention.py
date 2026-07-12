@@ -10,6 +10,17 @@ from Download import literature_download_core as core
 
 
 class DownloadDuplicatePreventionTests(unittest.TestCase):
+    def test_markup_titles_keep_chemical_subscripts_without_raw_jats(self) -> None:
+        self.assertEqual(
+            core.clean_markup_text("<scp>RuO <sub>2</sub></scp>-Based High-Entropy Oxide"),
+            "RuO₂-Based High-Entropy Oxide",
+        )
+        self.assertEqual(
+            core.clean_markup_text("Synergistic <scp>S</scp> n <scp>S</scp> e <sub>2</sub> @Ti <sub>3</sub> C <sub>2</sub> T <sub>x</sub> / <scp>MX</scp> ene"),
+            "Synergistic SnSe₂ @Ti₃C₂Tₓ/MXene",
+        )
+        self.assertEqual(core.clean_markup_text("<p>First sentence.</p><p>Second sentence.</p>"), "First sentence. Second sentence.")
+
     def test_doi_canonical_key_normalizes_prefix_and_case(self) -> None:
         left = core.canonical_record_key({"doi": "https://doi.org/10.1000/ABC"})
         right = core.canonical_record_key({"doi": "doi:10.1000/abc"})

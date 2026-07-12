@@ -331,7 +331,7 @@ Rectangle {
         anchors.margins: 8
         spacing: 6
 
-        ComboBox {
+        StyledComboBox {
             width: 116
             model: [i18n.text("graph_style_overview"), i18n.text("graph_style_academic"), i18n.text("graph_style_radial"), i18n.text("graph_style_focus")]
             currentIndex: root.styleIndex(root.displayStyle)
@@ -344,13 +344,13 @@ Rectangle {
                 root.fitGraph()
             }
         }
-        ComboBox {
+        StyledComboBox {
             width: 92
             model: [i18n.text("graph_density_compact"), i18n.text("graph_density_normal"), i18n.text("graph_density_detailed"), i18n.text("graph_density_all")]
             currentIndex: 1
             onActivated: knowledgeGraphController.setDensity(["compact", "normal", "detailed", "all"][currentIndex])
         }
-        ComboBox {
+        StyledComboBox {
             width: 86
             model: [i18n.text("graph_depth_full"), i18n.text("graph_depth_one_hop"), i18n.text("graph_depth_two_hop")]
             currentIndex: root.focusDepth

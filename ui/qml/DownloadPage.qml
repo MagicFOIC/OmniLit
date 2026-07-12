@@ -49,6 +49,7 @@ Item {
         contentWidth: availableWidth
         clip: true
         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+        ScrollBar.vertical: StyledScrollBar { policy: ScrollBar.AsNeeded }
 
         ColumnLayout {
             width: pageScroll.availableWidth
@@ -74,6 +75,7 @@ Item {
                     anchors.margins: metrics.cardPadding
                     contentWidth: availableWidth
                     ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                    ScrollBar.vertical: StyledScrollBar { policy: ScrollBar.AsNeeded }
                     clip: true
 
                     ColumnLayout {
@@ -112,7 +114,7 @@ Item {
                             RowLayout {
                                 Layout.fillWidth: true
                                 Layout.columnSpan: metrics.narrow ? 1 : 3
-                                TextField {
+                                StyledTextField {
                                     id: outputDir
                                     Layout.fillWidth: true
                                     text: downloadController.defaultOutputDir
@@ -162,7 +164,7 @@ Item {
                                                     onClicked: root.startEditKeyword(index)
                                                 }
                                             }
-                                            TextField {
+                                            StyledTextField {
                                                 id: keywordEdit
                                                 anchors.verticalCenter: parent.verticalCenter
                                                 visible: keywordChip.editing
@@ -226,7 +228,7 @@ Item {
                                         font.weight: Font.Bold
                                     }
 
-                                    TextField {
+                                    StyledTextField {
                                         id: addKeywordEdit
                                         anchors.centerIn: parent
                                         visible: addKeywordChip.editing
@@ -339,29 +341,29 @@ Item {
                                         columnSpacing: 10
                                         rowSpacing: 8
 
-                                        TextField {
+                                        StyledTextField {
                                             id: openalexApiKey
                                             Layout.fillWidth: true
                                             echoMode: TextInput.Password
                                             placeholderText: sourceHasKey("openalex") ? i18n.text("api_key_saved_placeholder") : i18n.text("openalex_api_key")
                                         }
-                                        TextField {
+                                        StyledTextField {
                                             id: crossrefMailto
                                             Layout.fillWidth: true
                                             placeholderText: i18n.text("crossref_mailto")
                                         }
-                                        TextField {
+                                        StyledTextField {
                                             id: europePmcEmail
                                             Layout.fillWidth: true
                                             placeholderText: i18n.text("europe_pmc_email")
                                         }
-                                        TextField {
+                                        StyledTextField {
                                             id: doajApiKey
                                             Layout.fillWidth: true
                                             echoMode: TextInput.Password
                                             placeholderText: sourceHasKey("doaj") ? i18n.text("api_key_saved_placeholder") : i18n.text("doaj_api_key")
                                         }
-                                        TextField {
+                                        StyledTextField {
                                             id: semanticScholarApiKey
                                             Layout.fillWidth: true
                                             echoMode: TextInput.Password

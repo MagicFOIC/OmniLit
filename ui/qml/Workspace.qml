@@ -16,6 +16,7 @@ Item {
     property string mineruTokenDraft: ""
     property string paddleocrTokenDraft: ""
     property var tourTargets: ({})
+    property bool libraryPageRequested: true
     onDrawerPageChanged: {
         if(drawerPage === 6) {
             root.systemSettingsWorkdirDraft = onboardingController.workdir
@@ -34,6 +35,13 @@ Item {
     I18n { id: i18n }
     Theme { id: theme }
     LayoutMetrics { id: metrics; viewportWidth: root.width; viewportHeight: root.height }
+
+    onPageIndexChanged: {
+        if(pageIndex === 1) {
+            literatureLibraryController.preload()
+            root.libraryPageRequested = true
+        }
+    }
 
     WorkspaceBackground { anchors.fill: parent }
 
@@ -259,9 +267,25 @@ Item {
             Layout.fillHeight: true
             currentIndex: root.pageIndex
             DownloadPage { tourHost: root }
-            LiteratureLibraryPage { tourHost: root }
+            Item {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+
+                Loader {
+                    id: literatureLibraryPageLoader
+                    anchors.fill: parent
+                    active: root.libraryPageRequested
+                    asynchronous: true
+                    sourceComponent: literatureLibraryPageComponent
+                }
+            }
             TranslationPage { tourHost: root }
         }
+    }
+
+    Component {
+        id: literatureLibraryPageComponent
+        LiteratureLibraryPage { tourHost: root }
     }
 
     Popup {
@@ -293,6 +317,8 @@ Item {
             currentIndex: root.drawerPage
 
             ScrollView {
+                ScrollBar.vertical: StyledScrollBar { policy: ScrollBar.AsNeeded }
+                ScrollBar.horizontal: StyledScrollBar { policy: ScrollBar.AsNeeded }
                 contentWidth: availableWidth
                 ColumnLayout {
                     width: accountDrawer.availableWidth
@@ -461,6 +487,8 @@ Item {
             }
 
             ScrollView {
+                ScrollBar.vertical: StyledScrollBar { policy: ScrollBar.AsNeeded }
+                ScrollBar.horizontal: StyledScrollBar { policy: ScrollBar.AsNeeded }
                 contentWidth: availableWidth
                 ColumnLayout {
                     width: accountDrawer.availableWidth
@@ -567,7 +595,7 @@ Item {
                                 }
                                 RowLayout {
                                     Layout.fillWidth: true
-                                    TextField {
+                                    StyledTextField {
                                         id: customAccent
                                         Layout.fillWidth: true
                                         text: preferencesController.customAccentColor
@@ -676,9 +704,9 @@ Item {
                                     PillButton { text: i18n.text("clear_background"); enabled: !!preferencesController.workspaceBackgroundUrl; onClicked: preferencesController.clearWorkspaceBackground() }
                                 }
                                 Text { text: i18n.text("background_opacity") + ": " + Math.round(preferencesController.backgroundOpacity * 100) + "%"; color: theme.textMuted; font.pixelSize: theme.baseFontSize - 2 }
-                                Slider { Layout.fillWidth: true; from: 0; to: 1; stepSize: 0.05; value: preferencesController.backgroundOpacity; onMoved: preferencesController.setBackgroundOpacity(value) }
+                                StyledSlider { Layout.fillWidth: true; from: 0; to: 1; stepSize: 0.05; value: preferencesController.backgroundOpacity; onMoved: preferencesController.setBackgroundOpacity(value) }
                                 Text { text: i18n.text("background_blur") + ": " + preferencesController.backgroundBlur; color: theme.textMuted; font.pixelSize: theme.baseFontSize - 2 }
-                                Slider { Layout.fillWidth: true; from: 0; to: 32; stepSize: 2; value: preferencesController.backgroundBlur; onMoved: preferencesController.setBackgroundBlur(value) }
+                                StyledSlider { Layout.fillWidth: true; from: 0; to: 32; stepSize: 2; value: preferencesController.backgroundBlur; onMoved: preferencesController.setBackgroundBlur(value) }
 
                                 Text { text: i18n.text("advanced_appearance"); color: theme.text; font.pixelSize: theme.baseFontSize + 2; font.weight: Font.Bold }
                                 RowLayout {
@@ -688,9 +716,9 @@ Item {
                                 RowLayout {
                                     visible: preferencesController.themeMode === "adaptive"
                                     Text { text: i18n.text("night_start"); color: theme.textMuted }
-                                    TextField { implicitWidth: 76; text: preferencesController.autoNightStart; onEditingFinished: preferencesController.setAutoNightStart(text) }
+                                    StyledTextField { implicitWidth: 76; text: preferencesController.autoNightStart; onEditingFinished: preferencesController.setAutoNightStart(text) }
                                     Text { text: i18n.text("night_end"); color: theme.textMuted }
-                                    TextField { implicitWidth: 76; text: preferencesController.autoNightEnd; onEditingFinished: preferencesController.setAutoNightEnd(text) }
+                                    StyledTextField { implicitWidth: 76; text: preferencesController.autoNightEnd; onEditingFinished: preferencesController.setAutoNightEnd(text) }
                                 }
                                 PillButton { text: i18n.text("reset_appearance"); onClicked: preferencesController.resetAppearance() }
                             }
@@ -765,6 +793,8 @@ Item {
             }
 
             ScrollView {
+                ScrollBar.vertical: StyledScrollBar { policy: ScrollBar.AsNeeded }
+                ScrollBar.horizontal: StyledScrollBar { policy: ScrollBar.AsNeeded }
                 contentWidth: availableWidth
                 ColumnLayout {
                     width: accountDrawer.availableWidth
@@ -785,7 +815,7 @@ Item {
                             anchors.margins: 14
                             spacing: 9
                             AvatarStatusBadge { status: preferencesController.avatarStatusLabel; statusColor: preferencesController.avatarStatusColor }
-                            TextField {
+                            StyledTextField {
                                 Layout.fillWidth: true
                                 text: root.draftAvatarStatus
                                 placeholderText: i18n.text("status_placeholder")
@@ -839,7 +869,7 @@ Item {
                             RowLayout {
                                 Layout.fillWidth: true
                                 AvatarStatusBadge { status: modelData.label; statusColor: modelData.color }
-                                TextField {
+                                StyledTextField {
                                     Layout.fillWidth: true
                                     text: modelData.label
                                     onEditingFinished: preferencesController.renameCustomAvatarStatus(modelData.id, text)
@@ -883,6 +913,8 @@ Item {
             }
 
             ScrollView {
+                ScrollBar.vertical: StyledScrollBar { policy: ScrollBar.AsNeeded }
+                ScrollBar.horizontal: StyledScrollBar { policy: ScrollBar.AsNeeded }
                 contentWidth: availableWidth
                 ColumnLayout {
                     width: accountDrawer.availableWidth
@@ -933,7 +965,7 @@ Item {
                             RowLayout {
                                 Layout.fillWidth: true
                                 spacing: 8
-                                TextField {
+                                StyledTextField {
                                     id: systemWorkdirField
                                     Layout.fillWidth: true
                                     text: root.systemSettingsWorkdirDraft
@@ -973,7 +1005,7 @@ Item {
                             RowLayout {
                                 Layout.fillWidth: true
                                 spacing: 8
-                                TextField {
+                                StyledTextField {
                                     id: systemContactEmailField
                                     Layout.fillWidth: true
                                     text: root.systemContactEmailDraft
@@ -1062,13 +1094,13 @@ Item {
 
                             Text { text: "MinerU"; color: theme.text; font.weight: Font.DemiBold }
                             ModernCheckBox { id: mineruApiEnabled; text: i18n.text("service_enabled"); checked: pdfExtractionController.mineruApiEnabled }
-                            TextField {
+                            StyledTextField {
                                 Layout.fillWidth: true
                                 text: root.mineruApiUrlDraft
                                 placeholderText: i18n.text("api_url")
                                 onTextChanged: root.mineruApiUrlDraft = text
                             }
-                            TextField {
+                            StyledTextField {
                                 Layout.fillWidth: true
                                 echoMode: TextInput.Password
                                 text: root.mineruTokenDraft
@@ -1086,13 +1118,13 @@ Item {
                             Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: theme.border }
                             Text { text: "PaddleOCR-VL"; color: theme.text; font.weight: Font.DemiBold }
                             ModernCheckBox { id: paddleApiEnabled; text: i18n.text("service_enabled"); checked: pdfExtractionController.paddleocrApiEnabled }
-                            TextField {
+                            StyledTextField {
                                 Layout.fillWidth: true
                                 text: root.paddleocrApiUrlDraft
                                 placeholderText: i18n.text("api_url")
                                 onTextChanged: root.paddleocrApiUrlDraft = text
                             }
-                            TextField {
+                            StyledTextField {
                                 Layout.fillWidth: true
                                 echoMode: TextInput.Password
                                 text: root.paddleocrTokenDraft

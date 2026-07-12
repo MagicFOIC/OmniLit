@@ -136,7 +136,7 @@ Item {
                     elide: Text.ElideRight
                 }
 
-                Switch {
+                StyledSwitch {
                     id: annotationSwitch
                     checked: root.showAnnotations
                     text: checked ? "标注版" : "原文"
@@ -154,7 +154,7 @@ Item {
 
                 PillButton { text: "+"; onClicked: root.adjustZoom(0.15) }
 
-                ComboBox {
+                StyledComboBox {
                     id: analysisMode
                     Layout.preferredWidth: 250
                     model: root.analysisModes
@@ -311,8 +311,8 @@ Item {
                     }
                     onMovementEnded: renderResumeTimer.restart()
 
-                    ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
-                    ScrollBar.horizontal: ScrollBar { policy: ScrollBar.AsNeeded }
+                    ScrollBar.vertical: StyledScrollBar { policy: ScrollBar.AsNeeded }
+                    ScrollBar.horizontal: StyledScrollBar { policy: ScrollBar.AsNeeded }
 
                     contentWidth: Math.max(width, pageColumn.width)
                     contentHeight: pageColumn.height

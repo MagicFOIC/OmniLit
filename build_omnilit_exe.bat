@@ -6,7 +6,7 @@ set "APP_NAME=OmniLit"
 set "ENTRY_FILE=omnilit_qt_app.py"
 set "OUTPUT_EXE=%CD%\%APP_NAME%.exe"
 set "RELEASE_HELPER=sync_release_metadata.py"
-set "DEFAULT_KEY_FILE=Workspace\Translate\APIKey.enc"
+set "DEFAULT_KEY_FILE=Workspace\config\secrets\translate\APIKey.enc"
 set "PACKAGED_KEY_FILE="
 set "KEY_ENCRYPT_HELPER=encrypt_default_key.py"
 
@@ -180,10 +180,21 @@ call "%PYTHON_CMD%" -m PyInstaller ^
   --hidden-import PySide6.QtQml ^
   --hidden-import PySide6.QtQuick ^
   --hidden-import PySide6.QtWidgets ^
+  --add-binary "%CONDA_PREFIX%\Library\bin\Qt6*.dll;." ^
+  --add-binary "%CONDA_PREFIX%\Library\bin\icu*78.dll;." ^
+  --add-binary "%CONDA_PREFIX%\Library\bin\double-conversion.dll;." ^
+  --add-binary "%CONDA_PREFIX%\Library\bin\freetype.dll;." ^
+  --add-binary "%CONDA_PREFIX%\Library\bin\jpeg8.dll;." ^
+  --add-binary "%CONDA_PREFIX%\Library\bin\libpng16.dll;." ^
+  --add-binary "%CONDA_PREFIX%\Library\bin\pcre2-16.dll;." ^
+  --add-binary "%CONDA_PREFIX%\Library\bin\zlib.dll;." ^
+  --add-binary "%CONDA_PREFIX%\Library\bin\zstd.dll;." ^
+  --add-binary "%CONDA_PREFIX%\Library\bin\brotlicommon.dll;." ^
+  --add-binary "%CONDA_PREFIX%\Library\bin\brotlidec.dll;." ^
+  --add-binary "%CONDA_PREFIX%\Library\bin\opengl32sw.dll;." ^
   --add-binary "%CONDA_PREFIX%\Library\bin\pyside6.cp312-win_amd64.dll;." ^
   --add-binary "%CONDA_PREFIX%\Library\bin\pyside6qml.cp312-win_amd64.dll;." ^
   --add-binary "%CONDA_PREFIX%\Library\bin\shiboken6.cp312-win_amd64.dll;." ^
-  --add-binary "%CONDA_PREFIX%\Library\bin\jpeg8.dll;." ^
   --add-binary "%CONDA_PREFIX%\Library\bin\libssl-3-x64.dll;." ^
   --add-binary "%CONDA_PREFIX%\Library\bin\libcrypto-3-x64.dll;." ^
   --hidden-import Download.literature_download_core ^
@@ -205,15 +216,15 @@ call "%PYTHON_CMD%" -m PyInstaller ^
   --add-data "Update\update_core.py;Update" ^
   --add-data "Translate\__init__.py;Translate" ^
   --add-data "Translate\literature_translate_core.py;Translate" ^
-  --add-data "Workspace\Translate\glossary\00_general_academic.csv;Translate\glossary" ^
-  --add-data "Workspace\Translate\glossary\01_ai_ml_data_science.csv;Translate\glossary" ^
-  --add-data "Workspace\Translate\glossary\02_catalysis_chemistry_materials.csv;Translate\glossary" ^
-  --add-data "Workspace\Translate\glossary\03_biology_medicine_pharmaceuticals.csv;Translate\glossary" ^
-  --add-data "Workspace\Translate\glossary\04_energy_environment_chemical_engineering.csv;Translate\glossary" ^
-  --add-data "Workspace\Translate\glossary\05_physics_electronics_mechanical_engineering.csv;Translate\glossary" ^
-  --add-data "Workspace\Translate\glossary\06_computer_science_software.csv;Translate\glossary" ^
-  --add-data "Workspace\Translate\glossary\07_economics_management_finance.csv;Translate\glossary" ^
-  --add-data "Workspace\Translate\glossary\08_social_science_education_psychology.csv;Translate\glossary" ^
+  --add-data "Workspace\config\glossary\00_general_academic.csv;Translate\glossary" ^
+  --add-data "Workspace\config\glossary\01_ai_ml_data_science.csv;Translate\glossary" ^
+  --add-data "Workspace\config\glossary\02_catalysis_chemistry_materials.csv;Translate\glossary" ^
+  --add-data "Workspace\config\glossary\03_biology_medicine_pharmaceuticals.csv;Translate\glossary" ^
+  --add-data "Workspace\config\glossary\04_energy_environment_chemical_engineering.csv;Translate\glossary" ^
+  --add-data "Workspace\config\glossary\05_physics_electronics_mechanical_engineering.csv;Translate\glossary" ^
+  --add-data "Workspace\config\glossary\06_computer_science_software.csv;Translate\glossary" ^
+  --add-data "Workspace\config\glossary\07_economics_management_finance.csv;Translate\glossary" ^
+  --add-data "Workspace\config\glossary\08_social_science_education_psychology.csv;Translate\glossary" ^
   %EXTRA_KEY_ARGS% ^
   "%ENTRY_FILE%"
 if errorlevel 1 goto fail
@@ -239,9 +250,9 @@ exit /b 0
 
 :usage
 echo Usage:
-echo   build_omnilit_exe.bat                 Package Workspace\Translate\APIKey.enc if present; create it with the CLI if missing.
-echo   build_omnilit_exe.bat --refresh-key   Recreate Workspace\Translate\APIKey.enc, then build EXE.
-echo   build_omnilit_exe.bat --encrypt-default-key   Only create Workspace\Translate\APIKey.enc.
+echo   build_omnilit_exe.bat                 Package Workspace\config\secrets\translate\APIKey.enc if present; create it with the CLI if missing.
+echo   build_omnilit_exe.bat --refresh-key   Recreate Workspace\config\secrets\translate\APIKey.enc, then build EXE.
+echo   build_omnilit_exe.bat --encrypt-default-key   Only create Workspace\config\secrets\translate\APIKey.enc.
 echo   build_omnilit_exe.bat --skip-key      Build EXE without default key.
 echo   build_omnilit_exe.bat --check-env     Verify Conda environment discovery only.
 pause

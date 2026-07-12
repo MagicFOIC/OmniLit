@@ -149,7 +149,7 @@ def log_entries_to_text(entries: list[dict[str, Any]]) -> str:
 
 def export_log_entries(paths: Any, name: str, entries: list[dict[str, Any]]) -> str:
     """Write task logs as JSONL plus a readable TXT companion file."""
-    root = paths.data("logs")
+    root = paths.runtime("logs")
     root.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     safe_name = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in name).strip("_") or "task"

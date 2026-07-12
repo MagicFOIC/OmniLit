@@ -2005,8 +2005,31 @@ def search_openalex(
 
 
 def clean_markup_text(value: Any) -> str:
-    """Docstring."""
-    return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", str(value or "")))).strip()
+    """Convert source HTML/JATS fragments into readable plain metadata text."""
+    text = html.unescape(str(value or ""))
+    subscript_map = str.maketrans("0123456789+-=()x", "₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₓ")
+    superscript_map = str.maketrans("0123456789+-=()n", "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿ")
+
+    def replace_script(match: re.Match[str], table: dict[int, str]) -> str:
+        content = re.sub(r"<[^>]+>", "", match.group(1))
+        return html.unescape(content).strip().translate(table)
+
+    text = re.sub(r"<sub\b[^>]*>(.*?)</sub\s*>", lambda match: replace_script(match, subscript_map), text, flags=re.I | re.S)
+    text = re.sub(r"<sup\b[^>]*>(.*?)</sup\s*>", lambda match: replace_script(match, superscript_map), text, flags=re.I | re.S)
+    text = re.sub(r"</?(?:p|br|div|li|title|abstract|sec|section)\b[^>]*>", " ", text, flags=re.I)
+    text = re.sub(r"<[^>]+>", "", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    # JATS small-caps markup sometimes splits chemical names into individual
+    # element fragments, e.g. ``<scp>S</scp> n <scp>S</scp> e``.
+    text = re.sub(r"(?<=[A-Z])\s+(?=[a-z](?:\s|$|[^a-z]))", "", text)
+    text = re.sub(r"\s+(?=[₀-₉₊₋₌₍₎ₓ⁰-⁹⁺⁻⁼⁽⁾ⁿ])", "", text)
+    script_chars = "₀-₉₊₋₌₍₎ₓ⁰-⁹⁺⁻⁼⁽⁾ⁿ"
+    text = re.sub(rf"\b([A-Z][a-z])\s+(?=[A-Z][a-z]?[{script_chars}])", r"\1", text)
+    text = re.sub(rf"([A-Za-z][{script_chars}])\s+(?=[A-Z][{script_chars}])", r"\1", text)
+    text = re.sub(r"\bMX\s+ene\b", "MXene", text, flags=re.I)
+    text = re.sub(r"\s+([,.;:!?%])", r"\1", text)
+    text = re.sub(r"\s*([-–—/])\s*", r"\1", text)
+    return text
 
 
 def normalize_europe_pmc_item(item: dict[str, Any]) -> dict[str, Any]:

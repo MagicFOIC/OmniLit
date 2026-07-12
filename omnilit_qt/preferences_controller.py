@@ -279,7 +279,7 @@ class PreferencesController(QObject):
         if not reader.canRead():
             return ""
         suffix = source.suffix.lower()
-        ui_dir = self.paths.data("ui")
+        ui_dir = self.paths.config("ui")
         ui_dir.mkdir(parents=True, exist_ok=True)
         target = ui_dir / f"{stem}{suffix}"
         if source.resolve() != target.resolve():

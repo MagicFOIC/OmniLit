@@ -49,6 +49,7 @@ Item {
                 contentWidth: availableWidth
                 clip: true
                 ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                ScrollBar.vertical.policy: ScrollBar.AlwaysOff
 
                 ColumnLayout {
                     width: glossaryScroll.availableWidth
@@ -146,8 +147,8 @@ Item {
         ColumnLayout {
             anchors.fill: parent
             spacing: 10
-            TextField { id: rememberPassword; Layout.fillWidth: true; placeholderText: i18n.text("password"); echoMode: TextInput.Password }
-            TextField { id: rememberConfirm; Layout.fillWidth: true; placeholderText: i18n.text("confirm_password"); echoMode: TextInput.Password }
+            StyledTextField { id: rememberPassword; Layout.fillWidth: true; placeholderText: i18n.text("password"); echoMode: TextInput.Password }
+            StyledTextField { id: rememberConfirm; Layout.fillWidth: true; placeholderText: i18n.text("confirm_password"); echoMode: TextInput.Password }
             RowLayout {
                 Item { Layout.fillWidth: true }
                 PillButton { text: i18n.text("clear"); onClicked: rememberDialog.close() }
@@ -168,7 +169,7 @@ Item {
         ColumnLayout {
             anchors.fill: parent
             spacing: 10
-            TextField { id: unlockPassword; Layout.fillWidth: true; placeholderText: i18n.text("password"); echoMode: TextInput.Password }
+            StyledTextField { id: unlockPassword; Layout.fillWidth: true; placeholderText: i18n.text("password"); echoMode: TextInput.Password }
             RowLayout {
                 Item { Layout.fillWidth: true }
                 PillButton { text: i18n.text("clear"); onClicked: unlockDialog.close() }
@@ -184,6 +185,7 @@ Item {
         contentWidth: availableWidth
         clip: true
         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+        ScrollBar.vertical.policy: ScrollBar.AlwaysOff
 
         ColumnLayout {
             width: pageScroll.availableWidth
@@ -209,6 +211,7 @@ Item {
                     anchors.margins: metrics.cardPadding
                     contentWidth: availableWidth
                     ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                    ScrollBar.vertical.policy: ScrollBar.AlwaysOff
                     clip: true
 
                     ColumnLayout {
@@ -225,7 +228,7 @@ Item {
                             Text { text: i18n.text("translation_dir"); color: theme.textMuted }
                             RowLayout {
                                 Layout.fillWidth: true
-                                TextField {
+                                StyledTextField {
                                     id: translationDir
                                     Layout.fillWidth: true
                                     text: translationController.defaultInputDir
@@ -272,6 +275,7 @@ Item {
                                     contentWidth: availableWidth
                                     clip: true
                                     ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                                    ScrollBar.vertical.policy: ScrollBar.AlwaysOff
 
                                     ColumnLayout {
                                         id: pendingDocumentsList
@@ -310,7 +314,7 @@ Item {
                             rowSpacing: 8
 
                             Text { text: i18n.text("translation_direction"); color: theme.textMuted }
-                            ComboBox {
+                            StyledComboBox {
                                 id: direction
                                 Layout.fillWidth: true
                                 textRole: "label"
@@ -325,7 +329,7 @@ Item {
                             Text { text: i18n.text("translation_range"); color: theme.textMuted }
                             RowLayout {
                                 Layout.fillWidth: true
-                                ComboBox {
+                                StyledComboBox {
                                     id: rangeMode
                                     Layout.fillWidth: true
                                     textRole: "label"
@@ -414,7 +418,7 @@ Item {
                                     rowSpacing: 8
 
                                     Text { text: i18n.text("model_profile"); color: theme.textMuted }
-                                    ComboBox {
+                                    StyledComboBox {
                                         id: profile
                                         Layout.fillWidth: true
                                         model: translationController.modelProfiles
@@ -431,15 +435,15 @@ Item {
                                     }
 
                                     Text { text: i18n.text("model_id"); color: theme.textMuted }
-                                    TextField { id: modelId; Layout.fillWidth: true; placeholderText: i18n.text("model_id"); onTextChanged: root.scheduleSave() }
+                                    StyledTextField { id: modelId; Layout.fillWidth: true; placeholderText: i18n.text("model_id"); onTextChanged: root.scheduleSave() }
 
                                     Text { text: i18n.text("api_url"); color: theme.textMuted }
-                                    TextField { id: baseUrl; Layout.fillWidth: true; placeholderText: i18n.text("api_url"); onTextChanged: root.scheduleSave() }
+                                    StyledTextField { id: baseUrl; Layout.fillWidth: true; placeholderText: i18n.text("api_url"); onTextChanged: root.scheduleSave() }
 
                                     Text { text: "API Key"; color: theme.textMuted }
                                     RowLayout {
                                         Layout.fillWidth: true
-                                        TextField { id: apiKey; Layout.fillWidth: true; echoMode: showKey.checked ? TextInput.Normal : TextInput.Password }
+                                        StyledTextField { id: apiKey; Layout.fillWidth: true; echoMode: showKey.checked ? TextInput.Normal : TextInput.Password }
                                         ModernCheckBox { id: showKey; text: i18n.text("show") }
                                     }
                                 }
