@@ -1,0 +1,16 @@
+.git
+.github
+.release
+.idea
+.npm-cache
+.pytest_cache
+**/__pycache__
+**/*.pyc
+node_modules
+apps/web/node_modules
+apps/web/dist
+runtime
+Workspace
+Download
+release
+OmniLit.exe

@@ -1,8 +1,8 @@
 # UTF-8
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(0, 0, 11, 0),
-    prodvers=(0, 0, 11, 0),
+    filevers=(0, 1, 0, 0),
+    prodvers=(0, 1, 0, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -17,12 +17,12 @@ VSVersionInfo(
         [
           StringStruct("CompanyName", "magicfoic"),
           StringStruct("FileDescription", "OmniLit unified literature desktop application"),
-          StringStruct("FileVersion", "0.0.11"),
+          StringStruct("FileVersion", "0.1.0"),
           StringStruct("InternalName", "OmniLit"),
           StringStruct("LegalCopyright", "Copyright (c) 2026 magicfoic. All rights reserved."),
           StringStruct("OriginalFilename", "OmniLit.exe"),
           StringStruct("ProductName", "OmniLit"),
-          StringStruct("ProductVersion", "0.0.11")
+          StringStruct("ProductVersion", "0.1.0")
         ]
       )
     ]),

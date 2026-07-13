@@ -1,0 +1,20 @@
+{
+  "name": "@omnilit/shared-schema",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./fixtures/shared-graph-v1.json": "./fixtures/shared-graph-v1.json",
+    "./fixtures/shared-timeline-v1.json": "./fixtures/shared-timeline-v1.json"
+  },
+  "files": [
+    "fixtures",
+    "schemas",
+    "src"
+  ],
+  "scripts": {
+    "check:generated": "python ../../tools/codegen/generate_shared_schema_types.py --check",
+    "generate": "python ../../tools/codegen/generate_shared_schema_types.py"
+  }
+}

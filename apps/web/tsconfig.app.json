@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "noEmit": true,
+    "types": ["vite/client"]
+  },
+  "include": [
+    "src",
+    "../../packages/api-client/src",
+    "../../packages/design-tokens/src",
+    "../../packages/knowledge-graph/src",
+    "../../packages/platform-bridge/src",
+    "../../packages/shared-schema/src"
+  ]
+}

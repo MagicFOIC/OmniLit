@@ -7,6 +7,7 @@ dependencies:
   - python=3.12
   - pip
   - pyside6
+  - qt6-webengine
   - cryptography>=42.0.0
 
   - pip:

@@ -1,0 +1,26 @@
+{
+  "allowedNpmLicenses": [
+    "0BSD",
+    "Apache-2.0",
+    "BSD-3-Clause",
+    "CC-BY-4.0",
+    "ISC",
+    "MIT",
+    "MIT AND ISC"
+  ],
+  "pythonLicenseExpressions": {
+    "cryptography": "Apache-2.0 OR BSD-3-Clause",
+    "psycopg": "LGPL-3.0-only"
+  },
+  "releaseRequiredFiles": [
+    "LICENSE",
+    "services/cloud_api/requirements.lock"
+  ],
+  "manualReleaseReviews": [
+    "Qt/PySide6 commercial or LGPL obligations and the selected distribution license",
+    "QtWebEngine Chromium third-party notices included in each desktop package",
+    "PyInstaller, Python and native library notices from the actual frozen package",
+    "OmniLit logo, fonts and icons provenance and redistribution permission",
+    "Windows and macOS signing identities and platform distribution terms"
+  ]
+}

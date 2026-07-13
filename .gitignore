@@ -3,6 +3,10 @@
 *.sqlite3
 *.enc
 .venv/
+.npm-cache/
+.uv-cache/
+node_modules/
+*.tsbuildinfo
 .idea/
 .release/
 

@@ -6,6 +6,7 @@ import ctypes
 from pathlib import Path
 
 from omnilit_qt.startup_diagnostics import write_startup_log
+from omnilit_qt.crash_reporting import install_crash_handlers
 
 
 def _prepare_frozen_dll_runtime() -> None:
@@ -46,24 +47,45 @@ def _prepare_conda_qt_runtime() -> None:
         os.environ.setdefault("QT_QPA_PLATFORM_PLUGIN_PATH", str(plugin_path / "platforms"))
     if qml_path.exists():
         os.environ.setdefault("QML2_IMPORT_PATH", str(qml_path))
+    webengine_process = qt_root / "QtWebEngineProcess.exe"
+    webengine_resources = prefix / "Library" / "share" / "qt6" / "resources"
+    webengine_locales = prefix / "Library" / "share" / "qt6" / "translations" / "qtwebengine_locales"
+    if webengine_process.is_file():
+        os.environ.setdefault("QTWEBENGINEPROCESS_PATH", str(webengine_process))
+    if (webengine_resources / "qtwebengine_resources.pak").is_file():
+        os.environ.setdefault("QTWEBENGINE_RESOURCES_PATH", str(webengine_resources))
+    if webengine_locales.is_dir():
+        os.environ.setdefault("QTWEBENGINE_LOCALES_PATH", str(webengine_locales))
 
 
 _prepare_frozen_dll_runtime()
 _prepare_conda_qt_runtime()
+install_crash_handlers()
 
-try:
-    from omnilit_qt.app import run
-except ImportError as exc:
-    write_startup_log("OmniLit import failed", exc=exc)
-    raise SystemExit(
-        "OmniLit Qt/QML dependencies are missing. Activate the OmniLit Conda "
-        "environment and run: conda env update -n OmniLit -f environment.yml --prune"
-    ) from exc
+
+def _run_desktop() -> int:
+    try:
+        from omnilit_qt.app import run
+    except ImportError as exc:
+        write_startup_log("OmniLit import failed", exc=exc)
+        raise SystemExit(
+            "OmniLit Qt/QML dependencies are missing. Activate the OmniLit Conda "
+            "environment and run: conda env update -n OmniLit -f environment.yml --prune"
+        ) from exc
+    return run()
+
+
+def _run_local_agent() -> int:
+    from services.local_agent.__main__ import main
+
+    sys.argv = [sys.argv[0], *sys.argv[2:]]
+    return main()
 
 
 if __name__ == "__main__":
     try:
-        raise SystemExit(run())
+        target = _run_local_agent if len(sys.argv) > 1 and sys.argv[1] == "--local-agent" else _run_desktop
+        raise SystemExit(target())
     except SystemExit:
         raise
     except BaseException as exc:
@@ -73,3 +95,4 @@ if __name__ == "__main__":
 
 # TODO: 文献提取改进
 # TODO: 图分割，坐标轴的识别，点位数据
+# TODO: 网页端和桌面端统一

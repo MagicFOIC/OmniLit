@@ -102,7 +102,8 @@ Item {
                     model: [
                         { label: "nav_download", icon: "download" },
                         { label: "nav_library", icon: "library" },
-                        { label: "nav_translate", icon: "translate" }
+                        { label: "nav_translate", icon: "translate" },
+                        { label: "nav_research_workspace", icon: "workspace" }
                     ]
                     Button {
                         id: navigationButton
@@ -280,6 +281,44 @@ Item {
                 }
             }
             TranslationPage { tourHost: root }
+            Item {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+
+                Loader {
+                    id: sharedBusinessPageLoader
+                    anchors.fill: parent
+                    active: root.pageIndex === 3 && desktopWebController.enabled
+                    asynchronous: true
+                    source: active ? "SharedBusinessWebPage.qml" : ""
+                    onLoaded: item.route = "workspace"
+                }
+
+                Connections {
+                    target: sharedBusinessPageLoader.item
+                    ignoreUnknownSignals: true
+                    function onFallbackRequested() { root.pageIndex = 1 }
+                }
+
+                Rectangle {
+                    anchors.centerIn: parent
+                    width: Math.min(520, parent.width - 48)
+                    implicitHeight: sharedBusinessFallbackLayout.implicitHeight + 40
+                    visible: !desktopWebController.enabled || sharedBusinessPageLoader.status === Loader.Error
+                    color: theme.surface
+                    border.color: theme.border
+                    radius: theme.radiusLarge
+                    ColumnLayout {
+                        id: sharedBusinessFallbackLayout
+                        anchors.fill: parent
+                        anchors.margins: 20
+                        spacing: 10
+                        Label { text: i18n.text("nav_research_workspace"); font.pixelSize: 18; font.bold: true }
+                        Label { Layout.fillWidth: true; text: desktopWebController.detail; wrapMode: Text.WordWrap; color: theme.textMuted }
+                        Button { text: i18n.text("nav_library"); onClicked: root.pageIndex = 1 }
+                    }
+                }
+            }
         }
     }
 

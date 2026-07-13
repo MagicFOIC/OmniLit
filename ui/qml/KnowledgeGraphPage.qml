@@ -330,10 +330,12 @@ Item {
                 replayIndex: knowledgeGraphController.replayIndex
             }
 
-            KnowledgeGraphView {
+            HybridKnowledgeGraphView {
                 id: graphView
                 Layout.fillWidth: true
                 Layout.fillHeight: true
+                recordId: root.recordId
+                reactEnabled: !fullscreenGraph.visible
                 nodes: root.nodes
                 edges: root.edges
                 graphLayout: knowledgeGraphController.renderLayout
@@ -564,10 +566,12 @@ Item {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 spacing: 10
-                KnowledgeGraphView {
+                HybridKnowledgeGraphView {
                     id: fullscreenGraphView
                     Layout.fillWidth: true
                     Layout.fillHeight: true
+                    recordId: root.recordId
+                    reactEnabled: fullscreenGraph.visible
                     nodes: root.nodes
                     edges: root.edges
                     graphLayout: knowledgeGraphController.renderLayout

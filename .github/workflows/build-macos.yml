@@ -1,10 +1,7 @@
-name: Build macOS App
+name: Build unsigned macOS smoke artifact
 
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - "v*"
 
 permissions:
   contents: read
@@ -47,7 +44,7 @@ jobs:
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
         with:
-          name: OmniLit-macOS
+          name: OmniLit-macOS-unsigned-smoke
           path: |
             release/macos/*.zip
             release/macos/*.sha256

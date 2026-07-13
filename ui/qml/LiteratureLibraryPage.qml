@@ -900,6 +900,7 @@ Item {
     }
 
     KnowledgeGraphPage {
+        id: qmlKnowledgeGraphPage
         anchors.fill: parent
         anchors.margins: metrics.pageMargin
         visible: root.graphOpen && !root.graphIsComparison
@@ -909,16 +910,7 @@ Item {
         record: root.graphRecord
         comparisonMode: root.graphIsComparison
         comparisonRecords: root.graphComparisonRecords
-        onBackRequested: {
-            root.graphOpen = false
-            if (root.graphReturnToTopicMap) {
-                root.graphReturnToTopicMap = false
-                root.topicMapOpen = true
-            } else if (root.graphReturnToCompare) {
-                root.graphReturnToCompare = false
-                comparePopup.open()
-            }
-        }
+        onBackRequested: root.closeKnowledgeGraph()
         onEvidenceRequested: function(recordId, page, bbox, elementId) {
             root.openEvidenceInReader(recordId, page, bbox, elementId)
         }
@@ -1207,6 +1199,16 @@ Item {
             root.wordCloudOpen = true
         else if (target === "graph" || target === "comparison")
             root.graphOpen = true
+    }
+    function closeKnowledgeGraph() {
+        root.graphOpen = false
+        if (root.graphReturnToTopicMap) {
+            root.graphReturnToTopicMap = false
+            root.topicMapOpen = true
+        } else if (root.graphReturnToCompare) {
+            root.graphReturnToCompare = false
+            comparePopup.open()
+        }
     }
     function openTranslationReader(index, record) {
         if (!record || !record.localPdfPath)

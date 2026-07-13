@@ -1,0 +1,1237 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.omnilit.app/protocol/omnilit-v1.schema.json",
+  "title": "OmniLit shared protocol v1",
+  "description": "Authoritative cross-language DTO definitions for OmniLit desktop, web, and services.",
+  "oneOf": [
+    { "$ref": "#/$defs/GraphData" },
+    { "$ref": "#/$defs/GraphNeighborPage" },
+    { "$ref": "#/$defs/GraphProjection" },
+    { "$ref": "#/$defs/LiteraturePage" },
+    { "$ref": "#/$defs/LibraryQuery" },
+    { "$ref": "#/$defs/LibraryPage" },
+    { "$ref": "#/$defs/LibraryRecordDetail" },
+    { "$ref": "#/$defs/LibraryState" },
+    { "$ref": "#/$defs/LibraryMutationRequest" },
+    { "$ref": "#/$defs/LibraryMutationResult" },
+    { "$ref": "#/$defs/UserAccount" },
+    { "$ref": "#/$defs/AuthSession" },
+    { "$ref": "#/$defs/LibrarySyncRequest" },
+    { "$ref": "#/$defs/LibrarySyncResult" },
+    { "$ref": "#/$defs/ShareLink" },
+    { "$ref": "#/$defs/AuditEventPage" },
+    { "$ref": "#/$defs/TeamMemberList" },
+    { "$ref": "#/$defs/TeamInvite" },
+    { "$ref": "#/$defs/ResourcePermissionList" },
+    { "$ref": "#/$defs/CloudGraphSyncRequest" },
+    { "$ref": "#/$defs/CloudGraphSyncResult" },
+    { "$ref": "#/$defs/CloudGraphList" },
+    { "$ref": "#/$defs/CollaborationAnnotation" },
+    { "$ref": "#/$defs/CollaborationSnapshot" },
+    { "$ref": "#/$defs/CollaborationMutationRequest" },
+    { "$ref": "#/$defs/CollaborationMutationResult" },
+    { "$ref": "#/$defs/CollaborationEventPage" },
+    { "$ref": "#/$defs/CloudServiceMetrics" },
+    { "$ref": "#/$defs/GraphViewState" },
+    { "$ref": "#/$defs/GraphViewList" },
+    { "$ref": "#/$defs/GraphViewRestore" },
+    { "$ref": "#/$defs/GraphViewMutationResult" },
+    { "$ref": "#/$defs/GraphTimeline" },
+    { "$ref": "#/$defs/Task" },
+    { "$ref": "#/$defs/APIError" }
+  ],
+  "$defs": {
+    "GraphEvidence": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["page", "bbox", "excerpt"],
+      "properties": {
+        "page": { "type": "integer" },
+        "bbox": { "type": "array", "items": { "type": "number" } },
+        "elementId": { "type": "string" },
+        "excerpt": { "type": "string" },
+        "translatedText": { "type": "string" },
+        "source": { "type": "string" },
+        "recordId": { "type": "string" },
+        "section": { "type": "string" },
+        "extractionMethod": { "type": "string" }
+      }
+    },
+    "GraphNode": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "type", "label", "attributes"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "type": { "type": "string", "minLength": 1 },
+        "label": { "type": "string" },
+        "attributes": { "type": "object", "additionalProperties": true },
+        "metrics": { "type": "object", "additionalProperties": { "type": "number" } },
+        "evidence": { "type": "array", "items": { "$ref": "#/$defs/GraphEvidence" } }
+      }
+    },
+    "GraphEdge": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "source", "target", "type", "directed", "attributes"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "source": { "type": "string", "minLength": 1 },
+        "target": { "type": "string", "minLength": 1 },
+        "type": { "type": "string", "minLength": 1 },
+        "directed": { "type": "boolean" },
+        "weight": { "type": "number" },
+        "attributes": { "type": "object", "additionalProperties": true },
+        "evidence": { "type": "array", "items": { "$ref": "#/$defs/GraphEvidence" } }
+      }
+    },
+    "Author": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["name"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "orcid": { "type": "string" },
+        "affiliations": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "Paper": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "title"],
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "abstract": { "type": "string" },
+        "year": { "type": "integer" },
+        "doi": { "type": "string" },
+        "authors": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              { "type": "string" },
+              { "$ref": "#/$defs/Author" }
+            ]
+          }
+        }
+      }
+    },
+    "GraphViewExploration": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["nodeIds", "edgeIds", "pages"],
+      "properties": {
+        "nodeIds": { "type": "array", "maxItems": 2000, "items": { "type": "string" } },
+        "edgeIds": { "type": "array", "maxItems": 5000, "items": { "type": "string" } },
+        "pages": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } }
+      }
+    },
+    "GraphViewFilters": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["mode", "searchText", "density", "literatureSortKey", "literatureSortDescending", "facets", "nodeTypes", "needsReviewOnly"],
+      "properties": {
+        "mode": { "type": "string" },
+        "searchText": { "type": "string", "maxLength": 500 },
+        "density": { "type": "string" },
+        "literatureSortKey": { "type": "string" },
+        "literatureSortDescending": { "type": "boolean" },
+        "facets": { "type": "object", "additionalProperties": { "type": "string" } },
+        "nodeTypes": { "type": "array", "maxItems": 64, "items": { "type": "string" } },
+        "needsReviewOnly": { "type": "boolean" }
+      }
+    },
+    "GraphViewSelection": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["nodeId", "edgeId"],
+      "properties": {
+        "nodeId": { "type": "string" },
+        "edgeId": { "type": "string" }
+      }
+    },
+    "GraphViewPath": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["startId", "endId", "directed", "relationFilter"],
+      "properties": {
+        "startId": { "type": "string" },
+        "endId": { "type": "string" },
+        "directed": { "type": "boolean" },
+        "relationFilter": { "type": "string" }
+      }
+    },
+    "GraphViewViewport": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["displayStyle", "focusDepth", "reviewMode", "graphScale", "panX", "panY", "showArrows", "showLabels", "dimUnrelated", "textFadeThreshold", "nodeSizeScale", "linkThickness", "animateLayout"],
+      "properties": {
+        "displayStyle": { "enum": ["overview", "academic", "radial", "focus"] },
+        "focusDepth": { "type": "integer", "minimum": 0, "maximum": 2 },
+        "reviewMode": { "type": "boolean" },
+        "graphScale": { "type": "number", "minimum": 0.05, "maximum": 8 },
+        "panX": { "type": "number" },
+        "panY": { "type": "number" },
+        "width": { "type": "number", "minimum": 1 },
+        "height": { "type": "number", "minimum": 1 },
+        "showArrows": { "type": "boolean" },
+        "showLabels": { "type": "boolean" },
+        "dimUnrelated": { "type": "boolean" },
+        "textFadeThreshold": { "type": "number" },
+        "nodeSizeScale": { "type": "number" },
+        "linkThickness": { "type": "number" },
+        "animateLayout": { "type": "boolean" }
+      }
+    },
+    "GraphViewState": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["protocolVersion", "version", "id", "name", "recordId", "createdAt", "updatedAt", "graphFingerprint", "exploration", "filters", "selection", "path", "viewport"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" },
+        "version": { "const": 2 },
+        "id": { "type": "string" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "recordId": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "graphFingerprint": { "type": "string" },
+        "exploration": { "$ref": "#/$defs/GraphViewExploration" },
+        "filters": { "$ref": "#/$defs/GraphViewFilters" },
+        "selection": { "$ref": "#/$defs/GraphViewSelection" },
+        "path": { "$ref": "#/$defs/GraphViewPath" },
+        "viewport": { "$ref": "#/$defs/GraphViewViewport" }
+      }
+    },
+    "GraphViewSummary": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "name", "recordId", "createdAt", "updatedAt", "graphFingerprint"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "recordId": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "graphFingerprint": { "type": "string" }
+      }
+    },
+    "GraphViewList": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["protocolVersion", "recordId", "views"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" },
+        "recordId": { "type": "string" },
+        "views": { "type": "array", "items": { "$ref": "#/$defs/GraphViewSummary" } }
+      }
+    },
+    "GraphViewSaveRequest": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["protocolVersion", "name", "exploration", "filters", "selection", "viewport"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" },
+        "id": { "type": "string" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "graphFingerprint": { "type": "string" },
+        "exploration": { "$ref": "#/$defs/GraphViewExploration" },
+        "filters": { "$ref": "#/$defs/GraphViewFilters" },
+        "selection": { "$ref": "#/$defs/GraphViewSelection" },
+        "path": { "$ref": "#/$defs/GraphViewPath" },
+        "viewport": { "$ref": "#/$defs/GraphViewViewport" }
+      }
+    },
+    "GraphViewReconciliation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["missingNodes", "missingEdges"],
+      "properties": {
+        "missingNodes": { "type": "integer", "minimum": 0 },
+        "missingEdges": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "GraphViewRestore": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["protocolVersion", "recordId", "view", "graph", "reconciliation"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" },
+        "recordId": { "type": "string" },
+        "view": { "$ref": "#/$defs/GraphViewState" },
+        "graph": { "$ref": "#/$defs/GraphData" },
+        "reconciliation": { "$ref": "#/$defs/GraphViewReconciliation" }
+      }
+    },
+    "GraphViewMutationResult": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["protocolVersion", "recordId", "viewId", "deleted"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" },
+        "recordId": { "type": "string" },
+        "viewId": { "type": "string" },
+        "deleted": { "type": "boolean" }
+      }
+    },
+    "GraphTimelinePaper": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["recordId", "nodeId", "title", "year", "topicId", "topicName", "keyScore", "citedByCount", "referenceCount", "representative", "reasons"],
+      "properties": {
+        "recordId": { "type": "string" },
+        "nodeId": { "type": "string" },
+        "title": { "type": "string" },
+        "year": { "type": "integer", "minimum": 1900, "maximum": 2100 },
+        "topicId": { "type": "string" },
+        "topicName": { "type": "string" },
+        "keyScore": { "type": "number", "minimum": 0, "maximum": 1 },
+        "citedByCount": { "type": "integer", "minimum": 0 },
+        "referenceCount": { "type": "integer", "minimum": 0 },
+        "representative": { "type": "boolean" },
+        "reasons": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "GraphTimelineTopicEvent": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["topicId", "name", "newCount", "cumulative", "paperIds", "representativePaper"],
+      "properties": {
+        "topicId": { "type": "string" },
+        "name": { "type": "string" },
+        "newCount": { "type": "integer", "minimum": 0 },
+        "cumulative": { "type": "integer", "minimum": 0 },
+        "paperIds": { "type": "array", "items": { "type": "string" } },
+        "representativePaper": { "type": "object", "additionalProperties": true }
+      }
+    },
+    "GraphTimelineTurningPoint": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["year", "type", "score", "title", "explanation", "paperIds", "topicIds"],
+      "properties": {
+        "year": { "type": "integer", "minimum": 1900, "maximum": 2100 },
+        "type": { "enum": ["topic_emergence", "topic_expansion", "cross_topic_bridge", "topic_split_signal", "topic_merge_signal", "topic_decline"] },
+        "score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "title": { "type": "string" },
+        "explanation": { "type": "string" },
+        "paperIds": { "type": "array", "items": { "type": "string" } },
+        "topicIds": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "GraphTimelineCitation": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["source", "target", "sourceYear", "targetYear", "crossTopic", "directionStatus", "explanation"],
+      "properties": {
+        "source": { "type": "string" },
+        "target": { "type": "string" },
+        "sourceYear": { "anyOf": [{ "type": "integer" }, { "type": "string" }] },
+        "targetYear": { "anyOf": [{ "type": "integer" }, { "type": "string" }] },
+        "crossTopic": { "type": "boolean" },
+        "directionStatus": { "enum": ["valid", "chronology_conflict", "unknown_year"] },
+        "explanation": { "type": "string" }
+      }
+    },
+    "GraphTimelineEvent": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["year", "papers", "topics", "citations", "turningPoints"],
+      "properties": {
+        "year": { "type": "integer", "minimum": 1900, "maximum": 2100 },
+        "papers": { "type": "array", "items": { "$ref": "#/$defs/GraphTimelinePaper" } },
+        "topics": { "type": "array", "items": { "$ref": "#/$defs/GraphTimelineTopicEvent" } },
+        "citations": { "type": "array", "items": { "$ref": "#/$defs/GraphTimelineCitation" } },
+        "turningPoints": { "type": "array", "items": { "$ref": "#/$defs/GraphTimelineTurningPoint" } }
+      }
+    },
+    "GraphTimelinePoint": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["year", "count", "cumulative", "paperIds", "representativePaper"],
+      "properties": {
+        "year": { "type": "integer", "minimum": 1900, "maximum": 2100 },
+        "count": { "type": "integer", "minimum": 0 },
+        "cumulative": { "type": "integer", "minimum": 0 },
+        "paperIds": { "type": "array", "items": { "type": "string" } },
+        "representativePaper": { "type": "object", "additionalProperties": true }
+      }
+    },
+    "GraphTimelineTopicSeries": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["topicId", "name", "colorIndex", "firstYear", "lastYear", "peakYear", "peakCount", "points", "paperCount", "growthSpeed", "growthExplanation"],
+      "properties": {
+        "topicId": { "type": "string" },
+        "name": { "type": "string" },
+        "colorIndex": { "type": "integer" },
+        "firstYear": { "anyOf": [{ "type": "integer" }, { "type": "string" }] },
+        "lastYear": { "anyOf": [{ "type": "integer" }, { "type": "string" }] },
+        "peakYear": { "anyOf": [{ "type": "integer" }, { "type": "string" }] },
+        "peakCount": { "type": "integer", "minimum": 0 },
+        "points": { "type": "array", "items": { "$ref": "#/$defs/GraphTimelinePoint" } },
+        "paperCount": { "type": "integer", "minimum": 0 },
+        "growthSpeed": { "type": "number", "minimum": 0 },
+        "growthExplanation": { "type": "string" }
+      }
+    },
+    "GraphTimelineKeyPath": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "label", "paperIds", "years", "score", "length", "yearSpan", "explanation"],
+      "properties": {
+        "id": { "type": "string" },
+        "label": { "type": "string" },
+        "paperIds": { "type": "array", "items": { "type": "string" } },
+        "years": { "type": "array", "items": { "type": "integer" } },
+        "score": { "type": "number" },
+        "length": { "type": "integer", "minimum": 2 },
+        "yearSpan": { "type": "integer", "minimum": 0 },
+        "explanation": { "type": "string" }
+      }
+    },
+    "GraphTimelineSpeedComparison": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["leftTopicId", "rightTopicId", "leftSpeed", "rightSpeed", "fasterTopicId", "difference", "explanation"],
+      "properties": {
+        "leftTopicId": { "type": "string" },
+        "rightTopicId": { "type": "string" },
+        "leftSpeed": { "type": "number" },
+        "rightSpeed": { "type": "number" },
+        "fasterTopicId": { "type": "string" },
+        "difference": { "type": "number", "minimum": 0 },
+        "explanation": { "type": "string" }
+      }
+    },
+    "GraphTimelineYearRange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minimum", "maximum", "years", "knownYearCount", "missingYearCount"],
+      "properties": {
+        "minimum": { "type": "integer" },
+        "maximum": { "type": "integer" },
+        "years": { "type": "array", "items": { "type": "integer" } },
+        "knownYearCount": { "type": "integer", "minimum": 0 },
+        "missingYearCount": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "GraphTimelineSelection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["startYear", "endYear", "playbackYear", "effectiveEndYear"],
+      "properties": {
+        "startYear": { "type": "integer" },
+        "endYear": { "type": "integer" },
+        "playbackYear": { "type": "integer" },
+        "effectiveEndYear": { "type": "integer" }
+      }
+    },
+    "GraphTimelineDiagnostics": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["paperCount", "citationCount", "validCitationCount", "chronologyConflictCount", "unknownCitationYearCount", "sameYearCycleBreakCount", "splitSignalCount", "mergeSignalCount", "declineSignalCount", "keyPathCount", "method"],
+      "properties": {
+        "paperCount": { "type": "integer", "minimum": 0 },
+        "citationCount": { "type": "integer", "minimum": 0 },
+        "validCitationCount": { "type": "integer", "minimum": 0 },
+        "chronologyConflictCount": { "type": "integer", "minimum": 0 },
+        "unknownCitationYearCount": { "type": "integer", "minimum": 0 },
+        "sameYearCycleBreakCount": { "type": "integer", "minimum": 0 },
+        "splitSignalCount": { "type": "integer", "minimum": 0 },
+        "mergeSignalCount": { "type": "integer", "minimum": 0 },
+        "declineSignalCount": { "type": "integer", "minimum": 0 },
+        "keyPathCount": { "type": "integer", "minimum": 0 },
+        "method": { "type": "string" }
+      }
+    },
+    "GraphTimelineQuery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocolVersion", "viewport"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" },
+        "startYear": { "type": "integer", "minimum": 1900, "maximum": 2100 },
+        "endYear": { "type": "integer", "minimum": 1900, "maximum": 2100 },
+        "playbackYear": { "type": "integer", "minimum": 1900, "maximum": 2100 },
+        "viewport": {
+          "type": "object", "additionalProperties": false, "required": ["width", "height", "scale"],
+          "properties": {
+            "width": { "type": "number", "minimum": 1, "maximum": 16384 },
+            "height": { "type": "number", "minimum": 1, "maximum": 16384 },
+            "scale": { "type": "number", "minimum": 0.01, "maximum": 20 },
+            "panX": { "type": "number", "minimum": -1000000, "maximum": 1000000 },
+            "panY": { "type": "number", "minimum": -1000000, "maximum": 1000000 },
+            "overscan": { "type": "number", "minimum": 0, "maximum": 2000 }
+          }
+        },
+        "pinnedNodeIds": { "type": "array", "maxItems": 50, "items": { "type": "string" } }
+      }
+    },
+    "GraphTimeline": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["protocolVersion", "schemaVersion", "timelineVersion", "timelineKey", "status", "generatedAt", "selection", "yearRange", "events", "topicSeries", "keyPaths", "turningPoints", "topicSpeedComparisons", "diagnostics", "graph", "projection"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" },
+        "schemaVersion": { "const": 1 },
+        "timelineVersion": { "const": 2 },
+        "timelineKey": { "type": "string" },
+        "status": { "enum": ["ready", "empty"] },
+        "generatedAt": { "type": "string" },
+        "selection": { "$ref": "#/$defs/GraphTimelineSelection" },
+        "yearRange": { "$ref": "#/$defs/GraphTimelineYearRange" },
+        "events": { "type": "array", "items": { "$ref": "#/$defs/GraphTimelineEvent" } },
+        "topicSeries": { "type": "array", "items": { "$ref": "#/$defs/GraphTimelineTopicSeries" } },
+        "keyPaths": { "type": "array", "items": { "$ref": "#/$defs/GraphTimelineKeyPath" } },
+        "turningPoints": { "type": "array", "items": { "$ref": "#/$defs/GraphTimelineTurningPoint" } },
+        "topicSpeedComparisons": { "type": "array", "items": { "$ref": "#/$defs/GraphTimelineSpeedComparison" } },
+        "diagnostics": { "$ref": "#/$defs/GraphTimelineDiagnostics" },
+        "graph": { "$ref": "#/$defs/GraphData" },
+        "projection": { "$ref": "#/$defs/GraphProjectionStatus" }
+      }
+    },
+    "TaskProgress": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["completed", "total", "unit"],
+      "properties": {
+        "completed": { "type": "number", "minimum": 0 },
+        "total": { "type": "number", "minimum": 0 },
+        "unit": { "type": "string" },
+        "message": { "type": "string" }
+      }
+    },
+    "Task": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["protocolVersion", "id", "type", "status", "cancellable", "progress"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" },
+        "id": { "type": "string" },
+        "type": { "type": "string" },
+        "status": { "enum": ["created", "queued", "running", "stopping", "succeeded", "completed", "cancelled", "failed"] },
+        "cancellable": { "type": "boolean" },
+        "progress": { "$ref": "#/$defs/TaskProgress" },
+        "message": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "startedAt": { "type": "string" },
+        "finishedAt": { "type": "string" },
+        "resultRef": { "type": "string" },
+        "result": {},
+        "error": { "$ref": "#/$defs/APIError" }
+      }
+    },
+    "APIError": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["protocolVersion", "code", "message", "retryable"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" },
+        "code": { "type": "string" },
+        "message": { "type": "string" },
+        "retryable": { "type": "boolean" },
+        "details": { "type": "object", "additionalProperties": true },
+        "requestId": { "type": "string" }
+      }
+    },
+    "GraphNeighborPage": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["protocolVersion", "schemaVersion", "recordId", "nodeId", "relationMode", "status", "nodes", "edges", "offset", "nextOffset", "revealed", "total", "hasMore"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" },
+        "schemaVersion": { "const": 1 },
+        "recordId": { "type": "string" },
+        "nodeId": { "type": "string" },
+        "relationMode": { "enum": ["all", "references", "cited_by", "authors", "institutions", "topics", "venues"] },
+        "status": { "enum": ["ready", "empty"] },
+        "nodes": { "type": "array", "items": { "$ref": "#/$defs/GraphNode" } },
+        "edges": { "type": "array", "items": { "$ref": "#/$defs/GraphEdge" } },
+        "offset": { "type": "integer", "minimum": 0 },
+        "nextOffset": { "type": "integer", "minimum": 0 },
+        "revealed": { "type": "integer", "minimum": 0 },
+        "total": { "type": "integer", "minimum": 0 },
+        "hasMore": { "type": "boolean" }
+      }
+    },
+    "GraphProjectionStatus": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["status", "level", "budget", "totalSemanticNodes", "renderedNodes", "realNodes", "aggregateNodes", "aggregatedNodes", "culledNodes", "renderedEdges", "totalSemanticEdges", "degraded", "latencyMs", "latencyBudgetMs", "budgetExceeded", "performanceStatus", "message"],
+      "properties": {
+        "status": { "enum": ["ready", "empty"] },
+        "level": { "enum": ["overview", "normal", "detail"] },
+        "layoutStyle": { "type": "string" },
+        "spatialCulling": { "type": "boolean" },
+        "budget": { "type": "integer", "minimum": 0 },
+        "totalSemanticNodes": { "type": "integer", "minimum": 0 },
+        "viewportCandidates": { "type": "integer", "minimum": 0 },
+        "renderedNodes": { "type": "integer", "minimum": 0 },
+        "realNodes": { "type": "integer", "minimum": 0 },
+        "aggregateNodes": { "type": "integer", "minimum": 0 },
+        "aggregatedNodes": { "type": "integer", "minimum": 0 },
+        "culledNodes": { "type": "integer", "minimum": 0 },
+        "renderedEdges": { "type": "integer", "minimum": 0 },
+        "totalSemanticEdges": { "type": "integer", "minimum": 0 },
+        "degraded": { "type": "boolean" },
+        "latencyMs": { "type": "number", "minimum": 0 },
+        "latencyBudgetMs": { "type": "number", "minimum": 0 },
+        "budgetExceeded": { "type": "boolean" },
+        "performanceStatus": { "enum": ["ready", "over_budget"] },
+        "message": { "type": "string" }
+      }
+    },
+    "GraphProjection": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["protocolVersion", "schemaVersion", "recordId", "graph", "layout", "status"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" },
+        "schemaVersion": { "const": 1 },
+        "recordId": { "type": "string" },
+        "graph": { "$ref": "#/$defs/GraphData" },
+        "layout": { "type": "object", "additionalProperties": { "type": "object", "additionalProperties": { "type": "number" } } },
+        "status": { "$ref": "#/$defs/GraphProjectionStatus" }
+      }
+    },
+    "LiteratureRow": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["nodeId", "recordId", "kind", "title", "year", "authors", "venue", "citations", "importance", "confidence", "evidenceCount", "selected", "hovered", "searchText", "relevance"],
+      "properties": {
+        "nodeId": { "type": "string" },
+        "recordId": { "type": "string" },
+        "kind": { "enum": ["paper", "citation"] },
+        "title": { "type": "string" },
+        "year": { "type": "string" },
+        "authors": { "type": "string" },
+        "venue": { "type": "string" },
+        "citations": { "type": "integer", "minimum": 0 },
+        "importance": { "type": "number" },
+        "confidence": { "type": "number" },
+        "evidenceCount": { "type": "integer", "minimum": 0 },
+        "selected": { "type": "boolean" },
+        "hovered": { "type": "boolean" },
+        "searchText": { "type": "string" },
+        "relevance": { "type": "number" }
+      }
+    },
+    "LiteraturePage": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["protocolVersion", "recordId", "rows", "offset", "nextOffset", "total", "hasMore"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" },
+        "recordId": { "type": "string" },
+        "rows": { "type": "array", "items": { "$ref": "#/$defs/LiteratureRow" } },
+        "offset": { "type": "integer", "minimum": 0 },
+        "nextOffset": { "type": "integer", "minimum": 0 },
+        "total": { "type": "integer", "minimum": 0 },
+        "hasMore": { "type": "boolean" }
+      }
+    },
+    "LibraryQuery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocolVersion"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" },
+        "query": { "type": "string", "maxLength": 500 },
+        "relevance": { "enum": ["all", "keyword_only", "loose", "balanced", "strict", "very_strict"] },
+        "pdfStatus": { "type": "string", "maxLength": 64 },
+        "sort": { "enum": ["relevance_desc", "relevance_asc", "year_desc", "year_asc", "downloaded_first", "title_asc"] },
+        "journalType": { "type": "string", "maxLength": 64 },
+        "collectionId": { "type": "string", "maxLength": 64 },
+        "keywordGroups": { "type": "array", "maxItems": 64, "items": { "type": "string", "maxLength": 128 } },
+        "offset": { "type": "integer", "minimum": 0 },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 200 }
+      }
+    },
+    "LibraryRecordSummary": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["recordId", "title", "authorsText", "source", "year", "journalTitle", "journalType", "journalTypeLabel", "impactFactorText", "keywordsText", "summaryText", "topicTagsText", "pdfStatus", "relevanceLabel", "relevanceScore", "matchedKeywordsText", "downloaded", "hasExtraction"],
+      "properties": {
+        "recordId": { "type": "string" }, "title": { "type": "string" }, "authorsText": { "type": "string" },
+        "source": { "type": "string" }, "year": { "type": "string" }, "publicationDate": { "type": "string" },
+        "journalTitle": { "type": "string" }, "journalType": { "type": "string" }, "journalTypeLabel": { "type": "string" },
+        "impactFactorText": { "type": "string" }, "keywordsText": { "type": "string" }, "summaryText": { "type": "string" },
+        "topicTagsText": { "type": "string" }, "pdfStatus": { "type": "string" }, "relevanceLabel": { "type": "string" },
+        "relevanceScore": { "type": "number" }, "matchedKeywordsText": { "type": "string" },
+        "keywordGroupKeys": { "type": "array", "items": { "type": "string" } }, "downloaded": { "type": "boolean" }, "hasExtraction": { "type": "boolean" }
+      }
+    },
+    "LibraryRecordDetail": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["protocolVersion", "recordId", "title", "abstract", "authorsText", "doi", "source", "year", "journalTitle", "keywordsText", "summaryText", "topicTagsText", "pdfStatus", "relevanceLabel", "relevanceScore", "matchedKeywordsText", "matchedFieldsText", "relevanceReasonsText", "downloaded", "hasExtraction"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" }, "recordId": { "type": "string" }, "title": { "type": "string" }, "abstract": { "type": "string" },
+        "authorsText": { "type": "string" }, "doi": { "type": "string" }, "source": { "type": "string" }, "year": { "type": "string" },
+        "publicationDate": { "type": "string" }, "journalTitle": { "type": "string" }, "impactFactorText": { "type": "string" },
+        "impactFactorSource": { "type": "string" }, "impactFactorMetric": { "type": "string" }, "impactFactorYear": { "type": "string" },
+        "impactFactorQuartile": { "type": "string" }, "keywordsText": { "type": "string" }, "summaryText": { "type": "string" },
+        "topicTagsText": { "type": "string" }, "pdfStatus": { "type": "string" }, "relevanceLabel": { "type": "string" },
+        "relevanceScore": { "type": "number" }, "matchedKeywordsText": { "type": "string" }, "matchedFieldsText": { "type": "string" },
+        "relevanceReasonsText": { "type": "string" }, "downloaded": { "type": "boolean" }, "hasExtraction": { "type": "boolean" }
+      }
+    },
+    "LibraryFacets": {
+      "type": "object", "additionalProperties": false,
+      "required": ["relevance", "pdfStatus", "journalType", "keywordGroups"],
+      "properties": {
+        "relevance": { "type": "object", "additionalProperties": { "type": "integer" } },
+        "pdfStatus": { "type": "object", "additionalProperties": { "type": "integer" } },
+        "journalType": { "type": "object", "additionalProperties": { "type": "integer" } },
+        "keywordGroups": { "type": "object", "additionalProperties": { "type": "integer" } }
+      }
+    },
+    "LibraryPage": {
+      "type": "object", "additionalProperties": true,
+      "required": ["protocolVersion", "status", "records", "offset", "nextOffset", "total", "hasMore", "cacheAvailable", "facets", "message"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" }, "status": { "enum": ["ready", "empty", "unavailable"] },
+        "records": { "type": "array", "items": { "$ref": "#/$defs/LibraryRecordSummary" } },
+        "offset": { "type": "integer", "minimum": 0 }, "nextOffset": { "type": "integer", "minimum": 0 },
+        "total": { "type": "integer", "minimum": 0 }, "hasMore": { "type": "boolean" }, "cacheAvailable": { "type": "boolean" },
+        "facets": { "$ref": "#/$defs/LibraryFacets" }, "message": { "type": "string" }
+      }
+    },
+    "ResearchCollection": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "name", "builtIn", "recordCount"],
+      "properties": { "id": { "type": "string" }, "name": { "type": "string" }, "builtIn": { "type": "boolean" }, "recordCount": { "type": "integer", "minimum": 0 } }
+    },
+    "LibraryWorkspaceState": {
+      "type": "object", "additionalProperties": false, "required": ["compareRecordIds"],
+      "properties": { "compareRecordIds": { "type": "array", "maxItems": 4, "items": { "type": "string" } } }
+    },
+    "LibraryState": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocolVersion", "revision", "updatedAt", "syncState", "collections", "favorites", "workspace"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" }, "revision": { "type": "integer", "minimum": 0 }, "updatedAt": { "type": "string" },
+        "syncState": { "enum": ["local_only", "pending_sync", "synced", "conflict", "deleting"] },
+        "collections": { "type": "array", "items": { "$ref": "#/$defs/ResearchCollection" } },
+        "favorites": { "type": "object", "additionalProperties": { "type": "array", "items": { "type": "string" } } },
+        "workspace": { "$ref": "#/$defs/LibraryWorkspaceState" }
+      }
+    },
+    "LibraryMutationRequest": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocolVersion", "action", "expectedRevision"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" },
+        "action": { "enum": ["create_collection", "rename_collection", "delete_collection", "toggle_collection_record", "toggle_compare_record", "remove_compare_record", "clear_compare"] },
+        "expectedRevision": { "type": "integer", "minimum": 0 }, "collectionId": { "type": "string", "maxLength": 64 },
+        "name": { "type": "string", "maxLength": 120 }, "recordId": { "type": "string", "maxLength": 256 }
+      }
+    },
+    "LibraryMutationResult": {
+      "type": "object", "additionalProperties": false, "required": ["protocolVersion", "changed", "message", "state"],
+      "properties": { "protocolVersion": { "const": "1.0" }, "changed": { "type": "boolean" }, "message": { "type": "string" }, "state": { "$ref": "#/$defs/LibraryState" } }
+    },
+    "ResearchWorkspaceRecord": {
+      "type": "object", "additionalProperties": false,
+      "required": ["recordId", "title", "authorsText", "year", "journalTitle", "source", "abstract", "keywordsText", "pdfStatus", "downloaded", "hasExtraction", "collectionIds"],
+      "properties": {
+        "recordId": { "type": "string", "minLength": 1, "maxLength": 256 }, "title": { "type": "string", "maxLength": 500 },
+        "authorsText": { "type": "string", "maxLength": 1000 }, "year": { "type": "string", "maxLength": 16 },
+        "journalTitle": { "type": "string", "maxLength": 500 }, "source": { "type": "string", "maxLength": 120 },
+        "abstract": { "type": "string", "maxLength": 20000 }, "keywordsText": { "type": "string", "maxLength": 4000 },
+        "pdfStatus": { "type": "string", "maxLength": 80 }, "downloaded": { "type": "boolean" },
+        "hasExtraction": { "type": "boolean" }, "collectionIds": { "type": "array", "maxItems": 100, "items": { "type": "string", "maxLength": 64 } }
+      }
+    },
+    "ResearchWorkspace": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocolVersion", "status", "records", "compareLimit", "message"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" }, "status": { "enum": ["ready", "empty", "unavailable"] },
+        "records": { "type": "array", "maxItems": 4, "items": { "$ref": "#/$defs/ResearchWorkspaceRecord" } },
+        "compareLimit": { "type": "integer", "minimum": 1, "maximum": 4 }, "message": { "type": "string", "maxLength": 500 }
+      }
+    },
+    "ResearchStatisticsBucket": {
+      "type": "object", "additionalProperties": false, "required": ["key", "label", "count"],
+      "properties": { "key": { "type": "string", "maxLength": 160 }, "label": { "type": "string", "maxLength": 160 }, "count": { "type": "integer", "minimum": 0 } }
+    },
+    "ResearchStatistics": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocolVersion", "status", "totalRecords", "downloadedRecords", "extractedRecords", "compareRecords", "yearBuckets", "sourceBuckets", "pdfStatusBuckets", "topKeywords", "collectionBuckets", "message"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" }, "status": { "enum": ["ready", "empty", "unavailable"] },
+        "totalRecords": { "type": "integer", "minimum": 0 }, "downloadedRecords": { "type": "integer", "minimum": 0 },
+        "extractedRecords": { "type": "integer", "minimum": 0 }, "compareRecords": { "type": "integer", "minimum": 0, "maximum": 4 },
+        "yearBuckets": { "type": "array", "items": { "$ref": "#/$defs/ResearchStatisticsBucket" } },
+        "sourceBuckets": { "type": "array", "items": { "$ref": "#/$defs/ResearchStatisticsBucket" } },
+        "pdfStatusBuckets": { "type": "array", "items": { "$ref": "#/$defs/ResearchStatisticsBucket" } },
+        "topKeywords": { "type": "array", "items": { "$ref": "#/$defs/ResearchStatisticsBucket" } },
+        "collectionBuckets": { "type": "array", "items": { "$ref": "#/$defs/ResearchStatisticsBucket" } },
+        "message": { "type": "string", "maxLength": 500 }
+      }
+    },
+    "BusinessSettings": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocolVersion", "revision", "themeMode", "density", "reduceMotion", "highContrast", "startPage", "defaultLibrarySort", "aiEvidenceLimit", "aiEndpoint", "aiModel", "allowRemoteResearchContent", "aiCredentialConfigured", "updatedAt"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" }, "revision": { "type": "integer", "minimum": 0 },
+        "themeMode": { "enum": ["system", "light", "dark"] }, "density": { "enum": ["comfortable", "compact"] },
+        "reduceMotion": { "type": "boolean" }, "highContrast": { "type": "boolean" },
+        "startPage": { "enum": ["graph", "library", "collections", "workspace", "statistics", "ai"] },
+        "defaultLibrarySort": { "enum": ["relevance_desc", "year_desc", "year_asc", "downloaded_first", "title_asc"] },
+        "aiEvidenceLimit": { "type": "integer", "minimum": 1, "maximum": 4 },
+        "aiEndpoint": { "type": "string", "maxLength": 512 }, "aiModel": { "type": "string", "maxLength": 160 },
+        "allowRemoteResearchContent": { "type": "boolean" }, "aiCredentialConfigured": { "type": "boolean" },
+        "updatedAt": { "type": "string", "maxLength": 40 }
+      }
+    },
+    "BusinessSettingsUpdateRequest": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocolVersion", "expectedRevision", "themeMode", "density", "reduceMotion", "highContrast", "startPage", "defaultLibrarySort", "aiEvidenceLimit", "aiEndpoint", "aiModel", "allowRemoteResearchContent"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" }, "expectedRevision": { "type": "integer", "minimum": 0 },
+        "themeMode": { "enum": ["system", "light", "dark"] }, "density": { "enum": ["comfortable", "compact"] },
+        "reduceMotion": { "type": "boolean" }, "highContrast": { "type": "boolean" },
+        "startPage": { "enum": ["graph", "library", "collections", "workspace", "statistics", "ai"] },
+        "defaultLibrarySort": { "enum": ["relevance_desc", "year_desc", "year_asc", "downloaded_first", "title_asc"] },
+        "aiEvidenceLimit": { "type": "integer", "minimum": 1, "maximum": 4 },
+        "aiEndpoint": { "type": "string", "maxLength": 512 }, "aiModel": { "type": "string", "maxLength": 160 },
+        "allowRemoteResearchContent": { "type": "boolean" }
+      }
+    },
+    "ResearchBriefRequest": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocolVersion", "recordIds", "focus", "question", "mode"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" }, "recordIds": { "type": "array", "minItems": 1, "maxItems": 4, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 256 } },
+        "focus": { "enum": ["overview", "methods", "findings", "gaps"] }, "question": { "type": "string", "maxLength": 500 },
+        "mode": { "enum": ["evidence_only", "model"] }
+      }
+    },
+    "ResearchBriefSection": {
+      "type": "object", "additionalProperties": false, "required": ["heading", "body", "evidenceRecordIds"],
+      "properties": { "heading": { "type": "string", "maxLength": 160 }, "body": { "type": "string", "maxLength": 12000 }, "evidenceRecordIds": { "type": "array", "maxItems": 4, "items": { "type": "string", "maxLength": 256 } } }
+    },
+    "ResearchBriefResult": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocolVersion", "mode", "generatedAt", "title", "sections", "warnings"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" }, "mode": { "enum": ["evidence_only", "model"] }, "generatedAt": { "type": "string" },
+        "title": { "type": "string", "maxLength": 240 }, "sections": { "type": "array", "minItems": 1, "maxItems": 12, "items": { "$ref": "#/$defs/ResearchBriefSection" } },
+        "warnings": { "type": "array", "maxItems": 20, "items": { "type": "string", "maxLength": 500 } }
+      }
+    },
+    "CloudDataControls": {
+      "type": "object", "additionalProperties": false,
+      "required": ["uploadLocalPdfs", "syncAnnotations", "syncFullText", "useCloudAi", "retainCloudTaskData", "allowTeamAccess", "allowShareLinks", "shareDiagnostics"],
+      "properties": {
+        "uploadLocalPdfs": { "type": "boolean" }, "syncAnnotations": { "type": "boolean" },
+        "syncFullText": { "type": "boolean" }, "useCloudAi": { "type": "boolean" },
+        "retainCloudTaskData": { "type": "boolean" }, "allowTeamAccess": { "type": "boolean" },
+        "allowShareLinks": { "type": "boolean" }, "shareDiagnostics": { "type": "boolean" }
+      }
+    },
+    "WorkspaceTargetSelection": {
+      "type": "object", "additionalProperties": false,
+      "required": ["privateSync", "publicSubmission"],
+      "properties": { "privateSync": { "type": "boolean" }, "publicSubmission": { "type": "boolean" } }
+    },
+    "WorkspaceSummary": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocolVersion", "id", "kind", "name", "quotaBytes", "usedBytes", "resourceCount", "createdAt"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" }, "id": { "type": "string" }, "kind": { "enum": ["personal", "public"] },
+        "name": { "type": "string" }, "quotaBytes": { "type": "integer", "minimum": 0 }, "usedBytes": { "type": "integer", "minimum": 0 },
+        "resourceCount": { "type": "integer", "minimum": 0 }, "createdAt": { "type": "string" }
+      }
+    },
+    "WorkspaceSyncPreferences": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocolVersion", "enabled", "categories", "updatedAt"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" }, "enabled": { "type": "boolean" }, "updatedAt": { "type": "string" },
+        "categories": { "type": "object", "additionalProperties": { "type": "boolean" } }
+      }
+    },
+    "WorkspaceSyncStatus": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocolVersion", "workspaceId", "enabled", "cursor", "resourceCount", "pendingChanges", "conflictCount", "lastSyncedAt"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" }, "workspaceId": { "type": "string" }, "enabled": { "type": "boolean" },
+        "cursor": { "type": "integer", "minimum": 0 }, "resourceCount": { "type": "integer", "minimum": 0 },
+        "pendingChanges": { "type": "integer", "minimum": 0 }, "conflictCount": { "type": "integer", "minimum": 0 }, "lastSyncedAt": { "type": "string" }
+      }
+    },
+    "WorkspaceChange": {
+      "type": "object", "additionalProperties": false,
+      "required": ["resourceType", "resourceId", "operation", "clientMutationId"],
+      "properties": {
+        "cursor": { "type": "integer", "minimum": 0 }, "resourceType": { "enum": ["literature_record", "library_state", "business_settings", "graph", "graph_view", "annotation"] },
+        "resourceId": { "type": "string", "minLength": 1, "maxLength": 256 }, "operation": { "enum": ["upsert", "delete"] },
+        "baseRevision": { "type": "integer", "minimum": 0 }, "revision": { "type": "integer", "minimum": 0 },
+        "clientMutationId": { "type": "string", "minLength": 8, "maxLength": 128 }, "payloadHash": { "type": "string" },
+        "payload": { "type": "object", "additionalProperties": true }, "occurredAt": { "type": "string" }
+      }
+    },
+    "WorkspaceConflict": {
+      "type": "object", "additionalProperties": false,
+      "required": ["resourceType", "resourceId", "localRevision", "cloudRevision", "cloudPayload"],
+      "properties": {
+        "resourceType": { "type": "string" }, "resourceId": { "type": "string" }, "localRevision": { "type": "integer" },
+        "cloudRevision": { "type": "integer" }, "cloudPayload": { "type": "object", "additionalProperties": true }
+      }
+    },
+    "WorkspaceSyncBatch": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocolVersion", "deviceId", "cursor", "changes"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" }, "deviceId": { "type": "string" }, "cursor": { "type": "integer", "minimum": 0 },
+        "changes": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/WorkspaceChange" } }
+      }
+    },
+    "WorkspaceSyncResult": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocolVersion", "workspaceId", "cursor", "applied", "conflicts"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" }, "workspaceId": { "type": "string" }, "cursor": { "type": "integer", "minimum": 0 },
+        "applied": { "type": "array", "items": { "$ref": "#/$defs/WorkspaceChange" } },
+        "conflicts": { "type": "array", "items": { "$ref": "#/$defs/WorkspaceConflict" } }
+      }
+    },
+    "WorkspaceChangePage": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocolVersion", "workspaceId", "cursor", "changes", "hasMore"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" }, "workspaceId": { "type": "string" }, "cursor": { "type": "integer", "minimum": 0 },
+        "changes": { "type": "array", "items": { "$ref": "#/$defs/WorkspaceChange" } }, "hasMore": { "type": "boolean" }
+      }
+    },
+    "PublicLicenseDeclaration": {
+      "type": "object", "additionalProperties": false,
+      "required": ["code", "url", "rightsStatement"],
+      "properties": {
+        "code": { "enum": ["cc-by", "cc-by-sa", "cc0", "public-domain", "publisher-oa", "author-redistribution"] },
+        "url": { "type": "string" }, "rightsStatement": { "type": "string" }
+      }
+    },
+    "PublicSubmission": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocolVersion", "id", "status", "revision", "sourceResourceId", "record", "contentHash", "license", "publicDisplayName", "reviewNote", "createdAt", "updatedAt"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" }, "id": { "type": "string" },
+        "status": { "enum": ["draft", "pending_review", "changes_requested", "approved", "rejected", "withdrawal_requested", "withdrawn", "takedown"] },
+        "revision": { "type": "integer", "minimum": 1 }, "sourceResourceId": { "type": "string" },
+        "record": { "type": "object", "additionalProperties": true }, "contentHash": { "type": "string" },
+        "license": { "$ref": "#/$defs/PublicLicenseDeclaration" }, "publicDisplayName": { "type": "string" }, "reviewNote": { "type": "string" },
+        "createdAt": { "type": "string" }, "updatedAt": { "type": "string" }
+      }
+    },
+    "PublicSubmissionCreateRequest": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocolVersion", "sourceResourceId", "record", "license", "publicDisplayName"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" }, "sourceResourceId": { "type": "string" },
+        "record": { "type": "object", "additionalProperties": true }, "license": { "$ref": "#/$defs/PublicLicenseDeclaration" },
+        "publicDisplayName": { "type": "string" }
+      }
+    },
+    "PublicSubmissionList": {
+      "type": "object", "additionalProperties": false, "required": ["protocolVersion", "submissions"],
+      "properties": { "protocolVersion": { "const": "1.0" }, "submissions": { "type": "array", "items": { "$ref": "#/$defs/PublicSubmission" } } }
+    },
+    "PublicModerationDecision": {
+      "type": "object", "additionalProperties": false, "required": ["protocolVersion", "decision", "note"],
+      "properties": { "protocolVersion": { "const": "1.0" }, "decision": { "enum": ["approve", "reject", "request_changes", "withdraw", "takedown"] }, "note": { "type": "string" } }
+    },
+    "PublicLibraryRecord": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "version", "record", "license", "contributorName", "approvedAt"],
+      "properties": {
+        "id": { "type": "string" }, "version": { "type": "integer" }, "record": { "type": "object", "additionalProperties": true },
+        "license": { "$ref": "#/$defs/PublicLicenseDeclaration" }, "contributorName": { "type": "string" }, "approvedAt": { "type": "string" }
+      }
+    },
+    "PublicLibraryQuery": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocolVersion"],
+      "properties": { "protocolVersion": { "const": "1.0" }, "searchText": { "type": "string" }, "offset": { "type": "integer" }, "limit": { "type": "integer" } }
+    },
+    "PublicLibraryPage": {
+      "type": "object", "additionalProperties": false, "required": ["protocolVersion", "records", "offset", "total", "hasMore"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" }, "records": { "type": "array", "items": { "$ref": "#/$defs/PublicLibraryRecord" } },
+        "offset": { "type": "integer" }, "total": { "type": "integer" }, "hasMore": { "type": "boolean" }
+      }
+    },
+    "DiagnosticReportCreateRequest": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocolVersion", "occurredAt", "source", "code", "exceptionType", "fingerprint", "severity", "appVersion"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" },
+        "occurredAt": { "type": "string", "minLength": 20, "maxLength": 40 },
+        "source": { "enum": ["react", "window", "promise", "startup", "qt_main", "qt_worker", "qml", "webengine", "local_agent", "cloud_api"] },
+        "code": { "type": "string", "pattern": "^[a-z0-9_]{1,80}$" },
+        "exceptionType": { "type": "string", "maxLength": 120, "pattern": "^[A-Za-z0-9_.]*$" },
+        "fingerprint": { "type": "string", "pattern": "^[0-9a-f]{8,64}$" },
+        "severity": { "enum": ["error", "fatal"] },
+        "appVersion": { "type": "string", "minLength": 1, "maxLength": 40, "pattern": "^[0-9A-Za-z._+-]+$" }
+      }
+    },
+    "DiagnosticReceipt": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocolVersion", "accepted", "reportId", "retainedUntil"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" }, "accepted": { "const": true },
+        "reportId": { "type": "string" }, "retainedUntil": { "type": "string" }
+      }
+    },
+    "UserAccount": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocolVersion", "id", "tenantId", "workspaceId", "accountStatus", "email", "displayName", "roles", "dataControls", "createdAt"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" }, "id": { "type": "string" }, "tenantId": { "type": "string" },
+        "workspaceId": { "type": "string" }, "accountStatus": { "enum": ["pending_verification", "active", "suspended"] },
+        "email": { "type": "string" }, "displayName": { "type": "string" },
+        "roles": { "type": "array", "items": { "enum": ["owner", "admin", "member"] } },
+        "dataControls": { "$ref": "#/$defs/CloudDataControls" }, "createdAt": { "type": "string" }
+      }
+    },
+    "AuthSession": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocolVersion", "accessToken", "expiresAt", "user"],
+      "properties": { "protocolVersion": { "const": "1.0" }, "accessToken": { "type": "string" }, "expiresAt": { "type": "string" }, "user": { "$ref": "#/$defs/UserAccount" } }
+    },
+    "RegistrationResult": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocolVersion", "verificationRequired", "email"],
+      "properties": { "protocolVersion": { "const": "1.0" }, "verificationRequired": { "const": true }, "email": { "type": "string" } }
+    },
+    "LibrarySyncRequest": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocolVersion", "deviceId", "baseCloudRevision", "state"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" }, "deviceId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "baseCloudRevision": { "type": "integer", "minimum": 0 }, "state": { "$ref": "#/$defs/LibraryState" }
+      }
+    },
+    "LibrarySyncResult": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocolVersion", "status", "cloudRevision", "syncedAt", "serverState"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" }, "status": { "enum": ["synced", "conflict"] },
+        "cloudRevision": { "type": "integer", "minimum": 0 }, "syncedAt": { "type": "string" },
+        "serverState": { "$ref": "#/$defs/LibraryState" }, "conflictId": { "type": "string" }
+      }
+    },
+    "ShareCreateRequest": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocolVersion", "resourceType", "resourceId", "permission"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" }, "resourceType": { "enum": ["library_state", "collection", "graph", "graph_view"] },
+        "resourceId": { "type": "string", "minLength": 1, "maxLength": 256 }, "permission": { "enum": ["viewer", "editor"] },
+        "expiresAt": { "type": "string" }
+      }
+    },
+    "ShareLink": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocolVersion", "id", "resourceType", "resourceId", "permission", "createdAt", "expiresAt", "revoked", "url"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" }, "id": { "type": "string" },
+        "resourceType": { "enum": ["library_state", "collection", "graph", "graph_view"] }, "resourceId": { "type": "string" },
+        "permission": { "enum": ["viewer", "editor"] }, "createdAt": { "type": "string" }, "expiresAt": { "type": "string" },
+        "revoked": { "type": "boolean" }, "url": { "type": "string" }
+      }
+    },
+    "AuditEvent": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "occurredAt", "actorId", "action", "resourceType", "resourceId", "requestId"],
+      "properties": {
+        "id": { "type": "string" }, "occurredAt": { "type": "string" }, "actorId": { "type": "string" },
+        "action": { "type": "string" }, "resourceType": { "type": "string" }, "resourceId": { "type": "string" },
+        "requestId": { "type": "string" }
+      }
+    },
+    "AuditEventPage": {
+      "type": "object", "additionalProperties": false, "required": ["protocolVersion", "events"],
+      "properties": { "protocolVersion": { "const": "1.0" }, "events": { "type": "array", "items": { "$ref": "#/$defs/AuditEvent" } } }
+    },
+    "TeamMember": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "email", "displayName", "role", "joinedAt"],
+      "properties": {
+        "id": { "type": "string" }, "email": { "type": "string" }, "displayName": { "type": "string" },
+        "role": { "enum": ["owner", "admin", "member"] }, "joinedAt": { "type": "string" }
+      }
+    },
+    "TeamMemberList": {
+      "type": "object", "additionalProperties": false, "required": ["protocolVersion", "tenantId", "members"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" }, "tenantId": { "type": "string" },
+        "members": { "type": "array", "items": { "$ref": "#/$defs/TeamMember" } }
+      }
+    },
+    "TeamInviteCreateRequest": {
+      "type": "object", "additionalProperties": false, "required": ["protocolVersion", "email", "role"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" }, "email": { "type": "string", "maxLength": 254 },
+        "role": { "enum": ["admin", "member"] }, "expiresInHours": { "type": "integer", "minimum": 1, "maximum": 168 }
+      }
+    },
+    "TeamInviteAcceptRequest": {
+      "type": "object", "additionalProperties": false, "required": ["protocolVersion", "token", "displayName", "password"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" }, "token": { "type": "string", "minLength": 20, "maxLength": 256 },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 120 }, "password": { "type": "string", "minLength": 12, "maxLength": 1024 }
+      }
+    },
+    "TeamInvite": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocolVersion", "id", "tenantId", "email", "role", "createdAt", "expiresAt", "accepted", "url"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" }, "id": { "type": "string" }, "tenantId": { "type": "string" },
+        "email": { "type": "string" }, "role": { "enum": ["admin", "member"] }, "createdAt": { "type": "string" },
+        "expiresAt": { "type": "string" }, "accepted": { "type": "boolean" }, "url": { "type": "string" }
+      }
+    },
+    "ResourcePermission": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "resourceType", "resourceId", "principalType", "principalId", "permission", "updatedAt"],
+      "properties": {
+        "id": { "type": "string" }, "resourceType": { "enum": ["library_state", "collection", "graph", "graph_view"] },
+        "resourceId": { "type": "string" }, "principalType": { "enum": ["user", "team"] }, "principalId": { "type": "string" },
+        "permission": { "enum": ["viewer", "editor"] }, "updatedAt": { "type": "string" }
+      }
+    },
+    "ResourcePermissionMutation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocolVersion", "resourceType", "resourceId", "principalType", "principalId", "permission"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" }, "resourceType": { "enum": ["library_state", "collection", "graph", "graph_view"] },
+        "resourceId": { "type": "string", "minLength": 1, "maxLength": 256 }, "principalType": { "enum": ["user", "team"] },
+        "principalId": { "type": "string", "minLength": 1, "maxLength": 128 }, "permission": { "enum": ["none", "viewer", "editor"] }
+      }
+    },
+    "ResourcePermissionList": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocolVersion", "resourceType", "resourceId", "permissions"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" }, "resourceType": { "enum": ["library_state", "collection", "graph", "graph_view"] },
+        "resourceId": { "type": "string" }, "permissions": { "type": "array", "items": { "$ref": "#/$defs/ResourcePermission" } }
+      }
+    },
+    "CloudGraphSyncRequest": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocolVersion", "deviceId", "baseCloudRevision", "graph"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" }, "deviceId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "baseCloudRevision": { "type": "integer", "minimum": 0 }, "graph": { "$ref": "#/$defs/GraphData" }
+      }
+    },
+    "CloudGraphSyncResult": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocolVersion", "status", "recordId", "cloudRevision", "syncedAt", "serverGraph"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" }, "status": { "enum": ["synced", "conflict"] },
+        "recordId": { "type": "string" }, "cloudRevision": { "type": "integer", "minimum": 0 },
+        "syncedAt": { "type": "string" }, "serverGraph": { "$ref": "#/$defs/GraphData" }, "conflictId": { "type": "string" }
+      }
+    },
+    "CloudGraphSummary": {
+      "type": "object", "additionalProperties": false,
+      "required": ["recordId", "cloudRevision", "updatedAt", "nodeCount", "edgeCount"],
+      "properties": {
+        "recordId": { "type": "string" }, "cloudRevision": { "type": "integer", "minimum": 0 }, "updatedAt": { "type": "string" },
+        "nodeCount": { "type": "integer", "minimum": 0 }, "edgeCount": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "CloudGraphList": {
+      "type": "object", "additionalProperties": false, "required": ["protocolVersion", "graphs"],
+      "properties": { "protocolVersion": { "const": "1.0" }, "graphs": { "type": "array", "items": { "$ref": "#/$defs/CloudGraphSummary" } } }
+    },
+    "CollaborationAnnotation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocolVersion", "id", "recordId", "targetType", "targetId", "body", "authorId", "authorDisplayName", "revision", "createdAt", "updatedAt"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" }, "id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "recordId": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "targetType": { "enum": ["graph", "node", "edge"] }, "targetId": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "body": { "type": "string", "minLength": 1, "maxLength": 4000 }, "authorId": { "type": "string" },
+        "authorDisplayName": { "type": "string" }, "revision": { "type": "integer", "minimum": 1 },
+        "createdAt": { "type": "string" }, "updatedAt": { "type": "string" }
+      }
+    },
+    "CollaborationEvent": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocolVersion", "recordId", "revision", "clientMutationId", "action", "annotationId", "actorId", "occurredAt"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" }, "recordId": { "type": "string" },
+        "revision": { "type": "integer", "minimum": 1 }, "clientMutationId": { "type": "string" },
+        "action": { "enum": ["annotation.upserted", "annotation.deleted"] }, "annotationId": { "type": "string" },
+        "annotation": { "$ref": "#/$defs/CollaborationAnnotation" }, "actorId": { "type": "string" }, "occurredAt": { "type": "string" }
+      }
+    },
+    "CollaborationSnapshot": {
+      "type": "object", "additionalProperties": false, "required": ["protocolVersion", "recordId", "revision", "canEdit", "syncEnabled", "annotations"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" }, "recordId": { "type": "string" }, "revision": { "type": "integer", "minimum": 0 },
+        "canEdit": { "type": "boolean" }, "syncEnabled": { "type": "boolean" }, "annotations": { "type": "array", "items": { "$ref": "#/$defs/CollaborationAnnotation" } }
+      }
+    },
+    "CollaborationMutationRequest": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocolVersion", "baseRevision", "clientMutationId", "action", "targetType", "targetId"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" }, "baseRevision": { "type": "integer", "minimum": 0 },
+        "clientMutationId": { "type": "string", "minLength": 1, "maxLength": 64 }, "action": { "enum": ["upsert", "delete"] },
+        "annotationId": { "type": "string", "maxLength": 64 }, "targetType": { "enum": ["graph", "node", "edge"] },
+        "targetId": { "type": "string", "minLength": 1, "maxLength": 512 }, "body": { "type": "string", "maxLength": 4000 }
+      }
+    },
+    "CollaborationMutationResult": {
+      "type": "object", "additionalProperties": false, "required": ["protocolVersion", "recordId", "revision", "event"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" }, "recordId": { "type": "string" }, "revision": { "type": "integer", "minimum": 1 },
+        "event": { "$ref": "#/$defs/CollaborationEvent" }
+      }
+    },
+    "CollaborationEventPage": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocolVersion", "recordId", "afterRevision", "currentRevision", "events", "hasMore", "resetRequired"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" }, "recordId": { "type": "string" }, "afterRevision": { "type": "integer", "minimum": 0 },
+        "currentRevision": { "type": "integer", "minimum": 0 }, "events": { "type": "array", "items": { "$ref": "#/$defs/CollaborationEvent" } },
+        "hasMore": { "type": "boolean" }, "resetRequired": { "type": "boolean" }
+      }
+    },
+    "CloudServiceMetrics": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocolVersion", "status", "uptimeSeconds", "tenantUsers", "cloudGraphs", "collaborationEvents", "tasksByStatus", "auditEvents"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" }, "status": { "enum": ["ready", "degraded"] },
+        "uptimeSeconds": { "type": "number", "minimum": 0 }, "tenantUsers": { "type": "integer", "minimum": 0 },
+        "cloudGraphs": { "type": "integer", "minimum": 0 }, "collaborationEvents": { "type": "integer", "minimum": 0 },
+        "tasksByStatus": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } },
+        "auditEvents": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "GraphData": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["protocolVersion", "schemaVersion", "recordId", "nodes", "edges", "metadata"],
+      "properties": {
+        "protocolVersion": { "const": "1.0" },
+        "schemaVersion": { "const": 1 },
+        "recordId": { "type": "string" },
+        "generatedAt": { "type": "string" },
+        "paper": { "$ref": "#/$defs/Paper" },
+        "nodes": { "type": "array", "items": { "$ref": "#/$defs/GraphNode" } },
+        "edges": { "type": "array", "items": { "$ref": "#/$defs/GraphEdge" } },
+        "metadata": { "type": "object", "additionalProperties": true },
+        "viewState": { "$ref": "#/$defs/GraphViewState" }
+      }
+    }
+  }
+}

@@ -1,0 +1,103 @@
+name: Phase 2 production baseline
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run phase2:web:check
+      - run: npm audit --audit-level=high
+
+  cloud-api:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/cloud_api/requirements-dev.txt
+      - run: python -m pip install --requirement services/cloud_api/requirements-dev.txt
+      - run: python -m pytest tests/test_cloud_api_service.py tests/test_cloud_api_http.py tests/test_cloud_api_backup.py tests/test_cloud_api_runtime.py -q
+      - run: python -m pip_audit --requirement services/cloud_api/requirements.in
+
+  compliance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/cloud_api/requirements.in
+      - run: npm ci
+      - run: python -m pip install --requirement services/cloud_api/requirements.in
+      - run: python tools/license_audit/generate_compliance.py --output-dir build/compliance --strict
+      - uses: actions/upload-artifact@v4
+        with:
+          name: source-sbom-and-third-party-notices
+          path: build/compliance
+          if-no-files-found: error
+
+  deployment-images:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Validate Prometheus rules
+        run: |
+          docker run --rm \
+            --entrypoint /bin/promtool \
+            --volume "$PWD/deploy/monitoring:/etc/prometheus:ro" \
+            prom/prometheus:v3.5.0 \
+            check rules /etc/prometheus/alerts.yml
+
+      - name: Validate Prometheus config
+        run: |
+          SECRET_DIR="${RUNNER_TEMP}/omnilit-prometheus-secrets"
+          mkdir -p "${SECRET_DIR}"
+          printf '%s\n' 'ci-placeholder-token' > "${SECRET_DIR}/cloud_metrics_token"
+          chmod 600 "${SECRET_DIR}/cloud_metrics_token"
+
+          docker run --rm \
+            --entrypoint /bin/promtool \
+            --volume "$PWD/deploy/monitoring:/etc/prometheus:ro" \
+            --volume "${SECRET_DIR}/cloud_metrics_token:/run/secrets/cloud_metrics_token:ro" \
+            prom/prometheus:v3.5.0 \
+            check config /etc/prometheus/prometheus.yml
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/cloud-api.Dockerfile
+          push: false
+          tags: omnilit-cloud-api:ci
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/web.Dockerfile
+          push: false
+          tags: omnilit-web:ci

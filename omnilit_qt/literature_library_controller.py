@@ -15,23 +15,16 @@ from PySide6.QtCore import QObject, Property, QUrl, Signal, Slot
 from .app_controller import AppController
 from .background_tasks import ManagedWorker, shutdown_workers
 from .knowledge_graph_core import _authors
+from .literature_library_shared import (
+    LEVEL_ORDER, LIBRARY_CACHE_VERSION, LibraryStateConflict, LibraryStateStore as SharedLibraryStateStore,
+    has_extraction as shared_has_extraction, record_search_text, relevance_rank,
+    relevance_score, sort_library_records, year_value,
+)
 from .i18n import LocaleController
 from .paths import AppPaths
 from .pymupdf_tools import silence_mupdf_diagnostics
 from .services import AccountStore, as_float, default_download_dir, import_resource_module, normalize_download_form_config
 
-
-LEVEL_ORDER: dict[str, int] = {
-    "unmatched": -1,
-    "weak": 1,
-    "medium": 2,
-    "strong": 3,
-    "keyword_only": 0,
-    "loose": 1,
-    "balanced": 2,
-    "strict": 3,
-    "very_strict": 4,
-}
 
 LEVEL_DIRS: dict[str, str] = {
     "keyword_only": "keyword_only",
@@ -55,7 +48,6 @@ KEYWORD_GROUP_ALIASES: dict[str, str] = {
 
 BROAD_KEYWORD_GROUPS = {"article", "study", "result", "method", "battery"}
 
-LIBRARY_CACHE_VERSION = 2
 VISIBLE_RECORD_BATCH_SIZE = 300
 
 JOURNAL_TYPE_LABELS: dict[str, str] = {
@@ -68,17 +60,6 @@ JOURNAL_TYPE_LABELS: dict[str, str] = {
     "conference": "会议/论文集",
     "unknown": "未识别",
 }
-
-DEFAULT_FAVORITE_PROJECTS: list[dict[str, Any]] = [
-    {"id": "to_read", "name": "待读精读", "built_in": True},
-    {"id": "core", "name": "核心文献", "built_in": True},
-    {"id": "review", "name": "综述与背景", "built_in": True},
-    {"id": "method", "name": "方法/模型", "built_in": True},
-    {"id": "data", "name": "数据集/实验", "built_in": True},
-    {"id": "writing", "name": "写作引用", "built_in": True},
-    {"id": "read_archive", "name": "已读归档", "built_in": True},
-]
-
 
 def classify_journal_type(record: dict[str, Any]) -> tuple[str, str]:
     """Classify a literature record by journal/source type."""
@@ -112,86 +93,7 @@ def classify_journal_type(record: dict[str, Any]) -> tuple[str, str]:
     return "unknown", ""
 
 
-class LibraryStateStore:
-    """Small JSON state store for library favorites and compare groups."""
-
-    def __init__(self, path: Path):
-        self.path = path
-
-    @staticmethod
-    def default_state() -> dict[str, Any]:
-        return {
-            "schema_version": 1,
-            "projects": [dict(project) for project in DEFAULT_FAVORITE_PROJECTS],
-            "favorites": {},
-            "compare": {"active": []},
-        }
-
-    def load(self) -> dict[str, Any]:
-        if not self.path.exists():
-            state = self.default_state()
-            self.save(state)
-            return state
-        try:
-            with self.path.open("r", encoding="utf-8") as fin:
-                state = json.load(fin)
-            if not isinstance(state, dict):
-                raise ValueError("library state must be a JSON object")
-        except Exception:
-            backup = self.path.with_suffix(self.path.suffix + ".bak")
-            if backup.exists():
-                backup = self.path.with_suffix(self.path.suffix + f".{datetime.now().strftime('%Y%m%d%H%M%S')}.bak")
-            try:
-                shutil.copy2(self.path, backup)
-            except OSError:
-                pass
-            state = self.default_state()
-            self.save(state)
-            return state
-        return self._normalized_state(state)
-
-    def save(self, state: dict[str, Any]) -> None:
-        normalized = self._normalized_state(state)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = self.path.with_name(f"{self.path.name}.tmp")
-        with tmp_path.open("w", encoding="utf-8") as fout:
-            json.dump(normalized, fout, ensure_ascii=False, indent=2)
-        os.replace(tmp_path, self.path)
-
-    @classmethod
-    def _normalized_state(cls, state: dict[str, Any]) -> dict[str, Any]:
-        normalized = cls.default_state()
-        projects = state.get("projects")
-        if isinstance(projects, list):
-            seen: set[str] = set()
-            merged: list[dict[str, Any]] = []
-            for project in [*DEFAULT_FAVORITE_PROJECTS, *projects]:
-                if not isinstance(project, dict):
-                    continue
-                project_id = str(project.get("id") or "").strip()
-                name = str(project.get("name") or "").strip()
-                if not project_id or not name or project_id in seen:
-                    continue
-                seen.add(project_id)
-                merged.append({"id": project_id, "name": name, "built_in": bool(project.get("built_in"))})
-            normalized["projects"] = merged
-        favorites = state.get("favorites")
-        if isinstance(favorites, dict):
-            valid_project_ids = {str(project["id"]) for project in normalized["projects"]}
-            cleaned: dict[str, list[str]] = {}
-            for record_id, project_ids in favorites.items():
-                values = project_ids if isinstance(project_ids, list) else []
-                ids = [str(item) for item in values if str(item) in valid_project_ids]
-                unique_ids = list(dict.fromkeys(ids))
-                if unique_ids:
-                    cleaned[str(record_id)] = unique_ids
-            normalized["favorites"] = cleaned
-        compare = state.get("compare")
-        if isinstance(compare, dict):
-            active = compare.get("active")
-            if isinstance(active, list):
-                normalized["compare"] = {"active": list(dict.fromkeys(str(item) for item in active if str(item)))[:4]}
-        return normalized
+LibraryStateStore = SharedLibraryStateStore
 
 
 class LiteratureLibraryController(QObject):
@@ -217,7 +119,7 @@ class LiteratureLibraryController(QObject):
         self._project_id_filter = "all"
         self._keyword_group_filter: set[str] = set()
         self._keyword_group_options: list[dict[str, Any]] = []
-        self._state_store = LibraryStateStore(self._output_root() / "library_state.json")
+        self._state_store = SharedLibraryStateStore(self._output_root() / "library_state.json")
         self._library_state = self._state_store.load()
         self._status = "文献库尚未加载。" if locale.language == "zh" else "Library has not been loaded."
         self._loading = False
@@ -265,13 +167,20 @@ class LiteratureLibraryController(QObject):
     def _ensure_state_store(self) -> None:
         state_path = self._output_root() / "library_state.json"
         if self._state_store.path != state_path:
-            self._state_store = LibraryStateStore(state_path)
+            self._state_store = SharedLibraryStateStore(state_path)
             self._library_state = self._state_store.load()
 
-    def _save_library_state(self) -> None:
+    def _mutate_library_state(self, action: str, **values: str) -> tuple[dict[str, Any], bool]:
         self._ensure_state_store()
-        self._state_store.save(self._library_state)
-        self._library_state = self._state_store.load()
+        try:
+            state, changed = self._state_store.mutate(action, expected_revision=int(self._library_state.get("revision") or 0), **values)
+        except (LibraryStateConflict, KeyError, ValueError, TimeoutError) as exc:
+            self._library_state = self._state_store.load()
+            self._status = f"文献集合状态已变化，请重试：{exc}" if self.locale.language == "zh" else f"Library collection state changed; retry: {exc}"
+            self.changed.emit()
+            return self._library_state, False
+        self._library_state = state
+        return state, changed
 
     @property
     def _meta_path(self) -> Path:
@@ -325,8 +234,7 @@ class LiteratureLibraryController(QObject):
             return False
         if self._has_extraction_cache.get(key):
             return True
-        path = self._extraction_index_path(key)
-        exists = path.exists() and self._is_usable_extraction_index(path)
+        exists = shared_has_extraction(self.paths.data_root, key)
         if exists:
             self._has_extraction_cache[key] = True
         return exists
@@ -607,17 +515,6 @@ class LiteratureLibraryController(QObject):
             return f"{float(value):.1f}"
         except (TypeError, ValueError):
             return ""
-
-    @staticmethod
-    def _project_id_from_name(name: str, existing: set[str]) -> str:
-        base = re.sub(r"[^0-9a-zA-Z_\-\u4e00-\u9fff]+", "_", str(name or "").strip()).strip("_")
-        base = base or "project"
-        candidate = base
-        index = 2
-        while candidate in existing:
-            candidate = f"{base}_{index}"
-            index += 1
-        return candidate
 
     def _favorite_project_ids(self, record_id: str) -> list[str]:
         favorites = self._library_state.get("favorites") if isinstance(self._library_state, dict) else {}
@@ -1265,22 +1162,7 @@ class LiteratureLibraryController(QObject):
 
     @staticmethod
     def _record_search_text(record: dict[str, Any]) -> str:
-        return " ".join(
-            str(record.get(name) or "")
-            for name in (
-                "title",
-                "abstract",
-                "contentSummary",
-                "keywordsText",
-                "authorsText",
-                "doi",
-                "normalized_doi",
-                "keyword",
-                "journalTitle",
-                "journalName",
-                "journalTypeLabel",
-            )
-        ).casefold()
+        return record_search_text(record)
 
     def _reset_visible_limit(self) -> None:
         self._visible_limit = VISIBLE_RECORD_BATCH_SIZE
@@ -1353,44 +1235,18 @@ class LiteratureLibraryController(QObject):
 
     @staticmethod
     def _year_value(record: dict[str, Any]) -> int:
-        for value in (record.get("year"), record.get("publication_year"), record.get("publicationDate"), record.get("publication_date")):
-            match = re.search(r"(?:19|20)\d{2}", str(value or ""))
-            if match:
-                return int(match.group(0))
-        return 0
+        return year_value(record)
 
     @staticmethod
     def _relevance_rank(record: dict[str, Any]) -> int:
-        return LEVEL_ORDER.get(str(record.get("relevance_level") or "unmatched"), -1)
+        return relevance_rank(record)
 
     @staticmethod
     def _relevance_score(record: dict[str, Any]) -> float:
-        try:
-            return float(record.get("relevance_score") or 0)
-        except (TypeError, ValueError):
-            return 0.0
+        return relevance_score(record)
 
     def _sort_records(self, records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        mode = self._sort_mode or "relevance_desc"
-        if mode == "relevance_asc":
-            return sorted(records, key=lambda item: (self._relevance_rank(item), self._relevance_score(item), self._year_value(item), str(item.get("title") or "").casefold()))
-        if mode == "year_desc":
-            return sorted(records, key=lambda item: (self._year_value(item), self._relevance_rank(item), self._relevance_score(item), str(item.get("title") or "").casefold()), reverse=True)
-        if mode == "year_asc":
-            return sorted(records, key=lambda item: (self._year_value(item) or 9999, str(item.get("title") or "").casefold()))
-        if mode == "downloaded_first":
-            return sorted(
-                records,
-                key=lambda item: (bool(item.get("localPdfPath")), self._relevance_rank(item), self._relevance_score(item), self._year_value(item)),
-                reverse=True,
-            )
-        if mode == "title_asc":
-            return sorted(records, key=lambda item: str(item.get("title") or "").casefold())
-        return sorted(
-            records,
-            key=lambda item: (self._relevance_rank(item), self._relevance_score(item), self._year_value(item), str(item.get("title") or "").casefold()),
-            reverse=True,
-        )
+        return sort_library_records(records, self._sort_mode or "relevance_desc")
 
     def _apply_filters(self) -> None:
         query = self._query.casefold().strip()
@@ -1821,76 +1677,43 @@ class LiteratureLibraryController(QObject):
 
     @Slot(str, result=str)
     def createFavoriteProject(self, name: str) -> str:
-        self._ensure_state_store()
         clean_name = str(name or "").strip()
         if not clean_name:
             return ""
-        projects = self._library_state.setdefault("projects", [])
-        existing = {str(project.get("id") or "") for project in projects if isinstance(project, dict)}
-        project_id = self._project_id_from_name(clean_name, existing)
-        projects.append({"id": project_id, "name": clean_name, "built_in": False})
-        self._save_library_state()
+        before = {str(project.get("id") or "") for project in self._library_state.get("projects", []) if isinstance(project, dict)}
+        state, changed = self._mutate_library_state("create_collection", name=clean_name)
+        if not changed:
+            return ""
+        project_id = next((str(project.get("id") or "") for project in state["projects"] if str(project.get("id") or "") not in before), "")
         self.changed.emit()
         return project_id
 
     @Slot(str, str, result=bool)
     def renameFavoriteProject(self, project_id: str, name: str) -> bool:
-        self._ensure_state_store()
         clean_name = str(name or "").strip()
         if not clean_name:
             return False
-        for project in self._library_state.get("projects", []):
-            if isinstance(project, dict) and str(project.get("id") or "") == str(project_id):
-                project["name"] = clean_name
-                self._save_library_state()
-                self.changed.emit()
-                return True
-        return False
+        _state, changed = self._mutate_library_state("rename_collection", collection_id=str(project_id), name=clean_name)
+        if changed: self.changed.emit()
+        return changed
 
     @Slot(str, result=bool)
     def deleteFavoriteProject(self, project_id: str) -> bool:
-        self._ensure_state_store()
         project_id = str(project_id or "")
-        projects = [project for project in self._library_state.get("projects", []) if isinstance(project, dict)]
-        target = next((project for project in projects if str(project.get("id") or "") == project_id), None)
-        if not target or bool(target.get("built_in")):
-            return False
-        self._library_state["projects"] = [project for project in projects if str(project.get("id") or "") != project_id]
-        favorites = self._library_state.setdefault("favorites", {})
-        for record_id, project_ids in list(favorites.items()):
-            if not isinstance(project_ids, list):
-                continue
-            remaining = [str(item) for item in project_ids if str(item) != project_id]
-            if remaining:
-                favorites[record_id] = remaining
-            else:
-                favorites.pop(record_id, None)
+        _state, changed = self._mutate_library_state("delete_collection", collection_id=project_id)
+        if not changed: return False
         if self._project_id_filter == project_id:
             self._project_id_filter = "all"
-        self._save_library_state()
         self._apply_filters()
         self.changed.emit()
         return True
 
     @Slot(str, str, result=bool)
     def toggleFavorite(self, record_id: str, project_id: str) -> bool:
-        self._ensure_state_store()
         record_id = str(record_id or "")
         project_id = str(project_id or "")
-        valid_project_ids = {str(project.get("id") or "") for project in self.favoriteProjects}
-        if not record_id or project_id not in valid_project_ids:
-            return False
-        favorites = self._library_state.setdefault("favorites", {})
-        project_ids = [str(item) for item in favorites.get(record_id, []) if str(item)]
-        if project_id in project_ids:
-            project_ids = [item for item in project_ids if item != project_id]
-        else:
-            project_ids.append(project_id)
-        if project_ids:
-            favorites[record_id] = list(dict.fromkeys(project_ids))
-        else:
-            favorites.pop(record_id, None)
-        self._save_library_state()
+        _state, changed = self._mutate_library_state("toggle_collection_record", collection_id=project_id, record_id=record_id)
+        if not changed: return False
         self._apply_filters()
         self.changed.emit()
         return True
@@ -1906,41 +1729,26 @@ class LiteratureLibraryController(QObject):
 
     @Slot(str, result=bool)
     def toggleCompare(self, record_id: str) -> bool:
-        self._ensure_state_store()
         record_id = str(record_id or "")
-        if not record_id:
-            return False
-        compare = self._library_state.setdefault("compare", {"active": []})
-        active = [str(item) for item in compare.get("active", []) if str(item)]
-        if record_id in active:
-            active = [item for item in active if item != record_id]
-        elif len(active) < 4:
-            active.append(record_id)
-        else:
-            return False
-        compare["active"] = active
-        self._save_library_state()
+        _state, changed = self._mutate_library_state("toggle_compare_record", record_id=record_id)
+        if not changed: return False
         self._apply_filters()
         self.changed.emit()
         return True
 
     @Slot(str, result=bool)
     def removeCompare(self, record_id: str) -> bool:
-        self._ensure_state_store()
         record_id = str(record_id or "")
-        compare = self._library_state.setdefault("compare", {"active": []})
-        active = [str(item) for item in compare.get("active", []) if str(item) and str(item) != record_id]
-        compare["active"] = active
-        self._save_library_state()
+        _state, changed = self._mutate_library_state("remove_compare_record", record_id=record_id)
+        if not changed: return False
         self._apply_filters()
         self.changed.emit()
         return True
 
     @Slot(result=bool)
     def clearCompare(self) -> bool:
-        self._ensure_state_store()
-        self._library_state.setdefault("compare", {})["active"] = []
-        self._save_library_state()
+        _state, changed = self._mutate_library_state("clear_compare")
+        if not changed: return False
         self._apply_filters()
         self.changed.emit()
         return True

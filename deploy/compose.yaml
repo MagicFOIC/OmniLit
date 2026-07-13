@@ -1,0 +1,210 @@
+name: omnilit
+
+services:
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    depends_on:
+      web:
+        condition: service_healthy
+      cloud-api:
+        condition: service_healthy
+    environment:
+      OMNILIT_DOMAIN: ${OMNILIT_DOMAIN:?set OMNILIT_DOMAIN}
+      OMNILIT_ACME_EMAIL: ${OMNILIT_ACME_EMAIL:?set OMNILIT_ACME_EMAIL}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: [no-new-privileges:true]
+
+  web:
+    image: omnilit/web:${OMNILIT_APP_VERSION:-0.1.0}
+    build:
+      context: ..
+      dockerfile: deploy/web.Dockerfile
+      args:
+        VITE_CLOUD_API_URL: /
+        VITE_TURNSTILE_SITE_KEY: ${OMNILIT_TURNSTILE_SITE_KEY:?set Turnstile site key}
+        VITE_APP_VERSION: ${OMNILIT_APP_VERSION:-0.1.0}
+    restart: unless-stopped
+    expose: ["8080"]
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+      - /var/cache/nginx:size=16m,mode=0755
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
+  cloud-api:
+    image: omnilit/cloud-api:${OMNILIT_APP_VERSION:-0.1.0}
+    build:
+      context: ..
+      dockerfile: deploy/cloud-api.Dockerfile
+      args:
+        OMNILIT_APP_VERSION: ${OMNILIT_APP_VERSION:-0.1.0}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      clamav:
+        condition: service_healthy
+    environment:
+      OMNILIT_CLOUD_HOST: 0.0.0.0
+      OMNILIT_APP_VERSION: ${OMNILIT_APP_VERSION:-0.1.0}
+      OMNILIT_CLOUD_PORT: 8787
+      OMNILIT_CLOUD_TLS_TERMINATED: "1"
+      OMNILIT_CLOUD_ALLOWED_ORIGINS: https://${OMNILIT_DOMAIN:?set OMNILIT_DOMAIN}
+      OMNILIT_CLOUD_PUBLIC_BASE_URL: https://${OMNILIT_DOMAIN:?set OMNILIT_DOMAIN}
+      OMNILIT_POSTGRES_HOST: postgres
+      OMNILIT_POSTGRES_PORT: 5432
+      OMNILIT_POSTGRES_DATABASE: ${OMNILIT_POSTGRES_DATABASE:-omnilit}
+      OMNILIT_POSTGRES_USER: ${OMNILIT_POSTGRES_USER:-omnilit}
+      OMNILIT_POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      OMNILIT_CLOUD_ENCRYPTION_KEY_B64_FILE: /run/secrets/cloud_data_key
+      OMNILIT_CLOUD_METRICS_TOKEN_FILE: /run/secrets/cloud_metrics_token
+      OMNILIT_PRIVATE_OBJECT_DIR: /var/lib/omnilit/private
+      OMNILIT_PUBLIC_OBJECT_DIR: /var/lib/omnilit/public
+      OMNILIT_QUARANTINE_OBJECT_DIR: /var/lib/omnilit/quarantine
+      OMNILIT_CLAMAV_HOST: clamav
+      OMNILIT_CLAMAV_PORT: 3310
+      OMNILIT_DEFAULT_QUOTA_BYTES: ${OMNILIT_DEFAULT_QUOTA_BYTES:-5368709120}
+      OMNILIT_PUBLIC_MAX_FILE_BYTES: ${OMNILIT_PUBLIC_MAX_FILE_BYTES:-209715200}
+      OMNILIT_TURNSTILE_SITE_KEY: ${OMNILIT_TURNSTILE_SITE_KEY:?set Turnstile site key}
+      OMNILIT_TURNSTILE_SECRET_FILE: /run/secrets/turnstile_secret
+      OMNILIT_REQUIRE_EMAIL_VERIFICATION: "1"
+      OMNILIT_SMTP_HOST: ${OMNILIT_SMTP_HOST:?set SMTP host}
+      OMNILIT_SMTP_PORT: ${OMNILIT_SMTP_PORT:-587}
+      OMNILIT_SMTP_USER: ${OMNILIT_SMTP_USER:?set SMTP user}
+      OMNILIT_SMTP_PASSWORD_FILE: /run/secrets/smtp_password
+      OMNILIT_SMTP_FROM: ${OMNILIT_SMTP_FROM:?set SMTP from address}
+    secrets:
+      - postgres_password
+      - cloud_data_key
+      - cloud_metrics_token
+      - turnstile_secret
+      - smtp_password
+    volumes:
+      - private-objects:/var/lib/omnilit/private
+      - public-objects:/var/lib/omnilit/public
+      - quarantine-objects:/var/lib/omnilit/quarantine
+    expose: ["8787"]
+    read_only: true
+    tmpfs: [/tmp:size=128m,mode=1777]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
+  postgres:
+    image: postgres:16.9-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${OMNILIT_POSTGRES_DATABASE:-omnilit}
+      POSTGRES_USER: ${OMNILIT_POSTGRES_USER:-omnilit}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets: [postgres_password]
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    expose: ["5432"]
+    security_opt: [no-new-privileges:true]
+
+  clamav:
+    image: clamav/clamav:1.4
+    restart: unless-stopped
+    volumes:
+      - clamav-data:/var/lib/clamav
+    expose: ["3310"]
+    healthcheck:
+      test: [CMD-SHELL, "printf 'PING\n' | nc 127.0.0.1 3310 | grep -q PONG"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 90s
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
+  backup:
+    image: omnilit/backup:${OMNILIT_APP_VERSION:-0.1.0}
+    build:
+      context: ..
+      dockerfile: deploy/backup.Dockerfile
+      args:
+        OMNILIT_APP_VERSION: ${OMNILIT_APP_VERSION:-0.1.0}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: ${OMNILIT_POSTGRES_DATABASE:-omnilit}
+      PGUSER: ${OMNILIT_POSTGRES_USER:-omnilit}
+      PGPASSWORD_FILE: /run/secrets/postgres_password
+      RESTIC_PASSWORD_FILE: /run/secrets/restic_password
+      AWS_ACCESS_KEY_ID_FILE: /run/secrets/s3_access_key
+      AWS_SECRET_ACCESS_KEY_FILE: /run/secrets/s3_secret_key
+      OMNILIT_S3_REPOSITORY: ${OMNILIT_S3_REPOSITORY:?set restic S3 repository}
+      OMNILIT_BACKUP_INTERVAL_SECONDS: ${OMNILIT_BACKUP_INTERVAL_SECONDS:-86400}
+      OMNILIT_BACKUP_KEEP_DAILY: ${OMNILIT_BACKUP_KEEP_DAILY:-14}
+    secrets:
+      - postgres_password
+      - restic_password
+      - s3_access_key
+      - s3_secret_key
+    volumes:
+      - private-objects:/objects/private:ro
+      - public-objects:/objects/public:ro
+      - backup-data:/backups
+    read_only: true
+    tmpfs: [/tmp:size=256m,mode=1777]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    profiles: [monitoring]
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+    secrets: [cloud_metrics_token]
+    ports:
+      - "127.0.0.1:${OMNILIT_PROMETHEUS_PORT:-9090}:9090"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
+secrets:
+  postgres_password: { file: "${OMNILIT_POSTGRES_PASSWORD_FILE:?set PostgreSQL password file}" }
+  cloud_data_key: { file: "${OMNILIT_CLOUD_DATA_KEY_FILE:?set cloud data key file}" }
+  cloud_metrics_token: { file: "${OMNILIT_CLOUD_METRICS_TOKEN_FILE:?set metrics token file}" }
+  turnstile_secret: { file: "${OMNILIT_TURNSTILE_SECRET_FILE:?set Turnstile secret file}" }
+  smtp_password: { file: "${OMNILIT_SMTP_PASSWORD_FILE:?set SMTP password file}" }
+  restic_password: { file: "${OMNILIT_RESTIC_PASSWORD_FILE:?set restic password file}" }
+  s3_access_key: { file: "${OMNILIT_S3_ACCESS_KEY_FILE:?set S3 access key file}" }
+  s3_secret_key: { file: "${OMNILIT_S3_SECRET_KEY_FILE:?set S3 secret key file}" }
+
+volumes:
+  caddy-data:
+  caddy-config:
+  postgres-data:
+  private-objects:
+  public-objects:
+  quarantine-objects:
+  backup-data:
+  clamav-data:
+  prometheus-data:

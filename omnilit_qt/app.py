@@ -24,11 +24,14 @@ from .controllers import (
     UpdateController,
     WordCloudController,
 )
+from .desktop_web_controller import DesktopWebController, initialize_qt_webengine
 from .i18n import LocaleController
+from .local_agent_manager import LocalAgentManager
 from .paths import AppPaths
 from .pymupdf_tools import silence_mupdf_diagnostics
 from .services import AccountStore
 from .startup_diagnostics import write_startup_log
+from .version import APP_VERSION
 
 
 def _shutdown_background_tasks(*controllers, timeout: float = 15.0) -> bool:
@@ -78,13 +81,17 @@ def _schedule_window_frame_center(window) -> None:
 def run() -> int:
     """启动 Qt/QML 桌面应用。参数：无。返回值：进程退出码。"""
     silence_mupdf_diagnostics()
+    webengine_ready = initialize_qt_webengine()
     QQuickStyle.setStyle("Fusion")
     app = QApplication(sys.argv)
     app.setApplicationName("OmniLit")
+    app.setApplicationVersion(APP_VERSION)
     app.setOrganizationName("magicfoic")
     QFontDatabase.addApplicationFont(":/fonts/Microsoft YaHei UI")
 
     paths = AppPaths.discover()
+    local_agent = LocalAgentManager(paths, web_root=paths.resource("apps", "web", "dist"))
+    desktop_web = DesktopWebController(paths, local_agent, webengine_ready=webengine_ready)
     copied = paths.migrate_legacy_data()
     store = AccountStore(paths.config("accounts.sqlite3"))
     locale = LocaleController(store)
@@ -110,6 +117,7 @@ def run() -> int:
     auth.authenticated.connect(updater.check)
     auth.authenticated.connect(lambda: onboarding.onAuthenticated(auth.username))
     app.aboutToQuit.connect(lambda: _shutdown_background_tasks(download, literature_library, pdf_extraction, knowledge_graph, word_cloud, topic_map, translation, selection_translation, updater))
+    app.aboutToQuit.connect(local_agent.shutdown)
     QTimer.singleShot(250, literature_library.preload)
 
     icon_path = paths.resource("assets", "omnilit_logo.ico")
@@ -133,6 +141,7 @@ def run() -> int:
         "selectionTranslationController": selection_translation,
         "updateController": updater,
         "onboardingController": onboarding,
+        "desktopWebController": desktop_web,
         "localeController": locale,
     }.items():
         engine.rootContext().setContextProperty(name, value)
@@ -158,6 +167,13 @@ def run() -> int:
         )
         return 1
     window = engine.rootObjects()[0]
+    local_agent.start()
+    desktop_web.refresh()
+    local_agent_monitor = QTimer(app)
+    local_agent_monitor.setInterval(5_000)
+    local_agent_monitor.timeout.connect(local_agent.ensure_running)
+    local_agent_monitor.timeout.connect(desktop_web.refresh)
+    local_agent_monitor.start()
     _center_window_on_cursor_screen(app, window)
     auth.authenticated.connect(lambda: _center_window_frame_on_current_screen(window))
     auth.loggedOut.connect(lambda: _schedule_window_frame_center(window))

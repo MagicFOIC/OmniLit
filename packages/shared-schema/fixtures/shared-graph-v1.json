@@ -1,0 +1,132 @@
+{
+  "protocolVersion": "1.0",
+  "schemaVersion": 1,
+  "recordId": "paper-001",
+  "generatedAt": "2026-07-12T12:00:00+00:00",
+  "paper": {
+    "id": "paper-001",
+    "title": "A Shared Graph Protocol",
+    "year": 2026,
+    "authors": ["Ada Example"]
+  },
+  "nodes": [
+    {
+      "id": "paper:paper-001",
+      "type": "paper",
+      "label": "A Shared Graph Protocol",
+      "attributes": { "recordId": "paper-001" },
+      "metrics": { "importance": 1.0, "confidence": 1.0 },
+      "evidence": []
+    },
+    {
+      "id": "method:paper-001:1",
+      "type": "method",
+      "label": "Contract testing",
+      "attributes": { "section": "Methods" },
+      "metrics": { "importance": 0.7, "confidence": 0.9 },
+      "evidence": [
+        {
+          "page": 2,
+          "bbox": [10.0, 20.0, 40.0, 60.0],
+          "elementId": "paragraph-4",
+          "excerpt": "We use contract testing.",
+          "recordId": "paper-001"
+        }
+      ]
+    },
+    {
+      "id": "author:ada-example",
+      "type": "author",
+      "label": "Ada Example",
+      "attributes": { "orcid": "0000-0000-0000-0001" },
+      "metrics": { "importance": 0.8, "confidence": 1.0 },
+      "evidence": []
+    },
+    {
+      "id": "dataset:paper-001:1",
+      "type": "dataset",
+      "label": "Shared protocol fixture",
+      "attributes": { "section": "Evaluation" },
+      "metrics": { "importance": 0.65, "confidence": 0.82 },
+      "evidence": []
+    },
+    {
+      "id": "result:paper-001:1",
+      "type": "result",
+      "label": "Cross-language contracts remain consistent",
+      "attributes": { "section": "Results", "needsReview": false },
+      "metrics": { "importance": 0.75, "confidence": 0.88 },
+      "evidence": [
+        {
+          "page": 4,
+          "bbox": [12.0, 18.0, 48.0, 30.0],
+          "elementId": "result-1",
+          "excerpt": "The generated models passed the same contract fixture.",
+          "recordId": "paper-001"
+        }
+      ]
+    },
+    {
+      "id": "citation:contract-systems",
+      "type": "citation",
+      "label": "Contract-First Systems",
+      "attributes": { "recordId": "paper-002", "title": "Contract-First Systems", "authors": ["Lin Example"], "year": 2024, "venue": "Software Architecture Review" },
+      "metrics": { "importance": 0.72, "confidence": 0.94 },
+      "evidence": []
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge:uses-method",
+      "source": "paper:paper-001",
+      "target": "method:paper-001:1",
+      "type": "USES_METHOD",
+      "directed": true,
+      "weight": 0.9,
+      "attributes": {},
+      "evidence": []
+    },
+    {
+      "id": "edge:author-of",
+      "source": "author:ada-example",
+      "target": "paper:paper-001",
+      "type": "AUTHOR_OF",
+      "directed": true,
+      "weight": 1.0,
+      "attributes": {},
+      "evidence": []
+    },
+    {
+      "id": "edge:uses-dataset",
+      "source": "method:paper-001:1",
+      "target": "dataset:paper-001:1",
+      "type": "USES_DATASET",
+      "directed": true,
+      "weight": 0.82,
+      "attributes": {},
+      "evidence": []
+    },
+    {
+      "id": "edge:reports-result",
+      "source": "paper:paper-001",
+      "target": "result:paper-001:1",
+      "type": "REPORTS_RESULT",
+      "directed": true,
+      "weight": 0.88,
+      "attributes": {},
+      "evidence": []
+    },
+    {
+      "id": "edge:cites-contract-systems",
+      "source": "paper:paper-001",
+      "target": "citation:contract-systems",
+      "type": "CITES",
+      "directed": true,
+      "weight": 0.94,
+      "attributes": {},
+      "evidence": []
+    }
+  ],
+  "metadata": { "ontologyVersion": 1, "fixture": true },
+  "futureCompatibleField": { "ignoredByV1Readers": true }
+}

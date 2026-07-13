@@ -1,0 +1,65 @@
+groups:
+  - name: omnilit-cloud-api
+    rules:
+      - alert: OmniLitCloudApiUnavailable
+        expr: up{job="omnilit-cloud-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: OmniLit Cloud API metrics target is unavailable
+          runbook: docs/architecture/production-deployment.md
+
+      - alert: OmniLitCloudApiNotReady
+        expr: omnilit_cloud_ready == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: OmniLit Cloud API is alive but not ready
+          runbook: docs/architecture/production-deployment.md
+
+      - alert: OmniLitCloudApiHighErrorRate
+        expr: sum(rate(omnilit_cloud_http_requests_total{status=~"5.."}[5m])) / clamp_min(sum(rate(omnilit_cloud_http_requests_total[5m])), 0.001) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: OmniLit Cloud API 5xx rate is above 5 percent
+          runbook: docs/architecture/production-deployment.md
+
+      - alert: OmniLitCloudApiHighLatency
+        expr: histogram_quantile(0.95, sum by (le) (rate(omnilit_cloud_http_request_duration_seconds_bucket[10m]))) > 2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: OmniLit Cloud API p95 latency is above two seconds
+          runbook: docs/architecture/production-deployment.md
+
+      - alert: OmniLitCloudBackupFailing
+        expr: omnilit_cloud_backups_enabled == 1 and omnilit_cloud_backup_consecutive_failures > 0
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: OmniLit encrypted backups are failing
+          runbook: docs/architecture/cloud-backup-recovery.md
+
+      - alert: OmniLitCloudBackupStale
+        expr: omnilit_cloud_backups_enabled == 1 and (omnilit_cloud_backup_last_success_unixtime == 0 or time() - omnilit_cloud_backup_last_success_unixtime > 90000)
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: OmniLit has no successful encrypted backup in 25 hours
+          runbook: docs/architecture/cloud-backup-recovery.md
+
+      - alert: OmniLitCollaborationStreamsSaturated
+        expr: omnilit_cloud_collaboration_stream_capacity > 0 and omnilit_cloud_collaboration_streams / omnilit_cloud_collaboration_stream_capacity > 0.9
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: OmniLit collaboration stream capacity is above 90 percent
+          runbook: docs/architecture/graph-collaboration.md

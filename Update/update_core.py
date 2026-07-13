@@ -21,7 +21,10 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 NETWORK_TIMEOUT_SECONDS = 15
 CHUNK_SIZE = 1024 * 256
+MAX_MANIFEST_BYTES = 1024 * 1024
+MAX_UPDATE_BYTES = 2 * 1024 * 1024 * 1024
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
+VERSION_PATTERN = re.compile(r"[0-9]+(?:\.[0-9]+){0,3}")
 MANIFEST_SIGNATURE_ALGORITHM = "ed25519"
 TRUSTED_MANIFEST_PUBLIC_KEYS = {
     "omnilit-release-2026-01": "94qWrgdq+X8jvd81rRCztoPJ97Umclz8P4iN2XhhEuM=",
@@ -93,7 +96,7 @@ class UpdateManifest:
     def from_dict(cls, data: dict) -> "UpdateManifest":
         """解析清单。参数：JSON 字典。返回值：清单对象。"""
         signature_key_id = verify_manifest_signature(data)
-        version = str(data.get("version") or "").strip()
+        version = validate_version(str(data.get("version") or ""))
         download_url = str(data.get("download_url") or "").strip()
         if not version or not download_url:
             raise ValueError("版本清单缺少 version 或 download_url。")
@@ -167,7 +170,7 @@ class UpdateCheckResult:
     @property
     def update_available(self) -> bool:
         """返回是否需要更新。参数：无。返回值：版本或摘要是否变化。"""
-        return self.is_newer or self.sha256_changed
+        return self.is_newer
 
 
 def version_tuple(version: str) -> tuple[int, ...]:
@@ -188,9 +191,24 @@ def validate_remote_url(url: str, *, label: str = "URL") -> str:
     """验证远程 URL。参数：URL 和字段名。返回值：规范文本。"""
     value = url.strip()
     parsed = urllib.parse.urlparse(value)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise ValueError(f"{label} 必须是 http 或 https 地址。")
+    if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
+        raise ValueError(f"{label} 必须是不含用户凭据的 https 地址。")
     return value
+
+
+def validate_version(value: str) -> str:
+    """Require a monotonic numeric desktop release version."""
+    version = value.strip()
+    if not VERSION_PATTERN.fullmatch(version):
+        raise ValueError("版本清单包含无效版本号。")
+    return version
+
+
+def _validate_response_url(response: object, *, label: str) -> None:
+    getter = getattr(response, "geturl", None)
+    final_url = getter() if callable(getter) else ""
+    if isinstance(final_url, str) and final_url:
+        validate_remote_url(final_url, label=label)
 
 
 def validate_sha256(value: str) -> str:
@@ -221,7 +239,10 @@ def fetch_manifest(url: str, timeout: int = NETWORK_TIMEOUT_SECONDS) -> UpdateMa
     manifest_url = validate_remote_url(url, label="更新地址")
     manifest_url = _cache_busted_url(manifest_url, "_omnilit_check", str(time.time_ns()))
     with urllib.request.urlopen(_remote_request(manifest_url), timeout=timeout) as response:
-        payload = response.read(1024 * 1024)
+        _validate_response_url(response, label="更新地址重定向")
+        payload = response.read(MAX_MANIFEST_BYTES + 1)
+    if len(payload) > MAX_MANIFEST_BYTES:
+        raise ValueError("版本清单超过大小限制。")
     data = json.loads(payload.decode("utf-8"))
     if not isinstance(data, dict):
         raise ValueError("版本清单必须是 JSON 对象。")
@@ -238,7 +259,7 @@ def check_for_update(url: str, current_version: str, current_sha256: str = "", l
     if is_newer:
         status = localized(language, f"发现可用版本：{manifest.version}。", f"Version {manifest.version} is available.", f"Доступна версия {manifest.version}.")
     elif sha256_changed:
-        status = localized(language, f"检测到服务器发布文件已更新：{manifest.version}（SHA256 已变化）。", f"The server release file changed for {manifest.version} (SHA256 changed).", f"Файл версии {manifest.version} на сервере изменился (изменён SHA256).")
+        status = localized(language, "服务器同版本文件与已安装文件不同；安全策略要求提升版本号，未提供更新。", "The server file differs for the same version; the version number must be increased before it can be offered.", "Файл сервера отличается для той же версии; для обновления необходимо повысить номер версии.")
     else:
         status = localized(language, "已是最新版本。", "You already have the latest version.", "Установлена последняя версия.")
     return UpdateCheckResult(manifest=manifest, is_newer=is_newer, sha256_changed=sha256_changed, status=status)
@@ -290,7 +311,13 @@ def download_update(
     try:
         raise_if_stopped()
         with urllib.request.urlopen(_remote_request(request_url), timeout=timeout) as response:
-            total = int(response.headers.get("Content-Length") or 0)
+            _validate_response_url(response, label="下载 URL 重定向")
+            try:
+                total = int(response.headers.get("Content-Length") or 0)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("更新文件 Content-Length 无效。") from exc
+            if total < 0 or total > MAX_UPDATE_BYTES:
+                raise ValueError("更新文件超过大小限制。")
             downloaded = 0
             if progress_callback:
                 progress_callback(downloaded, total, localized(language, f"准备下载 {manifest.version}", f"Preparing download {manifest.version}", f"Подготовка загрузки {manifest.version}"))
@@ -302,6 +329,8 @@ def download_update(
                         break
                     handle.write(chunk)
                     downloaded += len(chunk)
+                    if downloaded > MAX_UPDATE_BYTES:
+                        raise ValueError("更新文件超过大小限制。")
                     if progress_callback:
                         progress_callback(downloaded, total, localized(language, f"正在下载 {manifest.version}", f"Downloading {manifest.version}", f"Загрузка {manifest.version}"))
 

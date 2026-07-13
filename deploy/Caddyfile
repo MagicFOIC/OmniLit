@@ -1,0 +1,25 @@
+{
+    email {$OMNILIT_ACME_EMAIL}
+    admin off
+}
+
+{$OMNILIT_DOMAIN} {
+    encode zstd gzip
+
+    @api path /v1/*
+    handle @api {
+        reverse_proxy cloud-api:8787
+    }
+
+    handle {
+        reverse_proxy web:8080
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options nosniff
+        Referrer-Policy no-referrer
+        X-Frame-Options DENY
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+    }
+}

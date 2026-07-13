@@ -42,6 +42,8 @@ def save_manifest(manifest: dict[str, object]) -> None:
 def signing_key_path() -> Path:
     """Return the private key location without storing secrets in the repository."""
     configured = os.environ.get(SIGNING_KEY_FILE_ENV, "").strip()
+    if os.environ.get("OMNILIT_FORMAL_RELEASE", "0") == "1" and not configured:
+        raise RuntimeError(f"Formal releases require {SIGNING_KEY_FILE_ENV}; the ignored development key is not allowed")
     if not configured:
         return DEFAULT_SIGNING_KEY_PATH
     path = Path(configured).expanduser()
@@ -101,6 +103,8 @@ def generate_signing_key(*, force: bool = False) -> tuple[Path, str]:
             encryption_algorithm=serialization.NoEncryption(),
         )
     )
+    if os.name != "nt":
+        path.chmod(0o600)
     return path, actual
 
 

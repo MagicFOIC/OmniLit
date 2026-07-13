@@ -35,9 +35,11 @@ def normalize_viewport(value: dict[str, Any] | None) -> dict[str, Any]:
         "displayStyle": display_style,
         "focusDepth": _bounded_int(raw.get("focusDepth"), 0, 0, 2),
         "reviewMode": bool(raw.get("reviewMode", False)),
-        "graphScale": _bounded_float(raw.get("graphScale"), 1.0, 0.45, 2.5),
+        "graphScale": _bounded_float(raw.get("graphScale"), 1.0, 0.05, 8.0),
         "panX": _bounded_float(raw.get("panX"), 0.0, -100000.0, 100000.0),
         "panY": _bounded_float(raw.get("panY"), 0.0, -100000.0, 100000.0),
+        **({"width": _bounded_float(raw.get("width"), 960.0, 1.0, 100000.0)} if raw.get("width") is not None else {}),
+        **({"height": _bounded_float(raw.get("height"), 640.0, 1.0, 100000.0)} if raw.get("height") is not None else {}),
         "showArrows": bool(raw.get("showArrows", False)),
         "showLabels": bool(raw.get("showLabels", False)),
         "dimUnrelated": bool(raw.get("dimUnrelated", True)),
@@ -67,6 +69,7 @@ def normalize_snapshot(value: dict[str, Any], record_id: str = "") -> dict[str, 
         except (TypeError, ValueError):
             continue
     return {
+        "protocolVersion": "1.0",
         "version": VIEW_SNAPSHOT_VERSION,
         "id": str(raw.get("id") or f"view-{uuid4().hex}"),
         "name": name,
@@ -90,6 +93,10 @@ def normalize_snapshot(value: dict[str, Any], record_id: str = "") -> dict[str, 
                 for key, value in dict(filters.get("facets") or {}).items()
                 if key in {"year", "topic", "author", "institution", "venue"} and str(value).strip()
             },
+            "nodeTypes": list(dict.fromkeys(
+                str(item).strip()[:80] for item in filters.get("nodeTypes") or [] if str(item).strip()
+            ))[:64],
+            "needsReviewOnly": bool(filters.get("needsReviewOnly", False)),
         },
         "selection": {
             "nodeId": str(selection.get("nodeId") or ""),

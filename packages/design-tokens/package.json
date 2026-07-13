@@ -1,0 +1,10 @@
+{
+  "name": "@omnilit/design-tokens",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/tokens.ts",
+    "./theme.css": "./src/theme.css"
+  }
+}

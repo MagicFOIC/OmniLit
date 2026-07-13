@@ -1,0 +1,61 @@
+{
+  "protocolVersion": "1.0",
+  "schemaVersion": 1,
+  "timelineVersion": 2,
+  "timelineKey": "demo-timeline",
+  "status": "ready",
+  "generatedAt": "2026-07-13T12:00:00+00:00",
+  "selection": { "startYear": 2020, "endYear": 2024, "playbackYear": 2024, "effectiveEndYear": 2024 },
+  "yearRange": { "minimum": 2020, "maximum": 2024, "years": [2020, 2022, 2024], "knownYearCount": 3, "missingYearCount": 0 },
+  "events": [
+    {
+      "year": 2020,
+      "papers": [{ "recordId": "timeline-2020", "nodeId": "paper:timeline-2020", "title": "Graph Foundations", "year": 2020, "topicId": "topic:shared-architecture", "topicName": "Shared Architecture", "keyScore": 0.82, "citedByCount": 2, "referenceCount": 0, "representative": true, "reasons": ["主题奠基论文"] }],
+      "topics": [{ "topicId": "topic:shared-architecture", "name": "Shared Architecture", "newCount": 1, "cumulative": 1, "paperIds": ["timeline-2020"], "representativePaper": { "recordId": "timeline-2020", "title": "Graph Foundations" } }],
+      "citations": [],
+      "turningPoints": [{ "year": 2020, "type": "topic_emergence", "score": 0.8, "title": "共享架构主题出现", "explanation": "首篇代表论文形成主题起点。", "paperIds": ["timeline-2020"], "topicIds": ["topic:shared-architecture"] }]
+    },
+    {
+      "year": 2022,
+      "papers": [{ "recordId": "timeline-2022", "nodeId": "paper:timeline-2022", "title": "Contract-First Graphs", "year": 2022, "topicId": "topic:shared-architecture", "topicName": "Shared Architecture", "keyScore": 0.91, "citedByCount": 1, "referenceCount": 1, "representative": true, "reasons": ["关键引用路径"] }],
+      "topics": [{ "topicId": "topic:shared-architecture", "name": "Shared Architecture", "newCount": 1, "cumulative": 2, "paperIds": ["timeline-2022"], "representativePaper": { "recordId": "timeline-2022", "title": "Contract-First Graphs" } }],
+      "citations": [{ "source": "timeline-2022", "target": "timeline-2020", "sourceYear": 2022, "targetYear": 2020, "crossTopic": false, "directionStatus": "valid", "explanation": "后续论文引用早期工作。" }],
+      "turningPoints": []
+    },
+    {
+      "year": 2024,
+      "papers": [{ "recordId": "timeline-2024", "nodeId": "paper:timeline-2024", "title": "Local Agent Evolution", "year": 2024, "topicId": "topic:local-agent", "topicName": "Local Agent", "keyScore": 0.96, "citedByCount": 0, "referenceCount": 1, "representative": true, "reasons": ["跨主题桥接"] }],
+      "topics": [{ "topicId": "topic:local-agent", "name": "Local Agent", "newCount": 1, "cumulative": 1, "paperIds": ["timeline-2024"], "representativePaper": { "recordId": "timeline-2024", "title": "Local Agent Evolution" } }],
+      "citations": [{ "source": "timeline-2024", "target": "timeline-2022", "sourceYear": 2024, "targetYear": 2022, "crossTopic": true, "directionStatus": "valid", "explanation": "Local Agent 工作连接共享协议主题。" }],
+      "turningPoints": [{ "year": 2024, "type": "cross_topic_bridge", "score": 0.92, "title": "Local Agent 成为跨主题桥梁", "explanation": "关键引用连接两个研究主题。", "paperIds": ["timeline-2024", "timeline-2022"], "topicIds": ["topic:local-agent", "topic:shared-architecture"] }]
+    }
+  ],
+  "topicSeries": [
+    { "topicId": "topic:shared-architecture", "name": "Shared Architecture", "colorIndex": 0, "firstYear": 2020, "lastYear": 2022, "peakYear": 2020, "peakCount": 1, "points": [{ "year": 2020, "count": 1, "cumulative": 1, "paperIds": ["timeline-2020"], "representativePaper": { "recordId": "timeline-2020" } }, { "year": 2022, "count": 1, "cumulative": 2, "paperIds": ["timeline-2022"], "representativePaper": { "recordId": "timeline-2022" } }, { "year": 2024, "count": 0, "cumulative": 2, "paperIds": [], "representativePaper": {} }], "paperCount": 2, "growthSpeed": 0.5, "growthExplanation": "两年新增一篇代表论文。" },
+    { "topicId": "topic:local-agent", "name": "Local Agent", "colorIndex": 1, "firstYear": 2024, "lastYear": 2024, "peakYear": 2024, "peakCount": 1, "points": [{ "year": 2020, "count": 0, "cumulative": 0, "paperIds": [], "representativePaper": {} }, { "year": 2022, "count": 0, "cumulative": 0, "paperIds": [], "representativePaper": {} }, { "year": 2024, "count": 1, "cumulative": 1, "paperIds": ["timeline-2024"], "representativePaper": { "recordId": "timeline-2024" } }], "paperCount": 1, "growthSpeed": 1.0, "growthExplanation": "主题在窗口末期快速出现。" }
+  ],
+  "keyPaths": [{ "id": "path:demo", "label": "共享架构到 Local Agent", "paperIds": ["timeline-2020", "timeline-2022", "timeline-2024"], "years": [2020, 2022, 2024], "score": 2.69, "length": 3, "yearSpan": 4, "explanation": "三篇论文构成真实有向引用链。" }],
+  "turningPoints": [{ "year": 2020, "type": "topic_emergence", "score": 0.8, "title": "共享架构主题出现", "explanation": "首篇代表论文形成主题起点。", "paperIds": ["timeline-2020"], "topicIds": ["topic:shared-architecture"] }, { "year": 2024, "type": "cross_topic_bridge", "score": 0.92, "title": "Local Agent 成为跨主题桥梁", "explanation": "关键引用连接两个研究主题。", "paperIds": ["timeline-2024", "timeline-2022"], "topicIds": ["topic:local-agent", "topic:shared-architecture"] }],
+  "topicSpeedComparisons": [{ "leftTopicId": "topic:shared-architecture", "rightTopicId": "topic:local-agent", "leftSpeed": 0.5, "rightSpeed": 1.0, "fasterTopicId": "topic:local-agent", "difference": 0.5, "explanation": "Local Agent 主题增长速度更快。" }],
+  "diagnostics": { "paperCount": 3, "citationCount": 2, "validCitationCount": 2, "chronologyConflictCount": 0, "unknownCitationYearCount": 0, "sameYearCycleBreakCount": 0, "splitSignalCount": 0, "mergeSignalCount": 0, "declineSignalCount": 0, "keyPathCount": 1, "method": "deterministic-yearly-evolution-v2" },
+  "graph": {
+    "protocolVersion": "1.0", "schemaVersion": 1, "recordId": "timeline:demo-timeline", "generatedAt": "2026-07-13T12:00:00+00:00",
+    "paper": { "id": "timeline:demo-timeline", "title": "Knowledge Evolution 2020–2024", "year": 2024, "authors": [] },
+    "nodes": [
+      { "id": "paper:timeline-2020", "type": "paper", "label": "Graph Foundations", "attributes": { "recordId": "timeline-2020", "title": "Graph Foundations", "year": 2020 }, "metrics": { "importance": 0.82, "confidence": 1 }, "evidence": [] },
+      { "id": "paper:timeline-2022", "type": "paper", "label": "Contract-First Graphs", "attributes": { "recordId": "timeline-2022", "title": "Contract-First Graphs", "year": 2022 }, "metrics": { "importance": 0.91, "confidence": 1 }, "evidence": [] },
+      { "id": "paper:timeline-2024", "type": "paper", "label": "Local Agent Evolution", "attributes": { "recordId": "timeline-2024", "title": "Local Agent Evolution", "year": 2024 }, "metrics": { "importance": 0.96, "confidence": 1 }, "evidence": [] },
+      { "id": "topic:shared-architecture", "type": "topic", "label": "Shared Architecture", "attributes": {}, "metrics": { "importance": 0.8, "confidence": 1 }, "evidence": [] },
+      { "id": "topic:local-agent", "type": "topic", "label": "Local Agent", "attributes": {}, "metrics": { "importance": 0.7, "confidence": 1 }, "evidence": [] }
+    ],
+    "edges": [
+      { "id": "citation:2022-2020", "source": "paper:timeline-2022", "target": "paper:timeline-2020", "type": "CITES", "directed": true, "weight": 1, "attributes": {}, "evidence": [] },
+      { "id": "citation:2024-2022", "source": "paper:timeline-2024", "target": "paper:timeline-2022", "type": "CITES", "directed": true, "weight": 1, "attributes": {}, "evidence": [] },
+      { "id": "topic:2020", "source": "paper:timeline-2020", "target": "topic:shared-architecture", "type": "HAS_TOPIC", "directed": true, "weight": 1, "attributes": {}, "evidence": [] },
+      { "id": "topic:2022", "source": "paper:timeline-2022", "target": "topic:shared-architecture", "type": "HAS_TOPIC", "directed": true, "weight": 1, "attributes": {}, "evidence": [] },
+      { "id": "topic:2024", "source": "paper:timeline-2024", "target": "topic:local-agent", "type": "HAS_TOPIC", "directed": true, "weight": 1, "attributes": {}, "evidence": [] }
+    ],
+    "metadata": { "evolution_graph": true, "timelineKey": "demo-timeline", "time_start": 2020, "time_end": 2024 }
+  },
+  "projection": { "status": "ready", "level": "normal", "layoutStyle": "academic", "spatialCulling": false, "budget": 800, "totalSemanticNodes": 5, "viewportCandidates": 5, "renderedNodes": 5, "realNodes": 5, "aggregateNodes": 0, "aggregatedNodes": 0, "culledNodes": 0, "renderedEdges": 5, "totalSemanticEdges": 5, "degraded": false, "latencyMs": 1.2, "latencyBudgetMs": 120, "budgetExceeded": false, "performanceStatus": "ready", "message": "normal 层级：渲染 5 / 5 个节点" }
+}

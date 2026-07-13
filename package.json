@@ -1,0 +1,22 @@
+{
+  "name": "omnilit",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "npm@11.13.0",
+  "workspaces": [
+    "apps/web",
+    "packages/api-client",
+    "packages/design-tokens",
+    "packages/knowledge-graph",
+    "packages/platform-bridge",
+    "packages/shared-schema"
+  ],
+  "scripts": {
+    "web:dev": "npm run dev --workspace @omnilit/web",
+    "web:build": "npm run build --workspace @omnilit/web",
+    "web:test": "npm run test --workspace @omnilit/web",
+    "web:typecheck": "npm run typecheck --workspace @omnilit/web",
+    "phase2:web:check": "npm run check:generated --workspace @omnilit/shared-schema && npm run web:typecheck && npm run web:test && npm run web:build",
+    "phase2:compliance": "python tools/license_audit/generate_compliance.py --output-dir build/compliance --strict"
+  }
+}

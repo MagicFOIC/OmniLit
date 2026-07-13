@@ -10,7 +10,7 @@ class KnowledgeGraphViewSnapshotTests(unittest.TestCase):
         viewport = normalize_viewport({"displayStyle": "unknown", "graphScale": 99, "focusDepth": -4, "panX": "bad"})
 
         self.assertEqual(viewport["displayStyle"], "overview")
-        self.assertEqual(viewport["graphScale"], 2.5)
+        self.assertEqual(viewport["graphScale"], 8.0)
         self.assertEqual(viewport["focusDepth"], 0)
         self.assertEqual(viewport["panX"], 0.0)
 

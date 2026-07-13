@@ -1318,7 +1318,7 @@ class UpdateCoreTests(unittest.TestCase):
             self.assertTrue(update_core.verify_sha256(package, expected))
             self.assertFalse(update_core.verify_sha256(package, "0" * 64))
 
-    def test_same_version_server_sha256_change_triggers_update(self) -> None:
+    def test_same_version_server_sha256_change_is_not_a_replayable_update(self) -> None:
         update_dir = ROOT / "Update"
         if str(update_dir) not in sys.path:
             sys.path.insert(0, str(update_dir))
@@ -1331,8 +1331,8 @@ class UpdateCoreTests(unittest.TestCase):
             result = update_core.check_for_update("https://example.test/update_manifest.json", "0.0.10", current_sha256=local_sha256)
         self.assertFalse(result.is_newer)
         self.assertTrue(result.sha256_changed)
-        self.assertTrue(result.update_available)
-        self.assertIn("SHA256", result.status)
+        self.assertFalse(result.update_available)
+        self.assertIn("提升版本号", result.status)
 
     def test_same_version_matching_sha256_is_latest(self) -> None:
         update_dir = ROOT / "Update"
@@ -1355,6 +1355,18 @@ class UpdateCoreTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             update_core.UpdateManifest.from_dict({"version": "0.0.10", "download_url": "https://example.test/OmniLit.exe"})
+
+    def test_update_transport_requires_https_and_numeric_versions(self) -> None:
+        update_dir = ROOT / "Update"
+        if str(update_dir) not in sys.path:
+            sys.path.insert(0, str(update_dir))
+        import update_core
+
+        with self.assertRaisesRegex(ValueError, "https"):
+            update_core.validate_remote_url("http://example.test/update_manifest.json")
+        with self.assertRaisesRegex(ValueError, "版本号"):
+            update_core.validate_version("0.0.10-beta")
+        self.assertEqual(update_core.validate_version("1.2.3.4"), "1.2.3.4")
 
     def test_manifest_requires_a_trusted_ed25519_signature(self) -> None:
         update_dir = ROOT / "Update"

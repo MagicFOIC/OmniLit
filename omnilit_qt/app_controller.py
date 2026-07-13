@@ -6,6 +6,7 @@ from PySide6.QtCore import QObject, Property, QUrl, Signal
 
 from .i18n import LocaleController
 from .paths import AppPaths
+from .version import APP_VERSION
 
 
 class AppController(QObject):
@@ -26,10 +27,10 @@ class AppController(QObject):
         """读取运行版本。参数：无。返回值：版本文本。"""
         for path in (self.paths.data("update_manifest.json"), self.paths.resource("update_manifest.json")):
             try:
-                return str(json.loads(path.read_text(encoding="utf-8")).get("version") or "unknown")
+                return str(json.loads(path.read_text(encoding="utf-8")).get("version") or APP_VERSION)
             except Exception:
                 continue
-        return "unknown"
+        return APP_VERSION
 
     def set_status(self, message: str) -> None:
         """更新全局状态栏。参数：消息文本。返回值：无。"""

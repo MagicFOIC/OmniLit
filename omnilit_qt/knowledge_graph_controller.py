@@ -25,6 +25,7 @@ from .knowledge_graph_ontology import canonical_relation_filter
 from .knowledge_graph_paths import available_relation_types, shortest_path
 from .knowledge_graph_schema import KnowledgeGraphDocument
 from .knowledge_graph_share import build_share_package, load_share_package, write_share_package
+from .knowledge_graph_storage import safe_record_id
 from .knowledge_graph_replay import build_replay_events
 from .knowledge_graph_semantic_comparison import build_semantic_comparison, clear_review, make_review
 from .knowledge_graph_views import VIEW_SNAPSHOT_VERSION, make_snapshot, normalize_snapshot, normalize_viewport, reconcile_snapshot, view_summaries
@@ -99,10 +100,7 @@ class KnowledgeGraphController(QObject):
 
     @staticmethod
     def _safe_record_id(record_id: str) -> str:
-        value = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(record_id or "record")).strip("._")
-        value = value[:72] or "record"
-        suffix = hashlib.sha1(str(record_id).encode("utf-8")).hexdigest()[:8]
-        return f"{value}_{suffix}"
+        return safe_record_id(record_id)
 
     def _content_path(self, *parts: str) -> Path:
         if hasattr(self.paths, "content"):
@@ -308,6 +306,49 @@ class KnowledgeGraphController(QObject):
     @Property("QVariantMap", notify=renderChanged)
     def renderStatus(self) -> dict[str, Any]:
         return dict(self._render_projection_context()["status"])
+
+    @Slot(result="QVariantMap")
+    def canvasGraphData(self) -> dict[str, Any]:  # noqa: N802 - WebChannel API
+        """Return the current QML-filtered projection for the embedded React canvas."""
+        projection = self._render_projection_context()
+        nodes = []
+        for value in projection["nodes"]:
+            node = dict(value)
+            node.setdefault("type", "relation")
+            node.setdefault("label", str(node.get("id") or ""))
+            node.setdefault("attributes", {})
+            node.setdefault("metrics", {})
+            node.setdefault("evidence", [])
+            nodes.append(node)
+        edges = []
+        for value in projection["edges"]:
+            edge = dict(value)
+            edge.setdefault("type", "RELATED_TO")
+            edge.setdefault("directed", True)
+            edge.setdefault("attributes", {})
+            edge.setdefault("evidence", [])
+            edges.append(edge)
+        return {
+            "protocolVersion": "1.0",
+            "schemaVersion": 1,
+            "recordId": self._current_record_id or "desktop-graph",
+            "generatedAt": str(self._graph.get("generatedAt") or ""),
+            "paper": dict(self._graph.get("paper") or {"id": self._current_record_id or "desktop-graph", "title": "Knowledge graph", "authors": []}),
+            "nodes": nodes,
+            "edges": edges,
+            "metadata": {**dict(self._graph.get("metadata") or {}), "embeddedCanvas": True},
+        }
+
+    @Slot(result="QVariantMap")
+    def canvasSelection(self) -> dict[str, str]:  # noqa: N802 - WebChannel API
+        return {
+            "nodeId": str(self._selected_node.get("id") or ""),
+            "edgeId": str(self._selected_edge.get("id") or ""),
+        }
+
+    @Slot(float, float, float, float, float)
+    def setCanvasViewport(self, width: float, height: float, scale: float, pan_x: float, pan_y: float) -> None:  # noqa: N802 - WebChannel API
+        self.setRenderViewport(width, height, scale, pan_x, pan_y, self._render_display_style)
 
     @Property(str, notify=changed)
     def currentRecordId(self) -> str:

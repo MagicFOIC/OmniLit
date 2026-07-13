@@ -1,0 +1,19 @@
+{
+  "name": "@omnilit/knowledge-graph",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@antv/g6": "5.1.1",
+    "@omnilit/design-tokens": "0.1.0",
+    "@omnilit/shared-schema": "0.1.0",
+    "react": "^19.1.1"
+  },
+  "peerDependencies": {
+    "react-dom": "^19.1.1"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./styles.css": "./src/styles.css"
+  }
+}

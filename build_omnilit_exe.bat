@@ -69,8 +69,8 @@ echo [3/9] Checking PyInstaller...
 call "%PYTHON_CMD%" -m PyInstaller --version >nul 2>nul
 if errorlevel 1 goto dependency_fail
 
-echo [4/9] Checking runtime dependencies, including PySide6 and cryptography...
-call "%PYTHON_CMD%" -c "import PySide6, requests, fitz, openai, reportlab, rapidocr, onnxruntime, tqdm; from cryptography.fernet import Fernet; from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC" >nul 2>nul
+echo [4/9] Checking runtime dependencies, including Qt WebEngine and cryptography...
+call "%PYTHON_CMD%" -c "import PySide6, requests, fitz, openai, reportlab, rapidocr, onnxruntime, tqdm; import PySide6.QtWebChannel, PySide6.QtWebEngineCore, PySide6.QtWebEngineQuick; from cryptography.fernet import Fernet; from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC" >nul 2>nul
 if errorlevel 1 goto dependency_fail
 
 echo [5/9] Syncing version metadata from update_manifest.json...
@@ -85,6 +85,15 @@ if not defined APP_VERSION (
   goto fail
 )
 echo Release version: %APP_VERSION%
+
+echo Building authenticated embedded web assets...
+where npm.cmd >nul 2>nul
+if errorlevel 1 (
+  echo ERROR: npm was not found on PATH.
+  goto fail
+)
+call npm.cmd run web:build
+if errorlevel 1 goto fail
 
 echo [6/9] Preparing encrypted default DeepSeek API Key...
 if /I "%MODE%"=="--encrypt-default-key" goto encrypt_key_only
@@ -182,6 +191,9 @@ call "%PYTHON_CMD%" -m PyInstaller ^
   --hidden-import PySide6.QtQml ^
   --hidden-import PySide6.QtQuick ^
   --hidden-import PySide6.QtWidgets ^
+  --hidden-import PySide6.QtWebChannel ^
+  --hidden-import PySide6.QtWebEngineCore ^
+  --hidden-import PySide6.QtWebEngineQuick ^
   --add-binary "%CONDA_PREFIX%\Library\bin\Qt6*.dll;." ^
   --add-binary "%CONDA_PREFIX%\Library\bin\icu*78.dll;." ^
   --add-binary "%CONDA_PREFIX%\Library\bin\double-conversion.dll;." ^
@@ -210,6 +222,7 @@ call "%PYTHON_CMD%" -m PyInstaller ^
   --add-data "assets\omnilit_logo_164.png;assets" ^
   --add-data "assets\omnilit_logo.ico;assets" ^
   --add-data "ui\qml;ui\qml" ^
+  --add-data "apps\web\dist;apps\web\dist" ^
   --add-data "update_manifest.json;." ^
   --add-data "Download\__init__.py;Download" ^
   --add-data "Download\literature_download_core.py;Download" ^
@@ -234,7 +247,25 @@ if errorlevel 1 goto fail
 copy /y "dist\%APP_NAME%.exe" "%OUTPUT_EXE%" >nul
 if errorlevel 1 goto fail
 
-echo [9/9] Updating update_manifest.json SHA-256 and Ed25519 signature...
+echo [9/9] Verifying platform signature and updating signed release metadata...
+if not defined OMNILIT_WINDOWS_TIMESTAMP_URL set "OMNILIT_WINDOWS_TIMESTAMP_URL=http://timestamp.digicert.com"
+if defined OMNILIT_WINDOWS_SIGN_CERT_SHA1 (
+  where signtool.exe >nul 2>nul
+  if errorlevel 1 (
+    echo ERROR: signtool.exe is required when OMNILIT_WINDOWS_SIGN_CERT_SHA1 is configured.
+    goto fail
+  )
+  signtool.exe sign /sha1 "%OMNILIT_WINDOWS_SIGN_CERT_SHA1%" /fd SHA256 /td SHA256 /tr "%OMNILIT_WINDOWS_TIMESTAMP_URL%" "%OUTPUT_EXE%"
+  if errorlevel 1 goto fail
+  signtool.exe verify /pa /all /v "%OUTPUT_EXE%"
+  if errorlevel 1 goto fail
+) else (
+  if /I "%OMNILIT_FORMAL_RELEASE%"=="1" (
+    echo ERROR: Formal releases require OMNILIT_WINDOWS_SIGN_CERT_SHA1 and Authenticode verification.
+    goto fail
+  )
+  echo WARNING: Built an unsigned Windows development artifact. It must not be distributed as a formal release.
+)
 call "%PYTHON_CMD%" "%RELEASE_HELPER%" postbuild --exe "%OUTPUT_EXE%"
 if errorlevel 1 goto fail
 

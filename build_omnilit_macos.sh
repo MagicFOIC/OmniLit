@@ -65,11 +65,14 @@ echo "[2/8] Checking pip and PyInstaller..."
 "$PYTHON_CMD" -m PyInstaller --version >/dev/null 2>&1 || dependency_error
 
 echo "[3/8] Checking runtime dependencies..."
-"$PYTHON_CMD" -c "import PySide6, requests, fitz, openai, reportlab, rapidocr, onnxruntime, tqdm; from cryptography.fernet import Fernet" >/dev/null 2>&1 || dependency_error
+"$PYTHON_CMD" -c "import PySide6, requests, fitz, openai, reportlab, rapidocr, onnxruntime, tqdm; import PySide6.QtWebChannel, PySide6.QtWebEngineCore, PySide6.QtWebEngineQuick; from cryptography.fernet import Fernet" >/dev/null 2>&1 || dependency_error
 
 echo "[4/8] Syncing version metadata..."
 APP_VERSION="$("$PYTHON_CMD" "$RELEASE_HELPER" prebuild)"
 echo "Release version: $APP_VERSION"
+
+command -v npm >/dev/null 2>&1 || { echo "ERROR: npm was not found on PATH."; exit 1; }
+npm run web:build
 
 echo "[5/8] Preparing encrypted default DeepSeek API Key..."
 if [[ "$MODE" == "--encrypt-default-key" ]]; then
@@ -148,6 +151,9 @@ PYINSTALLER_ARGS=(
   --hidden-import PySide6.QtQml
   --hidden-import PySide6.QtQuick
   --hidden-import PySide6.QtWidgets
+  --hidden-import PySide6.QtWebChannel
+  --hidden-import PySide6.QtWebEngineCore
+  --hidden-import PySide6.QtWebEngineQuick
   --hidden-import Download.literature_download_core
   --hidden-import Translate.literature_translate_core
   --hidden-import Update.update_core
@@ -155,6 +161,7 @@ PYINSTALLER_ARGS=(
   --add-data "assets/omnilit_logo_164.png:assets"
   --add-data "assets/omnilit_logo.ico:assets"
   --add-data "ui/qml:ui/qml"
+  --add-data "apps/web/dist:apps/web/dist"
   --add-data "update_manifest.json:."
   --add-data "Download/__init__.py:Download"
   --add-data "Download/literature_download_core.py:Download"
@@ -184,6 +191,35 @@ if [[ ! -d "$APP_BUNDLE" ]]; then
   exit 1
 fi
 
+if [[ -n "${OMNILIT_MAC_SIGNING_IDENTITY:-}" ]]; then
+  codesign --force --deep --options runtime --timestamp --sign "$OMNILIT_MAC_SIGNING_IDENTITY" "$APP_BUNDLE"
+  codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
+  spctl --assess --type execute --verbose=2 "$APP_BUNDLE"
+else
+  if [[ "${OMNILIT_FORMAL_RELEASE:-0}" == "1" ]]; then
+    echo "ERROR: Formal releases require OMNILIT_MAC_SIGNING_IDENTITY."
+    exit 1
+  fi
+  echo "WARNING: Built an unsigned macOS development artifact."
+fi
+
+if [[ -n "${OMNILIT_MAC_NOTARY_PROFILE:-}" ]]; then
+  if [[ -z "${OMNILIT_MAC_SIGNING_IDENTITY:-}" ]]; then
+    echo "ERROR: Notarization requires a signed app bundle."
+    exit 1
+  fi
+  NOTARY_ZIP="${RELEASE_DIR}/${APP_NAME}-notary-submission.zip"
+  mkdir -p "$RELEASE_DIR"
+  ditto -c -k --keepParent "$APP_BUNDLE" "$NOTARY_ZIP"
+  xcrun notarytool submit "$NOTARY_ZIP" --keychain-profile "$OMNILIT_MAC_NOTARY_PROFILE" --wait
+  rm -f "$NOTARY_ZIP"
+  xcrun stapler staple "$APP_BUNDLE"
+  xcrun stapler validate "$APP_BUNDLE"
+elif [[ "${OMNILIT_FORMAL_RELEASE:-0}" == "1" ]]; then
+  echo "ERROR: Formal releases require OMNILIT_MAC_NOTARY_PROFILE."
+  exit 1
+fi
+
 echo "[8/8] Packaging zip release..."
 ZIP_PATH="${RELEASE_DIR}/${APP_NAME}-macOS-${APP_VERSION}.zip"
 ditto -c -k --keepParent "$APP_BUNDLE" "$ZIP_PATH"
@@ -191,4 +227,6 @@ shasum -a 256 "$ZIP_PATH" | tee "${ZIP_PATH}.sha256"
 
 echo "Done: $APP_BUNDLE"
 echo "Release archive: $ZIP_PATH"
-echo "Note: sign and notarize the app before distributing it outside your own Mac."
+if [[ "${OMNILIT_FORMAL_RELEASE:-0}" != "1" ]]; then
+  echo "Note: this development artifact is not a signed and notarized formal release."
+fi
