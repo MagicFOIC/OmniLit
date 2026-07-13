@@ -48,12 +48,14 @@ ENTITY_PATTERNS = (
     ("contribution", re.compile(r"\b(?:we|this (?:paper|work|study)) (?:propose|introduce|present|contribute|develop)\b|(?:本文|本研究|本文工作).{0,8}(?:提出|贡献|设计|开发)", re.I)),
     ("researchgap", re.compile(r"\b(?:however|remains? (?:unclear|unknown|challenging)|lack(?:s|ing)?|few studies)\b|(?:然而|仍不清楚|研究空白|缺乏研究)", re.I)),
     ("problem", re.compile(r"\b(?:problem|challenge|bottleneck|difficulty)\b|(?:问题|挑战|瓶颈|难点)", re.I)),
+    ("conclusion", re.compile(r"\b(?:we conclude|this (?:paper|study) concludes|in conclusion|our conclusion)\b|(?:我们得出结论|本文结论|研究结论|综上所述)", re.I)),
     ("result", re.compile(r"\b(?:results? (?:show|indicate|demonstrate)|outperform|achieve|achieves|improve|improves|improved|reduce|reduced)\b|(?:结果表明|优于|达到|提升|降低)", re.I)),
     ("limitation", re.compile(r"\b(?:limitation|limitations|limited by|drawback|weakness|constraint)\b|(?:局限|不足|缺点|受限)", re.I)),
     ("futurework", re.compile(r"\b(?:future work|future research|in the future|will explore|will investigate)\b|(?:未来工作|未来研究|后续工作|将进一步)", re.I)),
     ("dataset", re.compile(r"\b(?:dataset|corpus|benchmark|database|cohort)\b|(?:数据集|语料库|基准数据|数据库|队列)", re.I)),
     ("metric", re.compile(r"\b(?:accuracy|precision|recall|f1(?:-score)?|auc|rmse|mae|bleu|rouge|latency|throughput)\b|(?:准确率|精确率|召回率|误差|延迟|吞吐量)", re.I)),
     ("experiment", re.compile(r"\b(?:experiment|evaluation|ablation|control group|randomized)\b|(?:实验|评估|消融|对照组|随机试验)", re.I)),
+    ("model", re.compile(r"\b(?:[A-Z][A-Za-z0-9_-]{2,}\s+)?(?:model|architecture|large language model|language model|LLM)\b|(?:模型|架构)", re.I)),
     ("method", re.compile(r"\b(?:we use|we employ|we propose|method|algorithm|model|framework|architecture|large language model|language model|LLM)\b|(?:方法|模型|算法|框架)", re.I)),
     ("citation", re.compile(r"\[(?:\d+[,-]?\s*)+\]|\b[A-Z][A-Za-z-]+\s+et\s+al\.?(?:,?\s*\d{4})?", re.I)),
 )
@@ -102,8 +104,9 @@ def clean_text(value: Any) -> str:
 
 def sentences(text: str) -> list[str]:
     result = []
-    for item in re.split(r"(?<=[.!?。！？])\s*|[\r\n]+", clean_text(text)):
-        value = item.strip()
+    protected = re.sub(r"\bet\s+al\.", lambda match: match.group(0)[:-1] + "<DOT>", clean_text(text), flags=re.I)
+    for item in re.split(r"(?<=[.!?。！？])\s*|[\r\n]+", protected):
+        value = item.replace("<DOT>", ".").strip()
         minimum = 12 if re.search(r"[\u3400-\u9fff]", value) else 25
         if minimum <= len(value) <= 600:
             result.append(value)
@@ -222,7 +225,7 @@ def _candidate_label(kind: str, sentence: str) -> str:
         matches = METRIC_PATTERN.findall(sentence)
         if matches:
             return " / ".join(dict.fromkeys(matches))
-    if kind == "method":
+    if kind in {"method", "model"}:
         alias = METHOD_ALIAS_PATTERN.search(sentence)
         if alias:
             return alias.group(0)
@@ -248,7 +251,7 @@ def _candidate_label(kind: str, sentence: str) -> str:
     prefix = {
         "contribution": "Contribution", "researchgap": "Research gap", "problem": "Problem",
         "experiment": "Experiment", "result": "Result", "limitation": "Limitation",
-        "futurework": "Future work",
+        "futurework": "Future work", "conclusion": "Conclusion",
     }.get(kind, kind.title())
     excerpt = sentence[:72] + ("..." if len(sentence) > 72 else "")
     return f"{prefix} · {excerpt}"
@@ -319,7 +322,7 @@ def extract_entity_candidates(record_id: str, record: dict[str, Any], index: dic
                     continue
                 if not pattern.search(sentence) and not (kind == "result" and has_numeric_result(sentence)):
                     continue
-                if kind == "method" and "result" in matched_kinds:
+                if kind in {"method", "model"} and "result" in matched_kinds:
                     continue
                 key = (kind, re.sub(r"\W+", "", sentence.casefold())[:180])
                 if key in seen:

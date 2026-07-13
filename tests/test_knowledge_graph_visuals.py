@@ -12,7 +12,7 @@ class KnowledgeGraphVisualTests(unittest.TestCase):
     def test_view_exposes_obsidian_style_settings_and_circular_nodes(self) -> None:
         view = (QML_DIR / "KnowledgeGraphView.qml").read_text(encoding="utf-8")
         for token in (
-            'property bool settingsOpen: true',
+            'property bool settingsOpen: false',
             'property bool showArrows: false',
             'property bool showLabels: false',
             'property bool dimUnrelated: true',
@@ -33,6 +33,14 @@ class KnowledgeGraphVisualTests(unittest.TestCase):
             "function resetGraphSettings()",
         ):
             self.assertIn(token, view)
+
+    def test_relation_labels_render_in_unscaled_native_text_overlay(self) -> None:
+        view = (QML_DIR / "KnowledgeGraphView.qml").read_text(encoding="utf-8")
+        self.assertIn("id: edgeLabelOverlay", view)
+        self.assertIn("renderType: Text.NativeRendering", view)
+        self.assertIn("font.hintingPreference: Font.PreferFullHinting", view)
+        self.assertIn("readonly property point screenMidpoint", view)
+        self.assertNotIn("ctx.fillText(String(edge.label", view)
         self.assertIn("root.showLabels", view)
         self.assertIn("root.graphScale >= root.textFadeThreshold", view)
         self.assertIn("root.linkThickness", view)
@@ -119,7 +127,7 @@ class KnowledgeGraphVisualTests(unittest.TestCase):
             "function fitGraph()",
             "var minX = Number.POSITIVE_INFINITY",
             "var radius = root.nodeRadius(root.displayNodes[i]) + 18",
-            "var panelReserve = root.settingsOpen ? Math.min(settingsPanel.width + 56, width * 0.38) : 0",
+            "var panelReserve = root.settingsOpen && !root.exportMode ? Math.min(settingsPanel.width + 56, width * 0.38) : 0",
             "var availableWidth = Math.max(160, width - panelReserve - padding * 2)",
             "var targetScale = Math.min(availableWidth / boundsWidth, availableHeight / boundsHeight)",
             "var scaledGraphCenterX = (graphCenterX - width / 2) * root.graphScale + width / 2",

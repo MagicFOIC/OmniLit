@@ -14,6 +14,7 @@ from .pdf_extraction_controller import PdfExtractionController
 from .preferences_controller import PreferencesController
 from .selection_translation_controller import SelectionTranslationController
 from .translation_controller import TRANSLATION_FORM_SETTING, TranslationController
+from .topic_map_controller import TopicMapController
 from .update_controller import DEFAULT_UPDATE_MANIFEST_URL, UpdateController
 from .word_cloud_controller import WordCloudController
 
@@ -31,6 +32,7 @@ __all__ = [
     "SelectionTranslationController",
     "TRANSLATION_FORM_SETTING",
     "TranslationController",
+    "TopicMapController",
     "UpdateController",
     "WordCloudController",
 ]

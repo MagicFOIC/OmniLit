@@ -11,7 +11,7 @@ from .knowledge_graph_schema import KnowledgeGraphEvidence, KnowledgeGraphNode
 
 
 REVIEW_CONFIDENCE_THRESHOLD = 0.6
-GENERIC_REVIEW_TYPES = {"concept", "researchgap", "problem", "contribution", "method", "dataset", "metric", "experiment", "result", "limitation", "futurework", "domainentity", "material"}
+GENERIC_REVIEW_TYPES = {"concept", "researchgap", "problem", "researchquestion", "contribution", "method", "model", "dataset", "metric", "experiment", "result", "conclusion", "limitation", "futurework", "domainentity", "material"}
 
 METRIC_ALIASES = {
     "accuracy": "Accuracy", "auc": "AUC", "bleu": "BLEU", "f1": "F1",
@@ -123,8 +123,10 @@ class NormalizedEntity:
         if self.source_section:
             details["section"] = self.source_section
         details["candidate_ids"] = [candidate.id for candidate in self.candidates]
+        node_type = "researchquestion" if self.kind in {"problem", "researchgap"} else self.kind
+        details["semanticSubtype"] = self.kind
         return KnowledgeGraphNode(
-            self.node_id, self.kind, self.label, summary=first.text, importance=importance,
+            self.node_id, node_type, self.label, summary=first.text, importance=importance,
             confidence=confidence, tags=tags, evidence=self.evidence, details=details,
             normalized_label=self.normalized_label, canonical_id=self.canonical_id,
             extraction_method=self.extraction_method, confidence_reason=self.confidence_reason,

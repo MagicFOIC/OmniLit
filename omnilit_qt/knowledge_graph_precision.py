@@ -14,8 +14,8 @@ GENERIC_LABELS = {
 }
 
 CORE_TYPES = {
-    "concept", "researchgap", "problem", "contribution", "method", "dataset",
-    "metric", "experiment", "result", "limitation", "futurework", "citation",
+    "concept", "researchgap", "problem", "researchquestion", "contribution", "method", "model", "dataset",
+    "metric", "experiment", "result", "conclusion", "limitation", "futurework", "citation",
     "figure", "table", "equation", "domainentity", "material",
 }
 
@@ -71,6 +71,12 @@ LIMITATION_RE = re.compile(
 FUTURE_RE = re.compile(r"\b(?:future work|future research|in the future|will explore|will investigate)\b|(?:未来工作|未来研究|后续工作|将进一步)", re.I)
 
 CUE_VERBS = {
+    "ADDRESSES": re.compile(r"\b(?:address|addresses|solve|solves|tackle|tackles|problem|challenge)\b|(?:解决|应对|问题|挑战)", re.I),
+    "USES_METHOD": re.compile(r"\b(?:use|uses|using|employ|employs|apply|applies|method|algorithm|experiment|equation|based on)\b|(?:使用|采用|应用|方法|算法|实验|公式|基于)", re.I),
+    "USES_MODEL": re.compile(r"\b(?:use|uses|using|employ|employs|model|architecture|based on)\b|(?:使用|采用|模型|架构|基于)", re.I),
+    "USES_DATASET": re.compile(r"\b(?:evaluate|evaluates|evaluated|test|tests|tested|train|trained|on|using|with)\b|(?:评估|测试|训练|在.+上)", re.I),
+    "EVALUATED_BY": re.compile(r"\b(?:measure|measured|metric|score|accuracy|precision|recall|f1|auc|rmse|mae|latency)\b|(?:指标|准确率|精确率|召回率|延迟)", re.I),
+    "REPORTS_RESULT": re.compile(r"\b(?:report|reports|result|conclude|achieve|improve|outperform|show|demonstrate|reduce)\w*\b|(?:报告|结果|结论|达到|提升|优于|表明|降低)", re.I),
     "PROPOSES": re.compile(r"\b(?:propose|proposes|proposed|introduce|introduces|present|presents|use|uses|using|employ|employs)\b|(?:提出|引入|采用|使用)", re.I),
     "EVALUATES_ON": re.compile(r"\b(?:evaluate|evaluates|evaluated|test|tests|tested|train|trained|on|using|with)\b|(?:评估|测试|训练|在.+上)", re.I),
     "MEASURED_BY": re.compile(r"\b(?:measure|measured|metric|score|accuracy|precision|recall|f1|auc|rmse|mae|latency)\b|(?:指标|准确率|精确率|召回率|延迟)", re.I),
@@ -110,7 +116,7 @@ def canonical_label(kind: str, label: str) -> str:
     acronym = ACRONYM_RE.search(text)
     if acronym:
         return acronym.group(2)
-    if kind == "method":
+    if kind in {"method", "model"}:
         key = semantic_key(text)
         if key in {"llm", "largelanguagemodel", "largelanguagemodels", "languagemodel", "languagemodels"}:
             return "LLM"

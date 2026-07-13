@@ -3,11 +3,21 @@ from __future__ import annotations
 import unittest
 
 from omnilit_qt.knowledge_graph_builder import build_document
-from omnilit_qt.knowledge_graph_compare import compare_documents
+from omnilit_qt.knowledge_graph_compare import compare_documents, compare_graph_dicts
 from omnilit_qt.knowledge_graph_schema import KnowledgeGraphDocument, KnowledgeGraphEvidence, KnowledgeGraphNode
 
 
 class KnowledgeGraphCompareTests(unittest.TestCase):
+    def test_graph_dict_comparison_contains_orkg_matrix_contract(self) -> None:
+        first = build_document("p1", {"title": "One", "keywordsText": "graph"}).to_dict()
+        second = build_document("p2", {"title": "Two", "keywordsText": "graph"}).to_dict()
+        result = compare_graph_dicts([first, second])
+        semantic = result["metadata"]["semantic_comparison"]
+        self.assertEqual(len(semantic["papers"]), 2)
+        self.assertEqual([item["key"] for item in semantic["dimensions"]], [
+            "problem", "method", "model", "dataset", "metric", "result", "contribution", "limitation", "futurework",
+        ])
+
     def test_common_and_missing_information_are_marked(self) -> None:
         first = build_document("p1", {"title": "One", "keywordsText": "graph"})
         second = build_document("p2", {"title": "Two", "keywordsText": "graph"})

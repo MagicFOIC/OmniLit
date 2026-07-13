@@ -6,7 +6,9 @@ Rectangle {
 
     property var nodes: []
     property var edges: []
-    property var graphLayout: knowledgeGraphController.layout || ({})
+    property var graphLayout: knowledgeGraphController.renderLayout || ({})
+    property var fullExportLayout: knowledgeGraphController.layout || ({})
+    property var renderStatus: knowledgeGraphController.renderStatus || ({})
     property var adjacency: knowledgeGraphController.graph.adjacency || ({})
     property string searchQuery: ""
     property string displayStyle: "overview"
@@ -17,10 +19,11 @@ Rectangle {
     property real panX: 0
     property real panY: 0
     property string hoveredNodeId: ""
+    readonly property string effectiveHoveredNodeId: root.hoveredNodeId || String(knowledgeGraphController.hoveredNodeId || "")
     property string hoveredEdgeId: ""
     property int layoutRevision: 0
 
-    property bool settingsOpen: true
+    property bool settingsOpen: false
     property bool showArrows: false
     property bool showLabels: false
     property bool dimUnrelated: true
@@ -28,6 +31,20 @@ Rectangle {
     property real nodeSizeScale: 1.0
     property real linkThickness: 1.0
     property bool animateLayout: false
+    property var fullExportNodes: []
+    property var fullExportEdges: []
+    property bool exportMode: false
+    property bool exportUseFullGraph: false
+    property bool exportTransparent: false
+    readonly property var activeNodes: root.exportUseFullGraph ? root.fullExportNodes : root.nodes
+    readonly property var activeEdges: root.exportUseFullGraph ? root.fullExportEdges : root.edges
+    readonly property var activeGraphLayout: root.exportUseFullGraph ? root.fullExportLayout : root.graphLayout
+    property var pathNodeIds: []
+    property var pathEdgeIds: []
+    property string pathStartId: ""
+    property string pathEndId: ""
+    readonly property var pathNodeSet: root.idSet(root.pathNodeIds)
+    readonly property var pathEdgeSet: root.idSet(root.pathEdgeIds)
 
     readonly property color graphBackground: theme.canvas
     readonly property color graphEdge: theme.mix(theme.borderStrong, theme.canvas, theme.dark ? 0.72 : 0.58)
@@ -42,19 +59,32 @@ Rectangle {
 
     signal nodeRequested(string nodeId)
     signal edgeRequested(string edgeId)
+    signal expandRequested(string nodeId, string relationMode)
     signal fullscreenRequested()
     signal displayStyleRequested(string displayStyle)
+    signal imageExportFinished(string path, bool success, string message)
+    signal renderViewportRequested(real width, real height, real scale, real panX, real panY, string displayStyle)
 
     Theme { id: theme }
     I18n { id: i18n }
     radius: theme.radiusMedium
-    color: root.graphBackground
-    border.color: theme.border
+    color: root.exportMode && root.exportTransparent ? "transparent" : root.graphBackground
+    border.color: root.exportMode && root.exportTransparent ? "transparent" : theme.border
     clip: true
 
     Connections {
         target: knowledgeGraphController
         function onChanged() { root.refreshGraphLayout() }
+    }
+
+    Timer {
+        id: renderViewportTimer
+        interval: 80
+        repeat: false
+        onTriggered: {
+            if (!root.exportMode && root.visible && root.width > 0 && root.height > 0)
+                root.renderViewportRequested(root.width, root.height, root.graphScale, root.panX, root.panY, root.displayStyle)
+        }
     }
 
     Canvas {
@@ -64,6 +94,9 @@ Rectangle {
         onPaint: {
             var ctx = getContext("2d")
             ctx.reset()
+            ctx.clearRect(0, 0, width, height)
+            if (root.exportMode && root.exportTransparent)
+                return
             ctx.fillStyle = root.graphBackground
             ctx.fillRect(0, 0, width, height)
 
@@ -112,7 +145,6 @@ Rectangle {
             onPaint: {
                 var ctx = getContext("2d")
                 ctx.reset()
-                ctx.font = "10px sans-serif"
                 var selectedNodeId = String(knowledgeGraphController.selectedNode.id || "")
                 var selectedEdgeId = String(knowledgeGraphController.selectedEdge.id || "")
                 for (var i = 0; i < root.displayEdges.length; ++i) {
@@ -129,15 +161,16 @@ Rectangle {
                     var control = root.edgeControlPoint(sx, sy, tx, ty, i)
                     var selected = selectedEdgeId === String(edge.id || "")
                     var hovered = root.hoveredEdgeId === String(edge.id || "")
-                    var active = selected || hovered
+                    var onPath = root.isPathEdge(String(edge.id || ""))
+                    var active = onPath || selected || hovered
                             || selectedNodeId === String(edge.source || "")
                             || selectedNodeId === String(edge.target || "")
-                            || root.hoveredNodeId === String(edge.source || "")
-                            || root.hoveredNodeId === String(edge.target || "")
+                            || root.effectiveHoveredNodeId === String(edge.source || "")
+                            || root.effectiveHoveredNodeId === String(edge.target || "")
 
-                    ctx.globalAlpha = root.edgeOpacity(active)
-                    ctx.lineWidth = root.linkThickness * (active ? 1.9 : (edge.needs_review ? 0.65 : 0.85))
-                    ctx.strokeStyle = active ? root.graphEdgeActive : root.graphEdge
+                    ctx.globalAlpha = onPath ? 0.98 : root.edgeOpacity(active)
+                    ctx.lineWidth = root.linkThickness * (onPath ? 2.8 : active ? 1.9 : (edge.needs_review ? 0.65 : 0.85))
+                    ctx.strokeStyle = onPath ? theme.warning : active ? root.graphEdgeActive : root.graphEdge
                     if (ctx.setLineDash && edge.needs_review && !active)
                         ctx.setLineDash([5, 5])
                     else if (ctx.setLineDash)
@@ -159,23 +192,17 @@ Rectangle {
                         ctx.lineTo(arrowX - Math.cos(angle - 0.55) * 6, arrowY - Math.sin(angle - 0.55) * 6)
                         ctx.lineTo(arrowX - Math.cos(angle + 0.55) * 6, arrowY - Math.sin(angle + 0.55) * 6)
                         ctx.closePath()
-                        ctx.fillStyle = active ? root.graphEdgeActive : root.graphEdge
+                        ctx.fillStyle = onPath ? theme.warning : active ? root.graphEdgeActive : root.graphEdge
                         ctx.fill()
                     }
 
-                    var labelVisible = root.showLabels || selected || hovered || (active && root.graphScale >= 0.95) || root.graphScale >= root.relationLabelThreshold
-                    if (labelVisible) {
-                        ctx.globalAlpha = 1.0
-                        ctx.fillStyle = active ? root.graphText : root.graphTextMuted
-                        var mid = root.curvePoint(sx, sy, control.x, control.y, tx, ty, 0.5)
-                        ctx.fillText(String(edge.label || edge.type || ""), mid.x + 4, mid.y - 4)
-                    }
                 }
                 ctx.globalAlpha = 1.0
             }
         }
 
         Repeater {
+            id: graphNodeRepeater
             model: root.displayNodes
             delegate: Rectangle {
                 id: nodeDelegate
@@ -190,9 +217,13 @@ Rectangle {
                 y: root.layoutRevision, root.centerY(index) - r
                 color: root.nodeColor(modelData.type)
                 border.width: root.isSearchMatch(modelData) ? 2.8 : knowledgeGraphController.selectedNode.id === modelData.id ? 2.5 : 1
-                border.color: root.isSearchMatch(modelData) ? theme.warning : knowledgeGraphController.selectedNode.id === modelData.id ? root.graphEdgeActive : theme.borderStrong
+                border.color: String(modelData.id || "") === root.pathStartId ? theme.success
+                            : String(modelData.id || "") === root.pathEndId ? theme.error
+                            : root.isPathNode(String(modelData.id || "")) ? theme.warning
+                            : root.isSearchMatch(modelData) ? theme.warning
+                            : knowledgeGraphController.selectedNode.id === modelData.id ? root.graphEdgeActive : theme.borderStrong
                 opacity: root.nodeOpacity(String(modelData.id || ""), Number(modelData.confidence))
-                scale: knowledgeGraphController.selectedNode.id === modelData.id ? 1.25 : root.hoveredNodeId === String(modelData.id || "") ? 1.12 : 1.0
+                scale: knowledgeGraphController.selectedNode.id === modelData.id ? 1.25 : root.isPathNode(String(modelData.id || "")) ? 1.16 : root.effectiveHoveredNodeId === String(modelData.id || "") ? 1.12 : 1.0
 
                 Behavior on scale {
                     NumberAnimation {
@@ -221,7 +252,7 @@ Rectangle {
                     color: "transparent"
                     border.width: String(modelData.type || "").toLowerCase() === "paper" ? 2.6 : 1.8
                     border.color: root.confidenceColor(Number(modelData.confidence === undefined ? 1 : modelData.confidence), !!modelData.needs_review)
-                    opacity: knowledgeGraphController.selectedNode.id === modelData.id || root.hoveredNodeId === String(modelData.id || "") ? 0.98 : 0.72
+                    opacity: knowledgeGraphController.selectedNode.id === modelData.id || root.effectiveHoveredNodeId === String(modelData.id || "") ? 0.98 : 0.72
                 }
 
                 Text {
@@ -234,6 +265,7 @@ Rectangle {
                 }
 
                 GraphEvidenceBadge {
+                    visible: !modelData.aggregate
                     anchors.right: parent.right
                     anchors.bottom: parent.bottom
                     anchors.rightMargin: -8
@@ -256,7 +288,7 @@ Rectangle {
                     visible: root.showLabels
                              || root.graphScale >= root.textFadeThreshold
                              || knowledgeGraphController.selectedNode.id === modelData.id
-                             || root.hoveredNodeId === String(modelData.id || "")
+                             || root.effectiveHoveredNodeId === String(modelData.id || "")
                     opacity: visible ? 1 : 0
                 }
 
@@ -276,11 +308,28 @@ Rectangle {
                     anchors.fill: parent
                     cursorShape: Qt.PointingHandCursor
                     hoverEnabled: true
-                    onEntered: root.hoveredNodeId = String(modelData.id || "")
-                    onExited: if (root.hoveredNodeId === String(modelData.id || "")) root.hoveredNodeId = ""
-                    onClicked: root.nodeRequested(String(modelData.id || ""))
+                    onEntered: {
+                        root.hoveredNodeId = String(modelData.id || "")
+                        if (!modelData.aggregate)
+                            knowledgeGraphController.setHoveredNode(root.hoveredNodeId)
+                    }
+                    onExited: {
+                        if (root.hoveredNodeId === String(modelData.id || "")) root.hoveredNodeId = ""
+                        if (!modelData.aggregate && knowledgeGraphController.hoveredNodeId === String(modelData.id || "")) knowledgeGraphController.setHoveredNode("")
+                    }
+                    onClicked: {
+                        if (modelData.aggregate)
+                            root.focusCluster(modelData)
+                        else
+                            root.nodeRequested(String(modelData.id || ""))
+                    }
                     onDoubleClicked: {
+                        if (modelData.aggregate) {
+                            root.focusCluster(modelData)
+                            return
+                        }
                         root.nodeRequested(String(modelData.id || ""))
+                        root.expandRequested(String(modelData.id || ""), "all")
                         root.displayStyle = "focus"
                         root.focusDepth = Math.max(1, root.focusDepth)
                         root.displayStyleRequested(root.displayStyle)
@@ -290,6 +339,71 @@ Rectangle {
                     ToolTip.visible: containsMouse
                     ToolTip.text: (modelData.summary || modelData.label || "") + root.pageHint(modelData)
                 }
+            }
+        }
+    }
+
+    Repeater {
+        id: edgeLabelOverlay
+        z: 2
+        model: root.displayEdges
+
+        delegate: Rectangle {
+            id: edgeLabelDelegate
+            required property var modelData
+            required property int index
+
+            readonly property int sourceIndex: root.nodeIndex(modelData.source)
+            readonly property int targetIndex: root.nodeIndex(modelData.target)
+            readonly property bool selected: String(knowledgeGraphController.selectedEdge.id || "") === String(modelData.id || "")
+            readonly property bool hovered: root.hoveredEdgeId === String(modelData.id || "")
+            readonly property bool onPath: root.isPathEdge(String(modelData.id || ""))
+            readonly property bool active: onPath || selected || hovered
+                                           || String(knowledgeGraphController.selectedNode.id || "") === String(modelData.source || "")
+                                           || String(knowledgeGraphController.selectedNode.id || "") === String(modelData.target || "")
+                                           || root.effectiveHoveredNodeId === String(modelData.source || "")
+                                           || root.effectiveHoveredNodeId === String(modelData.target || "")
+            readonly property point graphMidpoint: {
+                if (sourceIndex < 0 || targetIndex < 0)
+                    return Qt.point(-10000, -10000)
+                var sx = root.centerX(sourceIndex)
+                var sy = root.centerY(sourceIndex)
+                var tx = root.centerX(targetIndex)
+                var ty = root.centerY(targetIndex)
+                var control = root.edgeControlPoint(sx, sy, tx, ty, edgeLabelDelegate.index)
+                return root.curvePoint(sx, sy, control.x, control.y, tx, ty, 0.5)
+            }
+            readonly property point screenMidpoint: Qt.point(
+                (graphMidpoint.x - root.width / 2) * root.graphScale + root.width / 2 + root.panX,
+                (graphMidpoint.y - root.height / 2) * root.graphScale + root.height / 2 + root.panY)
+
+            visible: sourceIndex >= 0 && targetIndex >= 0
+                     && (onPath || root.showLabels || selected || hovered
+                         || (active && root.graphScale >= 0.95)
+                         || root.graphScale >= root.relationLabelThreshold)
+            width: Math.min(190, Math.max(28, relationText.implicitWidth + 10))
+            height: 20
+            x: Math.round(screenMidpoint.x - width / 2)
+            y: Math.round(screenMidpoint.y - height / 2 - 4)
+            radius: 4
+            color: theme.mix(theme.surfaceElevated, theme.canvas, theme.dark ? 0.18 : 0.08)
+            border.color: onPath ? theme.warning : active ? theme.borderStrong : theme.border
+            opacity: visible ? 0.96 : 0
+
+            Text {
+                id: relationText
+                anchors.fill: parent
+                anchors.leftMargin: 5
+                anchors.rightMargin: 5
+                text: edgeLabelDelegate.modelData.label || edgeLabelDelegate.modelData.type || ""
+                color: edgeLabelDelegate.onPath ? theme.warning
+                       : edgeLabelDelegate.active ? root.graphText : root.graphTextMuted
+                font.pixelSize: 11
+                font.hintingPreference: Font.PreferFullHinting
+                renderType: Text.NativeRendering
+                verticalAlignment: Text.AlignVCenter
+                horizontalAlignment: Text.AlignHCenter
+                elide: Text.ElideRight
             }
         }
     }
@@ -314,7 +428,7 @@ Rectangle {
         }
         onClicked: function(mouse) {
             var edge = root.edgeAt((mouse.x - root.panX - width / 2) / root.graphScale + width / 2, (mouse.y - root.panY - height / 2) / root.graphScale + height / 2)
-            if (edge)
+            if (edge && !edge.aggregate)
                 root.edgeRequested(String(edge.id || ""))
         }
         onExited: root.hoveredEdgeId = ""
@@ -330,6 +444,7 @@ Rectangle {
         anchors.top: parent.top
         anchors.margins: 8
         spacing: 6
+        visible: !root.exportMode
 
         StyledComboBox {
             width: 116
@@ -381,6 +496,7 @@ Rectangle {
         anchors.top: parent.top
         anchors.margins: 10
         text: root.settingsOpen ? "x" : i18n.text("graph_settings")
+        visible: !root.exportMode
         onClicked: {
             root.settingsOpen = !root.settingsOpen
             root.fitGraph()
@@ -390,7 +506,7 @@ Rectangle {
     GraphSettingsPanel {
         id: settingsPanel
         z: 4
-        visible: root.settingsOpen
+        visible: root.settingsOpen && !root.exportMode
         anchors.right: parent.right
         anchors.top: parent.top
         anchors.bottom: parent.bottom
@@ -447,6 +563,7 @@ Rectangle {
         color: theme.surfaceElevated
         border.color: theme.border
         opacity: 0.92
+        visible: !root.exportMode
         Repeater {
             model: root.displayNodes
             delegate: Rectangle {
@@ -468,9 +585,33 @@ Rectangle {
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         anchors.margins: 10
-        anchors.rightMargin: root.settingsOpen ? Math.min(settingsPanel.width + 46, parent.width * 0.42) : 10
+        anchors.rightMargin: root.settingsOpen && !root.exportMode ? Math.min(settingsPanel.width + 46, parent.width * 0.42) : 10
         nodes: root.displayNodes
         edges: root.displayEdges
+    }
+
+    Rectangle {
+        z: 3
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.topMargin: 48
+        anchors.rightMargin: root.settingsOpen && !root.exportMode ? Math.min(settingsPanel.width + 46, parent.width * 0.42) : 10
+        width: renderStatusText.implicitWidth + 18
+        height: 28
+        radius: 7
+        visible: !root.exportMode && !!root.renderStatus.degraded
+        color: theme.surfaceElevated
+        border.color: theme.border
+        opacity: 0.94
+        Text {
+            id: renderStatusText
+            anchors.centerIn: parent
+            text: "层级 " + String(root.renderStatus.level || "normal") + " · "
+                  + Number(root.renderStatus.renderedNodes || 0) + " / " + Number(root.renderStatus.totalSemanticNodes || 0)
+                  + (Number(root.renderStatus.aggregatedNodes || 0) > 0 ? " · 聚合 " + Number(root.renderStatus.aggregatedNodes) : "")
+            color: theme.textMuted
+            font.pixelSize: 10
+        }
     }
 
     Text {
@@ -487,15 +628,16 @@ Rectangle {
         if (root.searchQuery.trim().length > 0)
             root.fitGraph()
     }
-    onGraphScaleChanged: edgeCanvas.requestPaint()
-    onPanXChanged: { edgeCanvas.requestPaint(); backgroundCanvas.requestPaint() }
-    onPanYChanged: { edgeCanvas.requestPaint(); backgroundCanvas.requestPaint() }
+    onGraphScaleChanged: { edgeCanvas.requestPaint(); renderViewportTimer.restart() }
+    onPanXChanged: { edgeCanvas.requestPaint(); backgroundCanvas.requestPaint(); renderViewportTimer.restart() }
+    onPanYChanged: { edgeCanvas.requestPaint(); backgroundCanvas.requestPaint(); renderViewportTimer.restart() }
     onDisplayNodesChanged: edgeCanvas.requestPaint()
     onDisplayEdgesChanged: edgeCanvas.requestPaint()
-    onDisplayStyleChanged: root.refreshGraphLayout()
+    onDisplayStyleChanged: { root.refreshGraphLayout(); renderViewportTimer.restart() }
     onFocusDepthChanged: root.refreshGraphLayout()
     onReviewModeChanged: root.refreshGraphLayout()
     onHoveredNodeIdChanged: edgeCanvas.requestPaint()
+    onEffectiveHoveredNodeIdChanged: edgeCanvas.requestPaint()
     onHoveredEdgeIdChanged: edgeCanvas.requestPaint()
     onShowArrowsChanged: edgeCanvas.requestPaint()
     onDimUnrelatedChanged: edgeCanvas.requestPaint()
@@ -504,12 +646,25 @@ Rectangle {
     onNodeSizeScaleChanged: root.refreshGraphLayout()
     onLinkThicknessChanged: edgeCanvas.requestPaint()
     onAnimateLayoutChanged: root.refreshGraphLayout()
-    onWidthChanged: { root.refreshGraphLayout(); backgroundCanvas.requestPaint() }
-    onHeightChanged: { root.refreshGraphLayout(); backgroundCanvas.requestPaint() }
+    onFullExportNodesChanged: root.refreshGraphLayout()
+    onFullExportEdgesChanged: root.refreshGraphLayout()
+    onExportUseFullGraphChanged: root.refreshGraphLayout()
+    onExportModeChanged: { if (!root.exportMode) renderViewportTimer.restart() }
+    onExportTransparentChanged: backgroundCanvas.requestPaint()
+    onPathNodeIdsChanged: { root.refreshGraphLayout(); edgeCanvas.requestPaint() }
+    onPathEdgeIdsChanged: edgeCanvas.requestPaint()
+    onWidthChanged: { root.refreshGraphLayout(); backgroundCanvas.requestPaint(); renderViewportTimer.restart() }
+    onHeightChanged: { root.refreshGraphLayout(); backgroundCanvas.requestPaint(); renderViewportTimer.restart() }
+    onVisibleChanged: { if (root.visible) renderViewportTimer.restart() }
+    Component.onCompleted: renderViewportTimer.start()
 
     function refreshGraphLayout() {
         root.layoutRevision += 1
         edgeCanvas.requestPaint()
+    }
+
+    function syncRenderViewport() {
+        renderViewportTimer.restart()
     }
 
     function visibleNodesForRevision(revision) {
@@ -523,19 +678,20 @@ Rectangle {
     function filteredNodes() {
         var selected = String(knowledgeGraphController.selectedNode.id || "")
         var center = root.centerNodeId()
-        var depth = root.displayStyle === "focus" ? Math.max(1, root.focusDepth) : root.focusDepth
-        var focusSet = depth > 0 && (selected || root.displayStyle === "focus") ? root.neighborhood(selected || center, depth) : null
+        var activeStyle = root.exportMode && root.exportUseFullGraph ? "academic" : root.displayStyle
+        var depth = activeStyle === "focus" ? Math.max(1, root.focusDepth) : root.focusDepth
+        var focusSet = depth > 0 && (selected || activeStyle === "focus") ? root.neighborhood(selected || center, depth) : null
         var result = []
         var queryActive = root.searchQuery.trim().length > 0
-        for (var i = 0; i < root.nodes.length; ++i) {
-            var node = root.nodes[i]
+        for (var i = 0; i < root.activeNodes.length; ++i) {
+            var node = root.activeNodes[i]
             var id = String(node.id || "")
             var isPaper = String(node.type || "").toLowerCase() === "paper"
             if (root.reviewMode && !isPaper && !node.needs_review && Number(node.confidence) >= 0.6)
                 continue
             if (focusSet && !focusSet[id])
                 continue
-            if (root.displayStyle === "overview" && !queryActive && !root.reviewMode && !root.isOverviewNode(node, result.length))
+            if (activeStyle === "overview" && !queryActive && !root.reviewMode && !root.isOverviewNode(node, result.length))
                 continue
             result.push(node)
         }
@@ -547,9 +703,9 @@ Rectangle {
         for (var i = 0; i < root.displayNodes.length; ++i)
             visible[String(root.displayNodes[i].id || "")] = true
         var result = []
-        for (var j = 0; j < root.edges.length; ++j) {
-            if (visible[String(root.edges[j].source || "")] && visible[String(root.edges[j].target || "")])
-                result.push(root.edges[j])
+        for (var j = 0; j < root.activeEdges.length; ++j) {
+            if (visible[String(root.activeEdges[j].source || "")] && visible[String(root.activeEdges[j].target || "")])
+                result.push(root.activeEdges[j])
         }
         return result
     }
@@ -584,6 +740,16 @@ Rectangle {
         return result
     }
 
+    function idSet(values) {
+        var result = {}
+        for (var i = 0; i < (values || []).length; ++i)
+            result[String(values[i] || "")] = true
+        return result
+    }
+
+    function isPathNode(nodeId) { return !!root.pathNodeSet[String(nodeId || "")] }
+    function isPathEdge(edgeId) { return !!root.pathEdgeSet[String(edgeId || "")] }
+
     function styleIndex(value) {
         var index = root.styleValues.indexOf(String(value || "overview"))
         return index >= 0 ? index : 0
@@ -595,6 +761,8 @@ Rectangle {
     }
 
     function nodeRadius(node) {
+        if (node.aggregate)
+            return Math.max(13, Math.min(28, 9 + Math.sqrt(Math.max(1, Number(node.memberCount || 1))) * 1.5)) * root.nodeSizeScale
         var id = String(node.id || "")
         var degree = (root.adjacency[id] || []).length
         var evidenceCount = (node.evidence || []).length
@@ -614,21 +782,79 @@ Rectangle {
         return 42 + Number(point.y) * Math.max(120, height - 92)
     }
 
+    function nodePointIn(nodeId, targetItem) {
+        var index = root.nodeIndex(String(nodeId || ""))
+        if (index < 0 || !targetItem)
+            return Qt.point(width / 2, height / 2)
+        return viewport.mapToItem(targetItem, root.centerX(index), root.centerY(index))
+    }
+
+    function captureViewState() {
+        return {
+            displayStyle: root.displayStyle,
+            focusDepth: root.focusDepth,
+            reviewMode: root.reviewMode,
+            graphScale: root.graphScale,
+            panX: root.panX,
+            panY: root.panY,
+            showArrows: root.showArrows,
+            showLabels: root.showLabels,
+            dimUnrelated: root.dimUnrelated,
+            textFadeThreshold: root.textFadeThreshold,
+            nodeSizeScale: root.nodeSizeScale,
+            linkThickness: root.linkThickness,
+            animateLayout: root.animateLayout
+        }
+    }
+
+    function applyViewState(state, preserveDisplayStyle) {
+        var value = state || {}
+        if (!preserveDisplayStyle)
+            root.displayStyle = root.styleValues.indexOf(String(value.displayStyle || "overview")) >= 0 ? String(value.displayStyle) : "overview"
+        root.focusDepth = Math.max(0, Math.min(2, Number(value.focusDepth || 0)))
+        root.reviewMode = !!value.reviewMode
+        root.graphScale = Math.max(0.45, Math.min(2.5, Number(value.graphScale || 1.0)))
+        root.panX = Number(value.panX || 0)
+        root.panY = Number(value.panY || 0)
+        root.showArrows = !!value.showArrows
+        root.showLabels = !!value.showLabels
+        root.dimUnrelated = value.dimUnrelated === undefined ? true : !!value.dimUnrelated
+        root.textFadeThreshold = Number(value.textFadeThreshold || 1.15)
+        root.nodeSizeScale = Number(value.nodeSizeScale || 1.0)
+        root.linkThickness = Number(value.linkThickness || 1.0)
+        root.animateLayout = !!value.animateLayout
+        if (!preserveDisplayStyle)
+            root.displayStyleRequested(root.displayStyle)
+        root.refreshGraphLayout()
+    }
+
+    function focusNode(nodeId) {
+        if (!nodeId)
+            return false
+        root.displayStyle = "focus"
+        root.focusDepth = Math.max(1, root.focusDepth)
+        root.displayStyleRequested(root.displayStyle)
+        root.refreshGraphLayout()
+        Qt.callLater(function() { root.fitGraph() })
+        return true
+    }
+
     function normalizedPoint(index) {
         if (index < 0 || index >= root.displayNodes.length)
             return { x: 0.5, y: 0.5 }
-        if (root.displayStyle === "radial")
+        var activeStyle = root.exportMode && root.exportUseFullGraph ? "academic" : root.displayStyle
+        if (activeStyle === "radial")
             return root.radialPoint(index, root.centerNodeId(), 0.22)
-        if (root.displayStyle === "focus")
+        if (activeStyle === "focus")
             return root.radialPoint(index, root.centerNodeId(), 0.25)
-        if (root.displayStyle === "overview")
+        if (activeStyle === "overview")
             return root.overviewPoint(index)
         return root.academicPoint(index)
     }
 
     function academicPoint(index) {
         var node = root.displayNodes[index]
-        var pos = root.graphLayout[String(node.id || "")]
+        var pos = root.activeGraphLayout[String(node.id || "")]
         return pos ? { x: Number(pos.x), y: Number(pos.y) } : root.overviewPoint(index)
     }
 
@@ -734,19 +960,19 @@ Rectangle {
     }
 
     function layerForNode(node) {
-        var pos = root.graphLayout[String(node.id || "")]
+        var pos = root.activeGraphLayout[String(node.id || "")]
         if (pos && pos.layer !== undefined)
             return Number(pos.layer)
         var type = String(node.type || "").toLowerCase()
         if (type === "paper")
             return 0
-        if (type === "problem" || type === "researchgap" || type === "section" || type === "concept")
+        if (type === "problem" || type === "researchgap" || type === "researchquestion" || type === "section" || type === "concept")
             return 1
         if (type === "method" || type === "algorithm" || type === "model" || type === "contribution" || type === "comparison")
             return 2
         if (type === "dataset" || type === "metric" || type === "baseline" || type === "experiment")
             return 3
-        if (type === "result" || type === "claim" || type === "limitation" || type === "futurework" || type === "conflict")
+        if (type === "result" || type === "claim" || type === "conclusion" || type === "limitation" || type === "futurework" || type === "conflict")
             return 4
         return 5
     }
@@ -755,14 +981,16 @@ Rectangle {
         var selected = String(knowledgeGraphController.selectedNode.id || "")
         if (selected)
             return selected
-        for (var i = 0; i < root.nodes.length; ++i) {
-            if (String(root.nodes[i].type || "").toLowerCase() === "paper")
-                return String(root.nodes[i].id || "")
+        for (var i = 0; i < root.activeNodes.length; ++i) {
+            if (String(root.activeNodes[i].type || "").toLowerCase() === "paper")
+                return String(root.activeNodes[i].id || "")
         }
-        return root.nodes.length ? String(root.nodes[0].id || "") : ""
+        return root.activeNodes.length ? String(root.activeNodes[0].id || "") : ""
     }
 
     function isOverviewNode(node, acceptedCount) {
+        if (node.aggregate)
+            return true
         var type = String(node.type || "").toLowerCase()
         if (type === "paper")
             return true
@@ -776,10 +1004,18 @@ Rectangle {
 
     function nodeColor(type) {
         type = String(type || "").toLowerCase()
+        if (type === "cluster")
+            return theme.mix(theme.accent, theme.surface, theme.dark ? 0.52 : 0.24)
         if (type === "paper")
             return theme.mix(theme.accent, theme.surface, theme.dark ? 0.58 : 0.36)
         if (type === "method" || type === "algorithm" || type === "model")
             return theme.mix(theme.accent, theme.surface, theme.dark ? 0.72 : 0.44)
+        if (type === "topic" || type === "concept")
+            return theme.mix(theme.info, theme.surface, theme.dark ? 0.70 : 0.40)
+        if (type === "author")
+            return theme.mix(theme.success, theme.surface, theme.dark ? 0.64 : 0.36)
+        if (type === "institution" || type === "venue")
+            return theme.mix(theme.textMuted, theme.surface, theme.dark ? 0.58 : 0.30)
         if (type === "experiment" || type === "dataset" || type === "metric")
             return theme.mix(theme.warning, theme.surface, theme.dark ? 0.76 : 0.44)
         if (type === "result" || type === "claim" || type === "conclusion")
@@ -819,7 +1055,13 @@ Rectangle {
     }
 
     function nodeOpacity(nodeId, confidence) {
+        if (String(nodeId || "").indexOf("cluster:") === 0)
+            return 0.94
         var selected = String(knowledgeGraphController.selectedNode.id || "")
+        if (root.pathNodeIds.length > 0)
+            return root.isPathNode(nodeId) ? 1.0 : 0.16
+        if (root.effectiveHoveredNodeId === nodeId)
+            return 1.0
         if (!selected)
             return confidence < 0.6 ? 0.62 : 1.0
         if (!root.dimUnrelated)
@@ -871,15 +1113,25 @@ Rectangle {
 
     function nodeGlyph(type) {
         type = String(type || "").toLowerCase()
+        if (type === "cluster")
+            return "#"
         if (type === "paper")
             return "P"
         if (type === "method" || type === "algorithm" || type === "model")
             return "M"
+        if (type === "author")
+            return "A"
+        if (type === "institution")
+            return "I"
+        if (type === "venue")
+            return "V"
+        if (type === "topic" || type === "concept")
+            return "K"
         if (type === "dataset")
             return "D"
         if (type === "metric")
             return "%"
-        if (type === "result" || type === "claim")
+        if (type === "result" || type === "claim" || type === "conclusion")
             return "R"
         if (type === "contribution")
             return "+"
@@ -977,7 +1229,7 @@ Rectangle {
             maxY = Math.max(maxY, cy + radius)
         }
 
-        var panelReserve = root.settingsOpen ? Math.min(settingsPanel.width + 56, width * 0.38) : 0
+        var panelReserve = root.settingsOpen && !root.exportMode ? Math.min(settingsPanel.width + 56, width * 0.38) : 0
         var padding = 28
         var availableWidth = Math.max(160, width - panelReserve - padding * 2)
         var availableHeight = Math.max(140, height - padding * 2)
@@ -995,5 +1247,94 @@ Rectangle {
         root.panX = targetCenterX - scaledGraphCenterX
         root.panY = targetCenterY - scaledGraphCenterY
         root.refreshGraphLayout()
+    }
+
+    function focusCluster(cluster) {
+        var nodeId = String((cluster || {}).id || "")
+        root.displayStyle = "academic"
+        root.displayStyleRequested(root.displayStyle)
+        root.refreshGraphLayout()
+        var index = root.nodeIndex(nodeId)
+        if (index < 0)
+            return false
+        var centerX = root.centerX(index)
+        var centerY = root.centerY(index)
+        var targetScale = Math.max(1.15, Math.min(2.5, root.graphScale * 1.65))
+        root.graphScale = targetScale
+        root.panX = -(centerX - width / 2) * targetScale
+        root.panY = -(centerY - height / 2) * targetScale
+        root.refreshGraphLayout()
+        renderViewportTimer.restart()
+        return true
+    }
+
+    function exportPng(path, scale, fullGraph, transparent) {
+        var outputPath = String(path || "")
+        var outputScale = Math.max(1, Math.min(4, Math.round(Number(scale || 1))))
+        var targetWidth = Math.round(width * outputScale)
+        var targetHeight = Math.round(height * outputScale)
+        if (!outputPath) {
+            root.imageExportFinished(outputPath, false, "导出路径为空")
+            return false
+        }
+        if (root.exportMode) {
+            root.imageExportFinished(outputPath, false, "已有图片导出任务正在进行")
+            return false
+        }
+        if (width <= 0 || height <= 0 || targetWidth > 16384 || targetHeight > 16384
+                || targetWidth * targetHeight > 100000000) {
+            root.imageExportFinished(outputPath, false, "导出尺寸超出安全范围")
+            return false
+        }
+
+        var savedView = root.captureViewState()
+        root.exportMode = true
+        root.exportUseFullGraph = !!fullGraph
+        root.exportTransparent = !!transparent
+        root.animateLayout = false
+
+        if (fullGraph) {
+            root.focusDepth = 0
+            root.reviewMode = false
+            root.showLabels = true
+            root.graphScale = 1.0
+            root.panX = 0
+            root.panY = 0
+        }
+        root.refreshGraphLayout()
+        backgroundCanvas.requestPaint()
+
+        function restoreExportState() {
+            root.exportUseFullGraph = false
+            root.exportTransparent = false
+            root.exportMode = false
+            root.applyViewState(savedView, true)
+            backgroundCanvas.requestPaint()
+        }
+
+        Qt.callLater(function() {
+            if (fullGraph)
+                root.fitGraph()
+            Qt.callLater(function() {
+                var accepted = root.grabToImage(function(result) {
+                    var saved = false
+                    var errorMessage = ""
+                    try {
+                        saved = result.saveToFile(outputPath)
+                        if (!saved)
+                            errorMessage = "无法写入 PNG 文件"
+                    } catch (error) {
+                        errorMessage = String(error)
+                    }
+                    restoreExportState()
+                    root.imageExportFinished(outputPath, saved, errorMessage)
+                }, Qt.size(targetWidth, targetHeight))
+                if (!accepted) {
+                    restoreExportState()
+                    root.imageExportFinished(outputPath, false, "无法启动画布截图")
+                }
+            })
+        })
+        return true
     }
 }

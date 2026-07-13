@@ -1604,6 +1604,7 @@ class QtOnlyTests(unittest.TestCase):
             "preferences_controller.py",
             "download_controller.py",
             "translation_controller.py",
+            "topic_map_controller.py",
             "update_controller.py",
         ):
             self.assertTrue((controller_dir / name).is_file(), name)
@@ -1615,12 +1616,12 @@ class QtOnlyTests(unittest.TestCase):
         app = (ROOT / "omnilit_qt" / "app.py").read_text(encoding="utf-8")
         active_sources = "\n".join(
             (ROOT / "omnilit_qt" / name).read_text(encoding="utf-8")
-            for name in ("download_controller.py", "literature_library_controller.py", "translation_controller.py", "update_controller.py")
+            for name in ("download_controller.py", "literature_library_controller.py", "topic_map_controller.py", "translation_controller.py", "update_controller.py")
         )
         self.assertIn("daemon=False", background)
         self.assertNotIn("daemon=True", active_sources)
         self.assertIn("app.aboutToQuit.connect", app)
-        self.assertIn("_shutdown_background_tasks(download, literature_library, pdf_extraction, knowledge_graph, word_cloud, translation, selection_translation, updater)", app)
+        self.assertIn("_shutdown_background_tasks(download, literature_library, pdf_extraction, knowledge_graph, word_cloud, topic_map, translation, selection_translation, updater)", app)
 
     def test_active_sources_do_not_reference_tkinter(self) -> None:
         files = [

@@ -32,10 +32,10 @@ LAYER_ORDER = {
 }
 
 TYPE_ORDER = {
-    "paper": 0, "section": 1, "problem": 2, "researchgap": 3, "concept": 4,
+    "paper": 0, "section": 1, "problem": 2, "researchgap": 3, "researchquestion": 3, "concept": 4,
     "contribution": 5, "method": 6, "algorithm": 7, "model": 8,
     "experiment": 9, "dataset": 10, "metric": 11, "baseline": 12,
-    "result": 13, "claim": 14, "limitation": 15, "futurework": 16,
+    "result": 13, "claim": 14, "conclusion": 14, "limitation": 15, "futurework": 16,
     "figure": 17, "table": 18, "equation": 19,
 }
 

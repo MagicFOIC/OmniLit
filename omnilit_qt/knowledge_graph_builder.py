@@ -4,17 +4,18 @@ import hashlib
 import json
 from typing import Any
 
-from .knowledge_graph_core import _authors, _fallback_keywords, _keywords, _normalized, _text
+from .knowledge_graph_core import _authors, _fallback_keywords, _keywords, _normalized, _split_values, _text
 from .knowledge_graph_extractor import extract_entity_candidates
 from .knowledge_graph_layout import academic_layout, adjacency_index
 from .knowledge_graph_normalizer import REVIEW_CONFIDENCE_THRESHOLD, normalize_candidates
+from .knowledge_graph_ontology import relation_label
 from .knowledge_graph_precision import PRECISION_VERSION
 from .knowledge_graph_quality import validate_graph
 from .knowledge_graph_relation_extractor import extract_relation_candidates
 from .knowledge_graph_schema import KnowledgeGraphDocument, KnowledgeGraphEdge, KnowledgeGraphEvidence, KnowledgeGraphNode
 
 
-BUILDER_VERSION = 6
+BUILDER_VERSION = 11
 
 
 def source_fingerprint(record: dict[str, Any], index: dict[str, Any]) -> str:
@@ -22,7 +23,8 @@ def source_fingerprint(record: dict[str, Any], index: dict[str, Any]) -> str:
         key: record.get(key)
         for key in (
             "recordId", "id", "title", "abstract", "extracted_abstract", "contentSummary",
-            "summaryText", "keywordsText", "matchedKeywordsText", "topicTagsText", "authorsText",
+            "summaryText", "keywordsText", "matchedKeywordsText", "topicTagsText", "authors", "authorsText",
+            "institutions", "institution", "affiliations", "affiliation",
             "year", "doi", "localPdfPath",
         )
     }
@@ -84,7 +86,7 @@ def _structural_edge(
 ) -> KnowledgeGraphEdge:
     return KnowledgeGraphEdge(
         id=f"edge:{record_id}:{index}", source=source, target=target.id, type=relation_type,
-        label=relation_type.replace("_", " ").lower(), confidence=target.confidence,
+        label=relation_label(relation_type), confidence=target.confidence,
         evidence=list(evidence), extraction_method=method,
         confidence_reason=[f"{method}_association"], source_section=target.source_section,
         needs_review=target.needs_review, relation_method=method,
@@ -112,6 +114,89 @@ def build_document(record_id: str, metadata: dict, extraction_index: dict | None
         extraction_method="metadata", confidence_reason=["record_metadata"],
     )]
     edges: list[KnowledgeGraphEdge] = []
+
+    def append_metadata_node(kind: str, label: str, relation: str, *, source: str, edge_source: str = paper_id) -> None:
+        node_id = f"{kind}:{_normalized(label)}"
+        if any(item.id == node_id for item in nodes):
+            return
+        evidence = [KnowledgeGraphEvidence(
+            excerpt=label, source=source, record_id=record_id,
+            section="Metadata", extraction_method="metadata",
+        )]
+        node = KnowledgeGraphNode(
+            node_id, kind, label, importance=0.72, tags=[kind], evidence=evidence,
+            extraction_method="metadata", confidence_reason=[source.replace(".", "_")],
+        )
+        nodes.append(node)
+        edges.append(KnowledgeGraphEdge(
+            id=f"edge:{record_id}:{len(edges) + 1}", source=edge_source, target=node_id,
+            type=relation, label=relation_label(relation), confidence=1.0,
+            evidence=evidence, relation_evidence=evidence, extraction_method="metadata",
+            confidence_reason=[source.replace(".", "_")], relation_method="metadata",
+            direction_reason=f"{source} links {edge_source} to {node_id}",
+        ))
+
+    for author in paper["authors"]:
+        append_metadata_node("author", author, "AUTHOR_OF", source="metadata.authors", edge_source=f"author:{_normalized(author)}")
+        # AUTHOR_OF points from the author to the paper, so replace the helper's
+        # self-targeted edge with the declared semantic direction.
+        edges[-1].target = paper_id
+        edges[-1].canonical_id = f"relation:author_of:{edges[-1].source}:{paper_id}"
+        edges[-1].direction_reason = f"metadata.authors identifies {edges[-1].source} as an author of {paper_id}"
+
+    venue = _text(record.get("journalTitle") or record.get("journalName") or record.get("journal") or record.get("venue"))
+    if venue:
+        append_metadata_node("venue", venue, "PUBLISHED_IN", source="metadata.venue")
+
+    institutions: list[str] = []
+    for key in ("institutions", "institution", "affiliations", "affiliation"):
+        institutions.extend(_split_values(record.get(key)))
+    seen_institutions: set[str] = set()
+    for institution in institutions:
+        normalized = _normalized(institution)
+        if normalized in seen_institutions:
+            continue
+        seen_institutions.add(normalized)
+        append_metadata_node("institution", institution, "ASSOCIATED_WITH", source="metadata.affiliations")
+
+    for author_value in record.get("authors") or []:
+        if not isinstance(author_value, dict):
+            continue
+        nested_author = author_value.get("author") if isinstance(author_value.get("author"), dict) else {}
+        author_name = _text(
+            author_value.get("display_name") or author_value.get("displayName") or author_value.get("name")
+            or author_value.get("authorName") or nested_author.get("display_name") or nested_author.get("name")
+        )
+        affiliations = author_value.get("institutions") or author_value.get("affiliations") or author_value.get("affiliation") or []
+        if not author_name or not affiliations:
+            continue
+        if not isinstance(affiliations, list):
+            affiliations = [affiliations]
+        author_node_id = f"author:{_normalized(author_name)}"
+        for affiliation in affiliations:
+            if isinstance(affiliation, dict):
+                institution_name = _text(affiliation.get("display_name") or affiliation.get("name") or affiliation.get("institution"))
+            else:
+                institution_name = _text(affiliation)
+            if not institution_name:
+                continue
+            institution_node_id = f"institution:{_normalized(institution_name)}"
+            evidence = [KnowledgeGraphEvidence(
+                excerpt=f"{author_name} — {institution_name}", source="metadata.authors.affiliations",
+                record_id=record_id, section="Metadata", extraction_method="metadata",
+            )]
+            if not any(item.id == institution_node_id for item in nodes):
+                nodes.append(KnowledgeGraphNode(
+                    institution_node_id, "institution", institution_name, importance=0.72, tags=["institution"],
+                    evidence=evidence, extraction_method="metadata", confidence_reason=["metadata_authors_affiliations"],
+                ))
+            if not any(edge.type == "AFFILIATED_WITH" and edge.source == author_node_id and edge.target == institution_node_id for edge in edges):
+                edges.append(KnowledgeGraphEdge(
+                    id=f"edge:{record_id}:{len(edges) + 1}", source=author_node_id, target=institution_node_id,
+                    type="AFFILIATED_WITH", label=relation_label("AFFILIATED_WITH"), confidence=1.0, evidence=evidence,
+                    relation_evidence=evidence, extraction_method="metadata", confidence_reason=["metadata_authors_affiliations"],
+                    relation_method="metadata", direction_reason="explicit author affiliation metadata links the author to the institution",
+                ))
 
     keywords, keyword_source = _keywords(record)
     for keyword in keywords:

@@ -26,6 +26,8 @@ Rectangle {
         Repeater {
             model: [
                 { label: "Paper", color: root.typeColor("paper") },
+                { label: "Author", color: root.typeColor("author") },
+                { label: "Topic", color: root.typeColor("topic") },
                 { label: "Method", color: root.typeColor("method") },
                 { label: "Data", color: root.typeColor("dataset") },
                 { label: "Result", color: root.typeColor("result") },
@@ -85,6 +87,10 @@ Rectangle {
             return theme.mix(theme.accent, theme.surface, theme.dark ? 0.58 : 0.36)
         if (type === "method" || type === "algorithm" || type === "model")
             return theme.mix(theme.accent, theme.surface, theme.dark ? 0.72 : 0.44)
+        if (type === "topic" || type === "concept" || type === "researchquestion")
+            return theme.mix(theme.info, theme.surface, theme.dark ? 0.70 : 0.40)
+        if (type === "author")
+            return theme.mix(theme.success, theme.surface, theme.dark ? 0.64 : 0.36)
         if (type === "dataset" || type === "metric" || type === "experiment")
             return theme.mix(theme.warning, theme.surface, theme.dark ? 0.76 : 0.44)
         if (type === "result" || type === "claim")

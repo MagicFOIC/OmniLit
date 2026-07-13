@@ -19,6 +19,7 @@ from .controllers import (
     PdfExtractionController,
     PreferencesController,
     SelectionTranslationController,
+    TopicMapController,
     TranslationController,
     UpdateController,
     WordCloudController,
@@ -99,6 +100,7 @@ def run() -> int:
     pdf_extraction.analysisReady.connect(literature_library.notifyExtractionReady)
     word_cloud = WordCloudController(shell, paths, store, locale)
     word_cloud.setKnowledgeGraphController(knowledge_graph)
+    topic_map = TopicMapController(shell, paths, store, locale)
     translation = TranslationController(shell, paths, store, locale)
     selection_translation = SelectionTranslationController(shell, paths, store, locale)
     selection_translation.setTranslationController(translation)
@@ -107,7 +109,7 @@ def run() -> int:
     shell.set_migration_summary(copied)
     auth.authenticated.connect(updater.check)
     auth.authenticated.connect(lambda: onboarding.onAuthenticated(auth.username))
-    app.aboutToQuit.connect(lambda: _shutdown_background_tasks(download, literature_library, pdf_extraction, knowledge_graph, word_cloud, translation, selection_translation, updater))
+    app.aboutToQuit.connect(lambda: _shutdown_background_tasks(download, literature_library, pdf_extraction, knowledge_graph, word_cloud, topic_map, translation, selection_translation, updater))
     QTimer.singleShot(250, literature_library.preload)
 
     icon_path = paths.resource("assets", "omnilit_logo.ico")
@@ -126,6 +128,7 @@ def run() -> int:
         "pdfExtractionController": pdf_extraction,
         "knowledgeGraphController": knowledge_graph,
         "wordCloudController": word_cloud,
+        "topicMapController": topic_map,
         "translationController": translation,
         "selectionTranslationController": selection_translation,
         "updateController": updater,

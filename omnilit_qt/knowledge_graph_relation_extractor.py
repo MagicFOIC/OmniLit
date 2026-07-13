@@ -1,44 +1,14 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 
 from .knowledge_graph_normalizer import NormalizedEntity
+from .knowledge_graph_ontology import PAIR_RELATIONS, ROOT_RELATIONS, relation_label
 from .knowledge_graph_precision import relation_has_cue
 from .knowledge_graph_schema import KnowledgeGraphEdge, KnowledgeGraphEvidence
 
-
-ROOT_RELATIONS: dict[str, tuple[str, bool]] = {
-    "contribution": ("PROPOSES", True),
-    "researchgap": ("PROPOSES", True),
-    "problem": ("PROPOSES", True),
-    "method": ("USES", True),
-    "experiment": ("USES", True),
-    "dataset": ("EVALUATES_ON", True),
-    "metric": ("MEASURED_BY", True),
-    "result": ("ACHIEVES", True),
-    "limitation": ("LIMITS", False),
-    "futurework": ("PROPOSES", True),
-    "citation": ("CITES", True),
-    "figure": ("SUPPORTS", False),
-    "table": ("SUPPORTS", False),
-    "paragraph": ("SUPPORTS", False),
-    "equation": ("USES", True),
-}
-
-PAIR_RELATIONS: dict[tuple[str, str], str] = {
-    ("contribution", "method"): "PROPOSES",
-    ("method", "dataset"): "EVALUATES_ON",
-    ("experiment", "dataset"): "EVALUATES_ON",
-    ("result", "metric"): "MEASURED_BY",
-    ("method", "result"): "ACHIEVES",
-    ("limitation", "method"): "LIMITS",
-    ("limitation", "result"): "LIMITS",
-    ("figure", "result"): "SUPPORTS",
-    ("table", "result"): "SUPPORTS",
-    ("paragraph", "result"): "SUPPORTS",
-    ("method", "equation"): "USES",
-}
 
 CONTEXT_CONFIDENCE = {
     "same_sentence": 1.0,
@@ -67,7 +37,7 @@ class RelationCandidate:
     def to_edge(self, record_id: str, index: int) -> KnowledgeGraphEdge:
         return KnowledgeGraphEdge(
             id=f"edge:{record_id}:{index}", source=self.source_id, target=self.target_id,
-            type=self.relation_type, label=self.relation_type.replace("_", " ").lower(),
+            type=self.relation_type, label=relation_label(self.relation_type),
             confidence=self.confidence, evidence=list(self.evidence),
             extraction_method=self.extraction_method, confidence_reason=list(self.confidence_reason),
             source_section=self.source_section, needs_review=self.needs_review or self.confidence < 0.6,
@@ -155,6 +125,28 @@ def extract_relation_candidates(record_id: str, entities: list[NormalizedEntity]
     paper_id = f"paper:{record_id}"
     relations = [relation for entity in entities if (relation := _root_relation(paper_id, entity))]
     existing = {(relation.source_id, relation.target_id, relation.relation_type) for relation in relations}
+    for entity in entities:
+        if entity.kind != "citation":
+            continue
+        text = " ".join(item.excerpt for item in entity.evidence).casefold()
+        semantic_types = []
+        if re.search(r"\b(?:extend|extends|extended|extension of)\b|(?:扩展|拓展|延伸)", text):
+            semantic_types.append("EXTENDS")
+        if re.search(r"\b(?:improve|improves|improved)\s+(?:on|upon)\b|(?:改进自|在.+基础上改进|优于)", text):
+            semantic_types.append("IMPROVES_ON")
+        for relation_type in semantic_types:
+            key = (paper_id, entity.node_id, relation_type)
+            if key in existing:
+                continue
+            existing.add(key)
+            relations.append(RelationCandidate(
+                source_id=paper_id, target_id=entity.node_id, relation_type=relation_type,
+                confidence=min(0.88, entity.confidence), relation_method="citation_semantic_cue",
+                evidence=entity.evidence,
+                direction_reason=f"citation context explicitly states that the paper {relation_type.casefold()} the cited work",
+                source_section=entity.source_section, confidence_reason=["citation_semantic_cue"],
+                extraction_method=entity.extraction_method,
+            ))
     section_fallbacks: dict[tuple[str, str], tuple[int, NormalizedEntity, NormalizedEntity, str]] = {}
 
     for source in entities:

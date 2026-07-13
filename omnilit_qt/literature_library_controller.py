@@ -14,6 +14,7 @@ from PySide6.QtCore import QObject, Property, QUrl, Signal, Slot
 
 from .app_controller import AppController
 from .background_tasks import ManagedWorker, shutdown_workers
+from .knowledge_graph_core import _authors
 from .i18n import LocaleController
 from .paths import AppPaths
 from .pymupdf_tools import silence_mupdf_diagnostics
@@ -700,8 +701,8 @@ class LiteratureLibraryController(QObject):
             list(enriched.get("matched_keywords") or []),
         )
         keyword_groups = self._keyword_groups_for_record(core, enriched, keyword, extracted_keywords)
-        authors = enriched.get("authors") or []
-        authors_text = ", ".join(str(author) for author in authors[:6]) if isinstance(authors, list) else str(authors or "")
+        authors = _authors(enriched)
+        authors_text = ", ".join(authors[:6])
         impact_factor_text = self._impact_factor_text(enriched)
         publication_date = str(enriched.get("publication_date") or "")
         journal_name = str(
@@ -1576,6 +1577,27 @@ class LiteratureLibraryController(QObject):
     @Property("QVariantList", notify=changed)
     def records(self) -> list[dict[str, Any]]:
         return self._list_records(self._filtered)
+
+    @Property("QVariantList", notify=changed)
+    def topicAnalysisRecords(self) -> list[dict[str, Any]]:
+        fields = (
+            "recordId", "title", "authors", "authorsText", "year", "publicationYear", "publicationDate",
+            "journalTitle", "journalName", "venue", "doi", "openalexId", "openalex_id",
+            "semanticScholarId", "semantic_scholar_id", "arxivId", "arxiv_id",
+            "institutions", "institution", "affiliations", "affiliation",
+            "keywords", "keywordsText", "matchedKeywords", "matchedKeywordsText", "topicTags", "topicTagsText",
+            "abstract", "contentSummary", "summaryText", "localPdfPath",
+            "references", "referencedWorks", "referenced_works", "citedWorks", "cited_works", "citations",
+        )
+        compare_ids = set(self._compare_ids())
+        result = []
+        for record in self._filtered:
+            record_id = str(record.get("recordId") or record.get("id") or "")
+            item = {field: record.get(field) for field in fields if record.get(field) is not None}
+            item["favoriteProjectIds"] = self._favorite_project_ids(record_id)
+            item["inCompare"] = record_id in compare_ids
+            result.append(item)
+        return result
 
     @Property("QVariantList", notify=changed)
     def visibleRecords(self) -> list[dict[str, Any]]:

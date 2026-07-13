@@ -52,15 +52,50 @@ class KnowledgeGraphBuilderTests(unittest.TestCase):
         self.assertEqual(figure.evidence[0].page, 1)
         self.assertGreater(document.metadata["stats"]["evidence"], 0)
         relations = {edge.type for edge in document.edges}
-        self.assertIn("ACHIEVES", relations)
+        self.assertIn("REPORTS_RESULT", relations)
         self.assertIn("SUPPORTS", relations)
-        self.assertTrue(all(edge.relation_evidence for edge in document.edges if edge.type in {"ACHIEVES", "SUPPORTS", "MEASURED_BY"}))
+        self.assertTrue(all(edge.relation_evidence for edge in document.edges if edge.type in {"REPORTS_RESULT", "SUPPORTS", "EVALUATED_BY"}))
         self.assertNotIn("proximity_rule", {edge.relation_method for edge in document.edges})
 
     def test_metadata_only_degrades_gracefully(self) -> None:
         document = build_document("p1", {"title": "Graph Learning", "abstract": "A graph model."}, None)
         self.assertEqual(document.nodes[0].type, "paper")
         self.assertTrue(any(node.type == "concept" for node in document.nodes))
+
+    def test_metadata_authors_venue_and_institution_are_first_class_entities(self) -> None:
+        document = build_document("p1", {
+            "title": "Graph Learning",
+            "authors": [
+                {"name": "Ada Lovelace", "affiliations": [{"name": "Analytical Engine Lab"}]},
+                {"name": "Grace Hopper", "affiliations": [{"name": "Navy Research"}]},
+            ],
+            "journalTitle": "Journal of Graphs",
+            "affiliations": "Analytical Engine Lab; Navy Research",
+        })
+
+        node_types = {node.type for node in document.nodes}
+        relation_types = {edge.type for edge in document.edges}
+        self.assertTrue({"author", "venue", "institution"}.issubset(node_types))
+        self.assertTrue({"AUTHOR_OF", "PUBLISHED_IN", "AFFILIATED_WITH"}.issubset(relation_types))
+        author_edge = next(edge for edge in document.edges if edge.type == "AUTHOR_OF")
+        self.assertTrue(author_edge.source.startswith("author:"))
+        self.assertEqual(author_edge.target, "paper:p1")
+        affiliation_edge = next(edge for edge in document.edges if edge.type == "AFFILIATED_WITH")
+        self.assertTrue(affiliation_edge.source.startswith("author:"))
+        self.assertTrue(affiliation_edge.target.startswith("institution:"))
+        self.assertIn("explicit author affiliation", affiliation_edge.direction_reason)
+
+    def test_structured_author_objects_use_names_not_dict_representations(self) -> None:
+        document = build_document("p1", {
+            "title": "Structured Authors",
+            "authors": [
+                {"display_name": "Ada Lovelace", "affiliations": [{"name": "Analytical Engine Lab"}]},
+                {"author": {"name": "Grace Hopper"}},
+            ],
+        })
+        labels = [node.label for node in document.nodes if node.type == "author"]
+        self.assertEqual(labels, ["Ada Lovelace", "Grace Hopper"])
+        self.assertFalse(any(label.startswith("{") for label in labels))
 
     def test_metadata_summary_builds_real_semantic_categories_and_citations(self) -> None:
         summary = (

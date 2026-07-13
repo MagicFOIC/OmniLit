@@ -21,6 +21,23 @@ def export_markdown(document: KnowledgeGraphDocument, path: Path, comparison: bo
     if comparison:
         lines.extend(["## 1. 对比文献"])
         lines.extend(f"- {node.label}" for node in document.nodes if node.type.casefold() == "paper")
+        semantic = document.metadata.get("semantic_comparison") or {}
+        dimensions = semantic.get("dimensions") or []
+        papers = semantic.get("papers") or []
+        if dimensions and papers:
+            lines.extend(["", "## ORKG 语义比较矩阵", ""])
+            lines.append("| 维度 | " + " | ".join(str(item.get("title") or item.get("recordId") or "文献").replace("|", "/") for item in papers) + " |")
+            lines.append("| --- | " + " | ".join("---" for _ in papers) + " |")
+            for dimension in dimensions:
+                key = str(dimension.get("key") or "")
+                values = []
+                for paper in papers:
+                    cell = next((item for item in paper.get("cells") or [] if str(item.get("dimension") or "") == key), {})
+                    labels = [str(item.get("label") or "").replace("|", "/") for item in cell.get("items") or [] if str(item.get("label") or "")]
+                    value = "；".join(labels) if labels else "未识别（不等于不存在）"
+                    source = "人工审阅" if (cell.get("review") or {}).get("action") else "自动抽取"
+                    values.append(f"{value}<br>{source} · 置信 {float(cell.get('confidence') or 0):.0%} · 证据 {int(cell.get('evidenceCount') or 0)}")
+                lines.append(f"| {str(dimension.get('label') or key).replace('|', '/')} | " + " | ".join(values) + " |")
         sections = (("## 2. 共同研究问题", "common"), ("## 3. 方法差异", "method"), ("## 4. 数据集与实验设置", "dataset"), ("## 5. 指标与结果", "result"), ("## 6. 主要贡献", "contribution"), ("## 7. 局限与未来工作", "limitation"), ("## 8. 冲突或不一致结论", "conflict"), ("## 9. 可继续阅读的问题", "missing"))
         for heading, tag in sections:
             lines.extend(["", heading])

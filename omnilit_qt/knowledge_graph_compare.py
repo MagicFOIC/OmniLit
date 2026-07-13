@@ -7,9 +7,10 @@ from typing import Any
 from .knowledge_graph_core import _normalized
 from .knowledge_graph_schema import KnowledgeGraphDocument, KnowledgeGraphEdge, KnowledgeGraphEvidence, KnowledgeGraphNode
 from .knowledge_graph_layout import academic_layout, adjacency_index
+from .knowledge_graph_semantic_comparison import build_semantic_comparison
 
 
-COMPARISON_DIMENSIONS = ("problem", "method", "dataset", "metric", "baseline", "result", "contribution", "limitation", "futurework")
+COMPARISON_DIMENSIONS = ("problem", "method", "model", "dataset", "metric", "baseline", "result", "contribution", "limitation", "futurework")
 
 
 def compare_documents(documents: list[KnowledgeGraphDocument], comparison_id: str = "") -> KnowledgeGraphDocument:
@@ -59,7 +60,7 @@ def compare_documents(documents: list[KnowledgeGraphDocument], comparison_id: st
             edge_index += 1
             edges.append(KnowledgeGraphEdge(f"compare-edge:{edge_index}", node.id, comparison_node_id, "SAME_AS", "共同概念", confidence=0.9, evidence=list(node.evidence)))
 
-    semantic = [(paper_id, node) for values in occurrences.values() for paper_id, node in values if node.type.casefold() in {"concept", "method", "dataset", "metric", "result", "contribution", "limitation"}]
+    semantic = [(paper_id, node) for values in occurrences.values() for paper_id, node in values if node.type.casefold() in {"concept", "method", "model", "dataset", "metric", "result", "contribution", "limitation"}]
     for left_index, (left_paper, left) in enumerate(semantic):
         left_tokens = set(_normalized(left.label).split("_"))
         for right_paper, right in semantic[left_index + 1:]:
@@ -114,7 +115,7 @@ def compare_documents(documents: list[KnowledgeGraphDocument], comparison_id: st
             "comparison_record_ids": [item.record_id for item in docs],
             "summary": {"keywords": [], "contentSummary": "", "abstract": ""},
             "source": {"pdfPath": "", "extractionEngine": "mixed", "sourceSha256": ""},
-            "builder_version": 2,
+            "builder_version": 3,
             "quality_summary": {
                 "node_count": len(nodes),
                 "edge_count": len(edges),
@@ -126,7 +127,14 @@ def compare_documents(documents: list[KnowledgeGraphDocument], comparison_id: st
     )
 
 
-def compare_graph_dicts(graphs: list[dict], comparison_id: str = "") -> dict[str, Any]:
+def compare_graph_dicts(
+    graphs: list[dict], comparison_id: str = "", records: list[dict] | None = None,
+    reviews: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     result = compare_documents([KnowledgeGraphDocument.from_dict(graph) for graph in graphs], comparison_id).to_dict()
+    metadata = result.setdefault("metadata", {})
+    metadata["semantic_comparison"] = build_semantic_comparison(graphs, records, reviews)
+    metadata["comparison_source_fingerprints"] = sorted(str(graph.get("source_fingerprint") or "") for graph in graphs)
+    metadata["comparison_records"] = [dict(item) for item in records or [] if isinstance(item, dict)]
     result["comparisonRecordIds"] = list((result.get("metadata") or {}).get("comparison_record_ids") or [])
     return result

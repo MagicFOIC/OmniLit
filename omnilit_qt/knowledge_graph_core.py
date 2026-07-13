@@ -84,7 +84,27 @@ def _keywords(record: dict[str, Any]) -> tuple[list[str], str]:
 
 def _authors(record: dict[str, Any]) -> list[str]:
     for key in ("authors", "author", "authorsText"):
-        values = _split_values(record.get(key))
+        raw = record.get(key)
+        values: list[str] = []
+        if isinstance(raw, (list, tuple, set)):
+            for item in raw:
+                if isinstance(item, dict):
+                    nested = item.get("author") if isinstance(item.get("author"), dict) else {}
+                    name = (
+                        item.get("display_name") or item.get("displayName") or item.get("name")
+                        or item.get("authorName") or item.get("full_name")
+                        or nested.get("display_name") or nested.get("name")
+                    )
+                    if name:
+                        values.append(_text(name))
+                else:
+                    values.extend(_split_values(item))
+        elif isinstance(raw, dict):
+            name = raw.get("display_name") or raw.get("displayName") or raw.get("name") or raw.get("authorName")
+            if name:
+                values.append(_text(name))
+        else:
+            values = _split_values(raw)
         if values:
             return _deduplicate(values, 50)
     return []

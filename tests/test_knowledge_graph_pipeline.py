@@ -59,7 +59,7 @@ class KnowledgeGraphPipelineTests(unittest.TestCase):
         types = {relation.relation_type for relation in relations}
         self.assertIn("same_sentence", methods)
         self.assertNotIn("proximity_rule", methods)
-        self.assertTrue({"USES", "EVALUATES_ON", "MEASURED_BY", "ACHIEVES"}.issubset(types))
+        self.assertTrue({"USES_METHOD", "USES_DATASET", "EVALUATED_BY", "REPORTS_RESULT"}.issubset(types))
         self.assertTrue(all(relation.evidence and relation.direction_reason for relation in relations))
 
     def test_same_page_entities_in_different_sections_are_not_linked_by_proximity(self) -> None:
@@ -89,7 +89,7 @@ class KnowledgeGraphPipelineTests(unittest.TestCase):
     def test_builder_exposes_pipeline_counts_and_current_version(self) -> None:
         document = build_document("p1", {"recordId": "p1", "title": "Paper"}, {"pages": []})
         self.assertEqual(document.metadata["builder_version"], BUILDER_VERSION)
-        self.assertEqual(BUILDER_VERSION, 6)
+        self.assertEqual(BUILDER_VERSION, 11)
         self.assertEqual(document.metadata["stats"]["entity_candidates"], 0)
         self.assertEqual(document.metadata["pipeline"][-1], "quality_validation")
 

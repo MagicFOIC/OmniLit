@@ -35,6 +35,7 @@ Item {
     property string graphTitle: ""
     property var graphRecord: ({})
     property bool graphReturnToCompare: false
+    property bool graphReturnToTopicMap: false
     property bool graphIsComparison: false
     property var graphComparisonRecords: []
     property bool wordCloudOpen: false
@@ -44,6 +45,8 @@ Item {
     property string wordCloudScope: "record"
     property var wordCloudRecord: ({})
     property var wordCloudRecords: []
+    property bool topicMapOpen: false
+    property var topicMapRecords: []
     property bool libraryFiltersOpen: false
     property bool libraryToolsOpen: false
     property string pendingGraphKeyword: ""
@@ -128,7 +131,7 @@ Item {
         anchors.fill: parent
         anchors.margins: metrics.pageMargin
         spacing: metrics.sectionSpacing
-        visible: !root.readerOpen && !root.graphOpen && !root.wordCloudOpen && !root.translationReaderOpen
+        visible: !root.readerOpen && !root.graphOpen && !root.wordCloudOpen && !root.topicMapOpen && !root.translationReaderOpen
 
         PageHeading {
             Layout.fillWidth: true
@@ -386,6 +389,12 @@ Item {
                                         text: wordCloudController.loading && wordCloudController.currentScope === "library" ? "生成中..." : "筛选结果词云"
                                         enabled: !wordCloudController.loading && literatureLibraryController.records.length > 0
                                         onClicked: root.openLibraryWordCloud()
+                                    }
+                                    PillButton {
+                                        text: topicMapController.loading ? "主题分析中..." : "领域主题地图"
+                                        enabled: !topicMapController.loading && literatureLibraryController.records.length > 0
+                                        primary: true
+                                        onClicked: root.openTopicMap()
                                     }
                                 }
                             }
@@ -902,7 +911,10 @@ Item {
         comparisonRecords: root.graphComparisonRecords
         onBackRequested: {
             root.graphOpen = false
-            if (root.graphReturnToCompare) {
+            if (root.graphReturnToTopicMap) {
+                root.graphReturnToTopicMap = false
+                root.topicMapOpen = true
+            } else if (root.graphReturnToCompare) {
                 root.graphReturnToCompare = false
                 comparePopup.open()
             }
@@ -926,6 +938,20 @@ Item {
         onEvidenceRequested: function(recordId, page, bbox, elementId) {
             root.openEvidenceInReader(recordId, page, bbox, elementId)
         }
+    }
+
+    TopicMapPage {
+        anchors.fill: parent
+        anchors.margins: metrics.pageMargin
+        visible: root.topicMapOpen
+        records: root.topicMapRecords
+        title: "领域主题地图 · 当前筛选结果"
+        onBackRequested: root.topicMapOpen = false
+        onGraphRequested: function(topicId, paperIds) { root.openTopicLocalGraph(topicId, paperIds) }
+        onEvolutionGraphRequested: function(startYear, endYear, selectedPaperId) { root.openEvolutionGraph(startYear, endYear, selectedPaperId) }
+        onAnalysisGraphRequested: function(mode) { root.openNetworkAnalysisGraph(mode) }
+        onResearchGraphRequested: function(mode) { root.openResearchNetworkGraph(mode) }
+        onRecommendationRequested: function(recordId) { root.openRecommendedPaper(recordId) }
     }
 
     WordCloudPage {
@@ -1168,6 +1194,7 @@ Item {
         readerPage.clearEvidenceFocus()
         root.graphOpen = false
         root.wordCloudOpen = false
+        root.topicMapOpen = false
         root.translationReaderOpen = false
         root.readerOpen = true
     }
@@ -1187,6 +1214,7 @@ Item {
         root.readerOpen = false
         root.graphOpen = false
         root.wordCloudOpen = false
+        root.topicMapOpen = false
         root.translationReaderRecordId = String(record.recordId || "")
         root.translationReaderPdfPath = String(record.localPdfPath || "")
         root.translationReaderTitle = String(record.title || "翻译阅读")
@@ -1203,12 +1231,14 @@ Item {
         root.selectRecord(index, record)
         root.readerOpen = false
         root.wordCloudOpen = false
+        root.topicMapOpen = false
         root.translationReaderOpen = false
         root.graphRecordId = String(record.recordId || "")
         root.graphPdfPath = String(record.localPdfPath || "")
         root.graphTitle = String(record.title || "知识图谱")
         root.graphRecord = record
         root.graphReturnToCompare = false
+        root.graphReturnToTopicMap = false
         root.graphIsComparison = false
         root.graphComparisonRecords = []
         root.graphOpen = true
@@ -1220,6 +1250,7 @@ Item {
         root.selectRecord(index, record)
         root.readerOpen = false
         root.graphOpen = false
+        root.topicMapOpen = false
         root.translationReaderOpen = false
         root.wordCloudRecordId = String(record.recordId || "")
         root.wordCloudTitle = String(record.title || "文献词云")
@@ -1242,6 +1273,7 @@ Item {
         root.wordCloudReturnToReader = false
         root.readerOpen = false
         root.graphOpen = false
+        root.topicMapOpen = false
         root.translationReaderOpen = false
         root.wordCloudOpen = true
         wordCloudController.generateForRecords(records)
@@ -1260,6 +1292,7 @@ Item {
         if (!target)
             return
         root.wordCloudOpen = false
+        root.topicMapOpen = false
         root.readerOpen = false
         root.translationReaderOpen = false
         root.pendingGraphKeyword = String(keyword || "")
@@ -1269,6 +1302,7 @@ Item {
         root.graphTitle = String(target.title || "知识图谱")
         root.graphRecord = target
         root.graphIsComparison = false
+        root.graphReturnToTopicMap = false
         root.graphOpen = true
         knowledgeGraphController.generateGraph(root.graphRecordId, target, root.graphPdfPath)
         if (!knowledgeGraphController.loading) {
@@ -1291,12 +1325,136 @@ Item {
         root.graphTitle = "对比知识图谱"
         root.graphRecord = ({})
         root.graphReturnToCompare = true
+        root.graphReturnToTopicMap = false
         root.graphIsComparison = true
         root.graphComparisonRecords = records
         root.readerOpen = false
         root.wordCloudOpen = false
+        root.topicMapOpen = false
         root.translationReaderOpen = false
         root.graphOpen = true
+    }
+
+    function openTopicMap() {
+        var records = literatureLibraryController.topicAnalysisRecords || []
+        if (records.length === 0)
+            return
+        root.topicMapRecords = records
+        root.readerOpen = false
+        root.graphOpen = false
+        root.wordCloudOpen = false
+        root.translationReaderOpen = false
+        root.topicMapOpen = true
+        topicMapController.generateForRecords(records)
+    }
+
+    function openTopicLocalGraph(topicId, paperIds) {
+        var graph = topicMapController.topicGraph(String(topicId || ""), paperIds || [])
+        if (!knowledgeGraphController.loadTopicGraph(graph))
+            return
+        var ids = paperIds || []
+        var records = []
+        for (var i = 0; i < root.topicMapRecords.length; ++i) {
+            var recordId = String(root.topicMapRecords[i].recordId || root.topicMapRecords[i].id || "")
+            if (ids.indexOf(recordId) >= 0)
+                records.push(root.topicMapRecords[i])
+        }
+        root.topicMapOpen = false
+        root.graphRecordId = knowledgeGraphController.currentRecordId
+        root.graphPdfPath = ""
+        root.graphTitle = String(topicMapController.selectedTopic.name || "主题局部图谱")
+        root.graphRecord = ({})
+        root.graphIsComparison = false
+        root.graphComparisonRecords = records
+        root.graphReturnToCompare = false
+        root.graphReturnToTopicMap = true
+        root.graphOpen = true
+    }
+
+    function openEvolutionGraph(startYear, endYear, selectedPaperId) {
+        var graph = topicMapController.evolutionGraph(Number(startYear || 0), Number(endYear || 0))
+        if (!knowledgeGraphController.loadTopicGraph(graph))
+            return
+        var ids = ((graph.metadata || {}).comparison_record_ids || [])
+        var records = []
+        for (var i = 0; i < root.topicMapRecords.length; ++i) {
+            var recordId = String(root.topicMapRecords[i].recordId || root.topicMapRecords[i].id || "")
+            if (ids.indexOf(recordId) >= 0)
+                records.push(root.topicMapRecords[i])
+        }
+        root.topicMapOpen = false
+        root.graphRecordId = knowledgeGraphController.currentRecordId
+        root.graphPdfPath = ""
+        root.graphTitle = "研究演化 " + Number(startYear || 0) + "–" + Number(endYear || 0)
+        root.graphRecord = ({})
+        root.graphIsComparison = false
+        root.graphComparisonRecords = records
+        root.graphReturnToCompare = false
+        root.graphReturnToTopicMap = true
+        root.graphOpen = true
+        if (selectedPaperId)
+            knowledgeGraphController.selectLiteratureRecord(String(selectedPaperId))
+    }
+
+    function openNetworkAnalysisGraph(mode) {
+        var graph = topicMapController.networkAnalysisGraph(String(mode || "core"))
+        if (!knowledgeGraphController.loadTopicGraph(graph))
+            return
+        var ids = ((graph.metadata || {}).comparison_record_ids || [])
+        var records = []
+        for (var i = 0; i < root.topicMapRecords.length; ++i) {
+            var recordId = String(root.topicMapRecords[i].recordId || root.topicMapRecords[i].id || "")
+            if (ids.indexOf(recordId) >= 0)
+                records.push(root.topicMapRecords[i])
+        }
+        root.topicMapOpen = false
+        root.graphRecordId = knowledgeGraphController.currentRecordId
+        root.graphPdfPath = ""
+        root.graphTitle = "结构分析 · " + String(mode || "core")
+        root.graphRecord = ({})
+        root.graphIsComparison = false
+        root.graphComparisonRecords = records
+        root.graphReturnToCompare = false
+        root.graphReturnToTopicMap = true
+        root.graphOpen = true
+    }
+
+    function openResearchNetworkGraph(mode) {
+        var graph = topicMapController.researchNetworkGraph(String(mode || "authors"))
+        if (!knowledgeGraphController.loadTopicGraph(graph))
+            return
+        var ids = ((graph.metadata || {}).comparison_record_ids || [])
+        var records = []
+        for (var i = 0; i < root.topicMapRecords.length; ++i) {
+            var recordId = String(root.topicMapRecords[i].recordId || root.topicMapRecords[i].id || "")
+            if (ids.indexOf(recordId) >= 0)
+                records.push(root.topicMapRecords[i])
+        }
+        root.topicMapOpen = false
+        root.graphRecordId = knowledgeGraphController.currentRecordId
+        root.graphPdfPath = ""
+        root.graphTitle = String(graph.title || "研究合作网络")
+        root.graphRecord = ({})
+        root.graphIsComparison = false
+        root.graphComparisonRecords = records
+        root.graphReturnToCompare = false
+        root.graphReturnToTopicMap = true
+        root.graphOpen = true
+    }
+
+    function openRecommendedPaper(recordId) {
+        var records = literatureLibraryController.records || []
+        for (var i = 0; i < records.length; ++i) {
+            if (String(records[i].recordId || records[i].id || "") !== String(recordId || ""))
+                continue
+            root.topicMapOpen = false
+            if (records[i].localPdfPath)
+                root.openReader(i, records[i])
+            else
+                root.selectRecord(i, records[i])
+            return
+        }
+        root.topicMapOpen = false
     }
     function openEvidenceInReader(recordId, page, bbox, elementId) {
         var target = null

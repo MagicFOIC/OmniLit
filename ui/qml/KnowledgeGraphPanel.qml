@@ -9,7 +9,11 @@ Rectangle {
     property bool showGraph: false
     property var nodes: []
     property var edges: []
+    property bool explorationActive: false
+    property var explorationSummary: ({})
+    property var explorationStatus: ({})
     signal evidenceRequested(string itemId, int index)
+    signal expandRequested(string nodeId, string relationMode)
 
     Theme { id: theme }
     radius: theme.radiusMedium
@@ -42,6 +46,61 @@ Rectangle {
             edges: root.edges
             onNodeRequested: function(nodeId) { knowledgeGraphController.selectNode(nodeId) }
             onEdgeRequested: function(edgeId) { knowledgeGraphController.selectEdge(edgeId) }
+            onExpandRequested: function(nodeId, relationMode) { root.expandRequested(nodeId, relationMode) }
+        }
+
+        Rectangle {
+            Layout.fillWidth: true
+            visible: root.explorationActive && Object.keys(root.selectedNode || {}).length > 0
+            Layout.preferredHeight: visible ? expansionColumn.implicitHeight + 18 : 0
+            radius: theme.radiusSmall
+            color: theme.surfaceSoft
+            border.color: theme.border
+
+            ColumnLayout {
+                id: expansionColumn
+                anchors.fill: parent
+                anchors.margins: 9
+                spacing: 7
+
+                Text {
+                    Layout.fillWidth: true
+                    text: "按需展开邻居"
+                    color: theme.text
+                    font.bold: true
+                }
+                Flow {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: childrenRect.height
+                    spacing: 5
+                    Repeater {
+                        model: [
+                            { mode: "all", label: "全部" },
+                            { mode: "references", label: "引用" },
+                            { mode: "cited_by", label: "被引" },
+                            { mode: "authors", label: "作者" },
+                            { mode: "institutions", label: "机构" },
+                            { mode: "topics", label: "主题" },
+                            { mode: "venues", label: "期刊" }
+                        ]
+                        delegate: PillButton {
+                            required property var modelData
+                            property int neighborCount: Number(root.explorationSummary[modelData.mode] || 0)
+                            text: modelData.label + " " + neighborCount
+                            enabled: neighborCount > 0 && root.explorationStatus.status !== "loading"
+                            onClicked: root.expandRequested(String(root.selectedNode.id || ""), modelData.mode)
+                        }
+                    }
+                }
+                Text {
+                    Layout.fillWidth: true
+                    visible: !!root.explorationStatus.message
+                    text: root.explorationStatus.message || ""
+                    color: root.explorationStatus.status === "error" ? theme.error : theme.textMuted
+                    wrapMode: Text.Wrap
+                    font.pixelSize: 11
+                }
+            }
         }
 
         ScrollView {

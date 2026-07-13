@@ -33,6 +33,7 @@ class KnowledgeGraphExtractorPrecisionTests(unittest.TestCase):
         ]}]}
         candidates, _ = extract_entity_candidates("p1", {"recordId": "p1"}, index)
         self.assertIn("result", {item.kind for item in candidates})
+        self.assertIn("model", {item.kind for item in candidates})
         generic = [item for item in candidates if item.label.casefold() == "model"]
         self.assertTrue(generic)
         self.assertTrue(generic[0].needs_review)

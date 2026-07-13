@@ -233,7 +233,7 @@ class LiteratureLibraryQmlTests(unittest.TestCase):
         self.assertIn("function closeTranslationReader()", library)
         self.assertIn('text: "翻译"', library)
         self.assertNotIn('text: cached ? "翻译 ✓" : "翻译"', library)
-        self.assertIn("visible: !root.readerOpen && !root.graphOpen && !root.wordCloudOpen && !root.translationReaderOpen", library)
+        self.assertIn("visible: !root.readerOpen && !root.graphOpen && !root.wordCloudOpen && !root.topicMapOpen && !root.translationReaderOpen", library)
         self.assertIn("root.selectRecord(index, record)", library)
 
         self.assertIn("pdfExtractionController.cachedRenderedPage", reader)

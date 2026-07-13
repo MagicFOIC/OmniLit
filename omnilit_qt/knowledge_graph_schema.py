@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 import re
 from typing import Any
 
+from .knowledge_graph_ontology import ONTOLOGY_VERSION, canonicalize_edge_dict, relation_label
+
 
 def _normalized_label(value: Any) -> str:
     return re.sub(r"[^\w\u3400-\u9fff]+", "", str(value or "").casefold())
@@ -137,6 +139,7 @@ class KnowledgeGraphEdge:
     review_reasons: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
+        self.label = self.label or relation_label(self.type)
         self.normalized_label = self.normalized_label or _normalized_label(self.label or self.type)
         self.canonical_id = self.canonical_id or f"relation:{self.type.casefold()}:{self.source}:{self.target}"
         if self.extraction_method == "unknown":
@@ -243,11 +246,18 @@ class KnowledgeGraphDocument:
         for key in ("builder_version", "source_fingerprint", "quality_summary", "layout", "adjacency"):
             if key in data:
                 metadata.setdefault(key, data.get(key))
+        nodes = [KnowledgeGraphNode.from_dict(item) for item in data.get("nodes") or [] if isinstance(item, dict)]
+        node_types = {node.id: node.type for node in nodes}
+        edges = [
+            KnowledgeGraphEdge.from_dict(canonicalize_edge_dict(item, node_types), index)
+            for index, item in enumerate(data.get("edges") or []) if isinstance(item, dict)
+        ]
+        metadata["ontology_version"] = ONTOLOGY_VERSION
         return cls(
             record_id=record_id,
             paper=paper,
-            nodes=[KnowledgeGraphNode.from_dict(item) for item in data.get("nodes") or [] if isinstance(item, dict)],
-            edges=[KnowledgeGraphEdge.from_dict(item, index) for index, item in enumerate(data.get("edges") or []) if isinstance(item, dict)],
+            nodes=nodes,
+            edges=edges,
             schema_version=int(data.get("schema_version") or data.get("version") or 1),
             generated_at=str(data.get("generated_at") or data.get("generatedAt") or ""),
             metadata=metadata,
